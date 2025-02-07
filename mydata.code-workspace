@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "path": "android"
+    },
+    {
+      "path": "syncthing"
+    },
+    {
+      "path": "syncthing-android"
+    }
+  ],
+  "settings": {}
+}
