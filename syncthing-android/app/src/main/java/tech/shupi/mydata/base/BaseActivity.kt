@@ -1,0 +1,28 @@
+package tech.shupi.mydata
+
+import android.content.SharedPreferences
+import android.os.Bundle
+import android.view.MenuItem
+import androidx.appcompat.app.AppCompatActivity
+
+open class BaseActivity : AppCompatActivity() {
+    var sharedPreferences: SharedPreferences? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        sharedPreferences = getSharedPreferences("app_prefs", MODE_PRIVATE)
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            android.R.id.home -> {
+                onBackPressedDispatcher.onBackPressed()
+                true
+            }
+
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+}
