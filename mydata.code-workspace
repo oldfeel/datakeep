@@ -5,6 +5,9 @@
     },
     {
       "path": "android"
+    },
+    {
+      "path": "syncthing-android"
     }
   ],
   "settings": {}
