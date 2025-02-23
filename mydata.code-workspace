@@ -4,9 +4,6 @@
       "path": "syncthing"
     },
     {
-      "path": "android"
-    },
-    {
       "path": "syncthing-android"
     }
   ],
