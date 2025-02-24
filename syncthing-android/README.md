@@ -1,3 +1,11 @@
+# 编译 syncthing android libs
+
+```
+cd lib_build
+go run main.go
+
+```
+
 # Discontinued
 
 This app is discontinued. The last release on Github and F-Droid will happen
@@ -29,9 +37,9 @@ The project is translated on [Hosted Weblate](https://hosted.weblate.org/project
 
 ## Dev
 
-Language codes are usually mapped correctly by Weblate itself.  The supported
-set is different between [Google Play][1] and Android apps.  The latter can be
-deduced by what the [Android core framework itself supports][2].  New languages
+Language codes are usually mapped correctly by Weblate itself. The supported
+set is different between [Google Play][1] and Android apps. The latter can be
+deduced by what the [Android core framework itself supports][2]. New languages
 need to be added in the repository first, then appear automatically in Weblate.
 
 [1]: https://support.google.com/googleplay/android-developer/table/4419860
@@ -46,30 +54,34 @@ follow them separately.
 ## Dependencies
 
 1. Android SDK and NDK
-    1. Download SDK command line tools from https://developer.android.com/studio#command-line-tools-only.
-    2. Unpack the downloaded archive to an empty folder. This path is going
-       to become your `ANDROID_HOME` folder.
-    3. Inside the unpacked `cmdline-tools` folder, create yet another folder
-       called `latest`, then move everything else inside it, so that the final
-       folder hierarchy looks as follows.
-       ```
-       cmdline-tools/latest/bin
-       cmdline-tools/latest/lib
-       cmdline-tools/latest/source.properties
-       cmdline-tools/latest/NOTICE.txt
-       ```
-    4. Navigate inside `cmdline-tools/latest/bin`, then execute
-       ```
-       ./sdkmanager "platform-tools" "build-tools;<version>" "platforms;android-<version>" "extras;android;m2repository" "ndk;<version>"
-       ```
-       The required tools and NDK will be downloaded automatically.
 
-        **NOTE:** You should check [Dockerfile](docker/Dockerfile) for the
-        specific version numbers to insert in the command above.
+   1. Download SDK command line tools from https://developer.android.com/studio#command-line-tools-only.
+   2. Unpack the downloaded archive to an empty folder. This path is going
+      to become your `ANDROID_HOME` folder.
+   3. Inside the unpacked `cmdline-tools` folder, create yet another folder
+      called `latest`, then move everything else inside it, so that the final
+      folder hierarchy looks as follows.
+      ```
+      cmdline-tools/latest/bin
+      cmdline-tools/latest/lib
+      cmdline-tools/latest/source.properties
+      cmdline-tools/latest/NOTICE.txt
+      ```
+   4. Navigate inside `cmdline-tools/latest/bin`, then execute
+
+      ```
+      ./sdkmanager "platform-tools" "build-tools;<version>" "platforms;android-<version>" "extras;android;m2repository" "ndk;<version>"
+      ```
+
+      The required tools and NDK will be downloaded automatically.
+
+      **NOTE:** You should check [Dockerfile](docker/Dockerfile) for the
+      specific version numbers to insert in the command above.
+
 2. Go (see https://docs.syncthing.net/dev/building#prerequisites for the
    required version)
-3. Java version 11 (if not present in ``$PATH``, you might need to set
-   ``$JAVA_HOME`` accordingly)
+3. Java version 11 (if not present in `$PATH`, you might need to set
+   `$JAVA_HOME` accordingly)
 4. Python version 3
 
 ## Build instructions

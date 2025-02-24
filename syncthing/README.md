@@ -1,3 +1,21 @@
+# 启动命令
+
+```
+go run ./cmd/syncthing/ -no-upgrade
+```
+
+# 编译命令
+
+```
+./build.sh
+```
+
+# 启动编译的二进制文件
+
+```
+./bin/syncthing
+```
+
 [![Syncthing][14]][15]
 
 ---

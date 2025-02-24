@@ -89,7 +89,7 @@ func main() {
 		cmds := [][]string{
 			{"go", "version"},
 			{"go", "run", "build.go", "version"},
-			{"go", "run", "build.go", "-goos", "android", "-goarch", target.GoArch, "-cc", cc, "-pkgdir", filepath.Join(goBuildDir, target.GoArch), "-no-upgrade", "build"},
+			{"go", "run", "build.go", "-goos", "android", "-goarch", target.GoArch, "-cc", cc, "-pkgdir", filepath.Join(goBuildDir, target.GoArch), "-no-upgrade", "-version", "v0.10.26", "build"},
 		}
 
 		for _, cmdArgs := range cmds {
