@@ -6,15 +6,14 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
-import android.view.View
 import com.nutomic.syncthingandroid.R
-import com.nutomic.syncthingandroid.activities.FirstStartActivity
 import com.nutomic.syncthingandroid.databinding.ActivityMain2Binding
+import com.nutomic.syncthingandroid.service.RestApi
 import com.nutomic.syncthingandroid.service.SyncthingService
 import com.nutomic.syncthingandroid.service.SyncthingServiceBinder
-import tech.shupi.mydata.base.BaseActivity
 import tech.shupi.mydata.fragments.MainFilesFragment
 import tech.shupi.mydata.fragments.MainRecordsFragment
 import tech.shupi.mydata.fragments.MainSettingsFragment
@@ -43,8 +42,7 @@ class MainActivity2 : AppCompatActivity(), SyncthingService.OnServiceStateChange
         if (savedInstanceState == null) {
             mainFilesFragment = MainFilesFragment()
             supportFragmentManager.beginTransaction()
-                .replace(R.id.main_content, mainFilesFragment!!)
-                .commit()
+                .replace(R.id.main_content, mainFilesFragment!!).commit()
             updateButtonState(binding.mainFiles)
         }
     }
@@ -64,6 +62,8 @@ class MainActivity2 : AppCompatActivity(), SyncthingService.OnServiceStateChange
             val binder = service as SyncthingServiceBinder
             syncthingService = binder.service
             syncthingService?.registerOnServiceStateChangeListener(this@MainActivity2)
+
+            syncthingService?.registerOnServiceStateChangeListener(mainFilesFragment)
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -103,9 +103,7 @@ class MainActivity2 : AppCompatActivity(), SyncthingService.OnServiceStateChange
     }
 
     private fun switchFragment(fragment: Fragment) {
-        supportFragmentManager.beginTransaction()
-            .replace(R.id.main_content, fragment)
-            .commit()
+        supportFragmentManager.beginTransaction().replace(R.id.main_content, fragment).commit()
     }
 
     private fun updateButtonState(selectedButton: View) {
@@ -120,12 +118,15 @@ class MainActivity2 : AppCompatActivity(), SyncthingService.OnServiceStateChange
     }
 
     override fun onServiceStateChange(currentState: SyncthingService.State) {
-        // Handle service state changes
     }
 
     override fun onDestroy() {
         super.onDestroy()
         syncthingService?.unregisterOnServiceStateChangeListener(this)
         unbindService(serviceConnection)
+    }
+
+    fun getApi(): RestApi? {
+        return syncthingService!!.api
     }
 }
