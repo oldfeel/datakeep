@@ -4,11 +4,15 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.AdapterView.OnItemClickListener
 import com.nutomic.syncthingandroid.databinding.FragmentMainSettingsBinding
 import com.nutomic.syncthingandroid.databinding.FragmentMainTasksBinding
+import com.nutomic.syncthingandroid.service.SyncthingService
 import tech.shupi.mydata.base.BaseFragment
+import tech.shupi.mydata.base.BaseServiceFragment
 
-class MainSettingsFragment : BaseFragment() {
+class MainSettingsFragment : BaseServiceFragment(), OnItemClickListener {
     private lateinit var binding: FragmentMainSettingsBinding
 
     override fun onCreateView(
@@ -18,5 +22,11 @@ class MainSettingsFragment : BaseFragment() {
     ): View {
         binding = FragmentMainSettingsBinding.inflate(inflater, container, false)
         return binding.root
+    }
+
+    override fun onServiceStateChange(currentState: SyncthingService.State?) {
+    }
+
+    override fun onItemClick(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
     }
 }

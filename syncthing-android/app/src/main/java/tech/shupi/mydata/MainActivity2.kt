@@ -14,6 +14,7 @@ import com.nutomic.syncthingandroid.databinding.ActivityMain2Binding
 import com.nutomic.syncthingandroid.service.RestApi
 import com.nutomic.syncthingandroid.service.SyncthingService
 import com.nutomic.syncthingandroid.service.SyncthingServiceBinder
+import tech.shupi.mydata.base.BaseServiceFragment
 import tech.shupi.mydata.fragments.MainFilesFragment
 import tech.shupi.mydata.fragments.MainRecordsFragment
 import tech.shupi.mydata.fragments.MainSettingsFragment
@@ -61,14 +62,19 @@ class MainActivity2 : AppCompatActivity(), SyncthingService.OnServiceStateChange
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as SyncthingServiceBinder
             syncthingService = binder.service
-            syncthingService?.registerOnServiceStateChangeListener(this@MainActivity2)
 
-            syncthingService?.registerOnServiceStateChangeListener(mainFilesFragment)
+            registerStateChangeListener()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             syncthingService = null
         }
+    }
+
+    private fun registerStateChangeListener() {
+        syncthingService?.registerOnServiceStateChangeListener(this@MainActivity2)
+
+        syncthingService?.registerOnServiceStateChangeListener(mainFilesFragment)
     }
 
     private fun initListener() {
@@ -102,8 +108,10 @@ class MainActivity2 : AppCompatActivity(), SyncthingService.OnServiceStateChange
         }
     }
 
-    private fun switchFragment(fragment: Fragment) {
+    private fun switchFragment(fragment: BaseServiceFragment) {
         supportFragmentManager.beginTransaction().replace(R.id.main_content, fragment).commit()
+
+        syncthingService?.registerOnServiceStateChangeListener(fragment)
     }
 
     private fun updateButtonState(selectedButton: View) {

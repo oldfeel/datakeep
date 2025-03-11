@@ -16,6 +16,7 @@ import com.nutomic.syncthingandroid.databinding.FragmentMainTasksBinding
 import tech.shupi.mydata.base.BaseFragment
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import com.google.gson.Gson
 import com.nutomic.syncthingandroid.R
 import com.nutomic.syncthingandroid.activities.DeviceActivity
 import com.nutomic.syncthingandroid.model.Device
@@ -25,16 +26,18 @@ import com.nutomic.syncthingandroid.service.SyncthingService.OnServiceStateChang
 import com.nutomic.syncthingandroid.views.DevicesAdapter
 import tech.shupi.mydata.MainActivity2
 import tech.shupi.mydata.base.BaseConstants.TAG
+import tech.shupi.mydata.base.BaseServiceFragment
+import tech.shupi.mydata.views.DevicesAdapter2
 import java.util.Collections
 import java.util.Timer
 import java.util.TimerTask
 
-class MainFilesFragment : BaseFragment(), OnServiceStateChangeListener, OnItemClickListener {
+class MainFilesFragment : BaseServiceFragment(), OnItemClickListener {
     private lateinit var binding: FragmentMainFilesBinding
 
     private val DEVICES_COMPARATOR = Comparator<Device> { lhs, rhs -> lhs.name.compareTo(rhs.name) }
 
-    private var mAdapter: DevicesAdapter? = null
+    private var mAdapter: DevicesAdapter2? = null
     private var mTimer: Timer? = null
 
     override fun onPause() {
@@ -119,10 +122,10 @@ class MainFilesFragment : BaseFragment(), OnServiceStateChangeListener, OnItemCl
 
         val devices = restApi.getDevices(false) ?: return
 
-        Log.d(TAG, "updateList: devices " + devices.size)
+        Log.d(TAG, "updateList: devices " + devices.size + " " + Gson().toJson(devices))
 
         if (mAdapter == null) {
-            mAdapter = DevicesAdapter(activity)
+            mAdapter = DevicesAdapter2(activity)
             binding.deviceList.adapter = mAdapter
         }
 
