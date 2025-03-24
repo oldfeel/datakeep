@@ -26,6 +26,8 @@ dependencies {
     annotationProcessor("com.google.dagger:dagger-compiler:2.49")
     androidTestImplementation("androidx.test:rules:1.4.0")
     androidTestImplementation("androidx.annotation:annotation:1.2.0")
+    implementation("com.github.bumptech.glide:glide:4.16.0")
+    annotationProcessor("com.github.bumptech.glide:compiler:4.16.0")
 }
 
 android {
