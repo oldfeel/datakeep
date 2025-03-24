@@ -1,6 +1,7 @@
 package tech.shupi.mydata.views
 
 import android.content.Context
+import android.content.Intent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -8,6 +9,7 @@ import android.widget.BaseAdapter
 import android.widget.ImageView
 import android.widget.TextView
 import com.nutomic.syncthingandroid.R
+import tech.shupi.mydata.FilesActivity
 import java.io.File
 
 class FilesAdapter(context: Context) : BaseAdapter() {
@@ -49,10 +51,14 @@ class FilesAdapter(context: Context) : BaseAdapter() {
 
         if (file.isDirectory) {
             iconImageView.setImageResource(R.drawable.ic_folder)
+            view.setOnClickListener {
+                val intent = Intent(context, FilesActivity::class.java)
+                intent.putExtra("folder_path", file.absolutePath)
+                context.startActivity(intent)
+            }
         } else {
             iconImageView.setImageResource(R.drawable.ic_file)
         }
-
         return view
     }
 
