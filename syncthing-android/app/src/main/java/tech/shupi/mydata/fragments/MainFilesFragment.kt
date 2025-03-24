@@ -24,6 +24,7 @@ import tech.shupi.mydata.MainActivity2
 import tech.shupi.mydata.base.BaseConstants.TAG
 import tech.shupi.mydata.base.BaseServiceFragment
 import tech.shupi.mydata.views.DevicesAdapter2
+import tech.shupi.mydata.views.FoldersAdapter2
 import java.util.Collections
 import java.util.Timer
 import java.util.TimerTask
@@ -34,7 +35,7 @@ class MainFilesFragment : BaseServiceFragment(), OnItemClickListener {
     private val DEVICES_COMPARATOR = Comparator<Device> { lhs, rhs -> lhs.name.compareTo(rhs.name) }
 
     private var mDevicesAdapter: DevicesAdapter2? = null
-    private var mFoldersAdapter: FoldersAdapter? = null
+    private var mFoldersAdapter: FoldersAdapter2? = null
     private var mTimer: Timer? = null
 
     override fun onPause() {
@@ -71,7 +72,7 @@ class MainFilesFragment : BaseServiceFragment(), OnItemClickListener {
 
         val folders = restApi.folders
         if (mFoldersAdapter == null) {
-            mFoldersAdapter = FoldersAdapter(activity)
+            mFoldersAdapter = FoldersAdapter2(activity)
             binding.folderList.adapter = mFoldersAdapter
         }
 

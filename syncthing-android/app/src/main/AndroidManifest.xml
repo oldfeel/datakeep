@@ -62,6 +62,10 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name="tech.shupi.mydata.FilesActivity"
+            android:exported="false"
+            android:label="文件列表" />
 
         <!--        原来的代码          -->
         <activity
