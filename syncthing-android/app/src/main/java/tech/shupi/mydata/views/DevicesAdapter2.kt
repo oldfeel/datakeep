@@ -3,6 +3,7 @@ package tech.shupi.mydata.views
 import android.content.Context
 import android.content.res.Resources
 import android.graphics.Color
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -11,11 +12,14 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.google.android.material.color.MaterialColors
+import com.google.common.base.Objects
+import com.google.gson.Gson
 import com.nutomic.syncthingandroid.R
 import com.nutomic.syncthingandroid.model.Connections
 import com.nutomic.syncthingandroid.model.Device
 import com.nutomic.syncthingandroid.service.RestApi
 import com.nutomic.syncthingandroid.util.Util
+import tech.shupi.mydata.base.BaseConstants.TAG
 
 /**
  * Generates item views for device items.
@@ -36,6 +40,7 @@ class DevicesAdapter2(context: Context) : ArrayAdapter<Device>(context, R.layout
         val device = getItem(position)
         val deviceId = device?.deviceID ?: ""
 
+        Log.d(TAG, "getView: " + position + Gson().toJson(device))
         name.text = device?.getDisplayName()
 
         // Set device icon based on type
@@ -49,40 +54,39 @@ class DevicesAdapter2(context: Context) : ArrayAdapter<Device>(context, R.layout
         val conn = mConnections?.connections?.get(deviceId)
 
         if (conn == null) {
-            status.text = context.getString(R.string.device_state_unknown)
-            status.setTextColor(ContextCompat.getColor(context, R.color.text_red))
-            syncStatus.text = ""
-            return view
-        }
-
-        if (conn.paused) {
-            status.text = context.getString(R.string.device_paused)
-            status.setTextColor(
-                MaterialColors.getColor(
-                    context,
-                    android.R.attr.textColorPrimary,
-                    Color.BLACK
-                )
-            )
-            syncStatus.text = ""
-            return view
-        }
-
-        if (conn.connected) {
-            status.text = "在线"
-            status.setTextColor(ContextCompat.getColor(context, R.color.text_green))
-            if (conn.completion == 100) {
-                syncStatus.text = context.getString(R.string.device_up_to_date)
+            if (device!!.isLocal) {
+                status.text = "本机"
             } else {
-                syncStatus.text = context.getString(R.string.device_syncing, conn.completion)
+                status.text = context.getString(R.string.device_state_unknown)
+                status.setTextColor(ContextCompat.getColor(context, R.color.text_red))
             }
-            return view
+            syncStatus.text = ""
+        } else {
+            if (conn.paused) {
+                status.text = context.getString(R.string.device_paused)
+                status.setTextColor(
+                    MaterialColors.getColor(
+                        context,
+                        android.R.attr.textColorPrimary,
+                        Color.BLACK
+                    )
+                )
+                syncStatus.text = ""
+            } else if (conn.connected) {
+                status.text = "在线"
+                status.setTextColor(ContextCompat.getColor(context, R.color.text_green))
+                if (conn.completion == 100) {
+                    syncStatus.text = context.getString(R.string.device_up_to_date)
+                } else {
+                    syncStatus.text = context.getString(R.string.device_syncing, conn.completion)
+                }
+            } else {
+                status.text = context.getString(R.string.device_disconnected)
+                status.setTextColor(ContextCompat.getColor(context, R.color.text_red))
+                syncStatus.text = ""
+            }
         }
 
-        // !conn.connected
-        status.text = context.getString(R.string.device_disconnected)
-        status.setTextColor(ContextCompat.getColor(context, R.color.text_red))
-        syncStatus.text = ""
         return view
     }
 

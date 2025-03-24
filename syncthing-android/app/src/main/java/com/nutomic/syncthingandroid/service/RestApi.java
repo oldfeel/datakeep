@@ -463,11 +463,16 @@ public class RestApi {
             devices = deepCopy(mConfig.devices, new TypeToken<List<Device>>(){}.getType());
         }
 
+        // 为每个设备设置 isLocal 标志
+        for (Device device : devices) {
+            device.isLocal = Objects.equal(mLocalDeviceId, device.deviceID);
+        }
+
+        // 根据 includeLocal 参数过滤设备
         Iterator<Device> it = devices.iterator();
         while (it.hasNext()) {
             Device device = it.next();
-            boolean isLocalDevice = Objects.equal(mLocalDeviceId, device.deviceID);
-            if (!includeLocal && isLocalDevice) {
+            if (!includeLocal && device.isLocal) {
                 it.remove();
                 break;
             }
