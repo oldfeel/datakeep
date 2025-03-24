@@ -24,6 +24,11 @@ class MainRecordsFragment : BaseServiceFragment(), OnItemClickListener {
         return binding.root
     }
 
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        setTitle("记录")
+    }
+
     override fun onServiceStateChange(currentState: SyncthingService.State?) {
     }
 

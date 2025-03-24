@@ -73,8 +73,8 @@ class MainFilesFragment : BaseServiceFragment(), OnItemClickListener {
         val folders = restApi.folders
         if (mFoldersAdapter == null) {
             mFoldersAdapter = FoldersAdapter2(activity)
-            binding.folderList.adapter = mFoldersAdapter
         }
+        binding.folderList.adapter = mFoldersAdapter
 
         mFoldersAdapter?.setNotifyOnChange(false)
         mFoldersAdapter?.clear()
@@ -148,8 +148,8 @@ class MainFilesFragment : BaseServiceFragment(), OnItemClickListener {
 
         if (mDevicesAdapter == null) {
             mDevicesAdapter = DevicesAdapter2(activity)
-            binding.deviceList.adapter = mDevicesAdapter
         }
+        binding.deviceList.adapter = mDevicesAdapter
 
         // Prevent scroll position reset due to list update from clear().
         mDevicesAdapter?.setNotifyOnChange(false)

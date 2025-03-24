@@ -10,12 +10,6 @@ import com.nutomic.syncthingandroid.R
 open class BaseFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
-        val toolbar: Toolbar? = view.findViewById(R.id.toolbar)
-
-        if (toolbar != null) {
-            (activity as AppCompatActivity).setSupportActionBar(toolbar)
-        }
     }
 
     fun setTitle(title: String) {
