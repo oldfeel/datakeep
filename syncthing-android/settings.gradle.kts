@@ -16,5 +16,6 @@ dependencyResolutionManagement {
 }
 
 include(
-    ":app"
+    ":app",
+    ":syncthing"
 )

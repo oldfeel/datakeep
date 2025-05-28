@@ -1,8 +1,9 @@
+import org.gradle.configurationcache.extensions.capitalized
+
 plugins {
     id("com.android.application")
     id("com.github.ben-manes.versions")
     id("com.github.triplet.play") version "3.7.0"
-    id("org.jetbrains.kotlin.android")
 }
 
 dependencies {
@@ -22,19 +23,16 @@ dependencies {
 
     implementation("androidx.constraintlayout:constraintlayout:2.0.4")
     implementation("com.google.dagger:dagger:2.49")
-    implementation("androidx.core:core-ktx:1.15.0")
     annotationProcessor("com.google.dagger:dagger-compiler:2.49")
     androidTestImplementation("androidx.test:rules:1.4.0")
     androidTestImplementation("androidx.annotation:annotation:1.2.0")
-    implementation("com.github.bumptech.glide:glide:4.16.0")
-    annotationProcessor("com.github.bumptech.glide:compiler:4.16.0")
 }
 
 android {
     val ndkVersionShared = rootProject.extra.get("ndkVersionShared")
     // Changes to these values need to be reflected in `../docker/Dockerfile`
-    compileSdk = 35
-    buildToolsVersion = "35.0.0"
+    compileSdk = 34
+    buildToolsVersion = "34.0.0"
     ndkVersion = "${ndkVersionShared}"
 
     buildFeatures {
@@ -45,7 +43,7 @@ android {
     defaultConfig {
         applicationId = "com.nutomic.syncthingandroid"
         minSdk = 21
-        targetSdk = 35
+        targetSdk = 33
         versionCode = 4395
         versionName = "1.28.1"
         testApplicationId = "com.nutomic.syncthingandroid.test"
@@ -88,10 +86,6 @@ android {
             useLegacyPackaging = true
         }
     }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
-    namespace = "com.nutomic.syncthingandroid"
 }
 
 play {
@@ -116,4 +110,12 @@ tasks.register<Delete>("deleteUnsupportedPlayTranslations") {
         "src/main/play/listings/nn/",
         "src/main/play/listings/ta/",
     )
+}
+
+project.afterEvaluate {
+    android.buildTypes.forEach {
+        tasks.named("merge${it.name.capitalized()}JniLibFolders") {
+            dependsOn(":syncthing:buildNative")
+        }
+    }
 }

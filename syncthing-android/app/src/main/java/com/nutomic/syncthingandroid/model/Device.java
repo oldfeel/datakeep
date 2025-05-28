@@ -13,7 +13,6 @@ public class Device {
     public boolean introducer;
     public boolean paused;
     public List<IgnoredFolder> ignoredFolders;
-    public boolean isLocal = false;
 
     /**
      * Returns the device name, or the first characters of the ID if the name is empty.
