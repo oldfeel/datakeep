@@ -12,8 +12,9 @@ import (
 	"time"
 
 	syncthingprotocol "github.com/syncthing/syncthing/lib/protocol"
-	"github.com/syncthing/syncthing/lib/relay/protocol"
 	"github.com/syncthing/syncthing/lib/tlsutil"
+
+	"github.com/syncthing/syncthing/lib/relay/protocol"
 )
 
 var (

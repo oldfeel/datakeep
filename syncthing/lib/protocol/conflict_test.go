@@ -1,14 +1,8 @@
-// Copyright (C) 2015 The Syncthing Authors.
-//
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this file,
-// You can obtain one at https://mozilla.org/MPL/2.0/.
+// Copyright (C) 2015 The Protocol Authors.
 
 package protocol
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestWinsConflict(t *testing.T) {
 	testcases := [][2]FileInfo{
@@ -20,10 +14,10 @@ func TestWinsConflict(t *testing.T) {
 	}
 
 	for _, tc := range testcases {
-		if !tc[0].WinsConflict(tc[1]) {
+		if !WinsConflict(tc[0], tc[1]) {
 			t.Errorf("%v should win over %v", tc[0], tc[1])
 		}
-		if tc[1].WinsConflict(tc[0]) {
+		if WinsConflict(tc[1], tc[0]) {
 			t.Errorf("%v should not win over %v", tc[1], tc[0])
 		}
 	}

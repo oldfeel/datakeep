@@ -28,7 +28,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/syncthing/syncthing/internal/gen/discosrv"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/stringutil"
 )
@@ -53,7 +52,7 @@ type apiSrv struct {
 }
 
 type replicator interface {
-	send(key *protocol.DeviceID, addrs []*discosrv.DatabaseAddress, seen int64)
+	send(key *protocol.DeviceID, addrs []DatabaseAddress, seen int64)
 }
 
 type requestID int64
@@ -120,9 +119,7 @@ func (s *apiSrv) Serve(ctx context.Context) error {
 		ReadTimeout:    httpReadTimeout,
 		WriteTimeout:   httpWriteTimeout,
 		MaxHeaderBytes: httpMaxHeaderBytes,
-	}
-	if !debug {
-		srv.ErrorLog = log.New(io.Discard, "", 0)
+		ErrorLog:       log.New(io.Discard, "", 0),
 	}
 
 	go func() {
@@ -198,7 +195,7 @@ func (s *apiSrv) handleGET(w http.ResponseWriter, req *http.Request) {
 	deviceID, err := protocol.DeviceIDFromString(req.URL.Query().Get("device"))
 	if err != nil {
 		if debug {
-			log.Println(reqID, "bad device param:", err)
+			log.Println(reqID, "bad device param")
 		}
 		lookupRequestsTotal.WithLabelValues("bad_request").Inc()
 		w.Header().Set("Retry-After", errorRetryAfterString())
@@ -283,9 +280,6 @@ func (s *apiSrv) handlePOST(remoteAddr *net.TCPAddr, w http.ResponseWriter, req 
 
 	addresses := fixupAddresses(remoteAddr, ann.Addresses)
 	if len(addresses) == 0 {
-		if debug {
-			log.Println(reqID, "no addresses")
-		}
 		announceRequestsTotal.WithLabelValues("bad_request").Inc()
 		w.Header().Set("Retry-After", errorRetryAfterString())
 		http.Error(w, "Bad Request", http.StatusBadRequest)
@@ -293,9 +287,6 @@ func (s *apiSrv) handlePOST(remoteAddr *net.TCPAddr, w http.ResponseWriter, req 
 	}
 
 	if err := s.handleAnnounce(deviceID, addresses); err != nil {
-		if debug {
-			log.Println(reqID, "handle:", err)
-		}
 		announceRequestsTotal.WithLabelValues("internal_error").Inc()
 		w.Header().Set("Retry-After", errorRetryAfterString())
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -306,9 +297,6 @@ func (s *apiSrv) handlePOST(remoteAddr *net.TCPAddr, w http.ResponseWriter, req 
 
 	w.Header().Set("Reannounce-After", reannounceAfterString())
 	w.WriteHeader(http.StatusNoContent)
-	if debug {
-		log.Println(reqID, "announced", deviceID, addresses)
-	}
 }
 
 func (s *apiSrv) Stop() {
@@ -324,12 +312,10 @@ func (s *apiSrv) handleAnnounce(deviceID protocol.DeviceID, addresses []string) 
 	slices.Sort(addresses)
 	addresses = slices.Compact(addresses)
 
-	dbAddrs := make([]*discosrv.DatabaseAddress, len(addresses))
+	dbAddrs := make([]DatabaseAddress, len(addresses))
 	for i := range addresses {
-		dbAddrs[i] = &discosrv.DatabaseAddress{
-			Address: addresses[i],
-			Expires: expire,
-		}
+		dbAddrs[i].Address = addresses[i]
+		dbAddrs[i].Expires = expire
 	}
 
 	seen := now.UnixNano()
@@ -340,7 +326,7 @@ func (s *apiSrv) handleAnnounce(deviceID protocol.DeviceID, addresses []string) 
 }
 
 func handlePing(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(204)
 }
 
 func certificateBytes(req *http.Request) ([]byte, error) {
@@ -525,7 +511,7 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
-func addressStrs(dbAddrs []*discosrv.DatabaseAddress) []string {
+func addressStrs(dbAddrs []DatabaseAddress) []string {
 	res := make([]string, len(dbAddrs))
 	for i, a := range dbAddrs {
 		res[i] = a.Address

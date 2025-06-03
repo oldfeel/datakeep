@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -85,6 +86,7 @@ var targets = map[string]target{
 	"all": {
 		// Only valid for the "build" and "install" commands as it lacks all
 		// the archive creation stuff. buildPkgs gets filled out in init()
+		tags: []string{"purego"},
 	},
 	"syncthing": {
 		// The default target for "build", "install", "tar", "zip", "deb", etc.
@@ -156,6 +158,7 @@ var targets = map[string]target{
 			{src: "cmd/stdiscosrv/etc/linux-systemd/default", dst: "deb/etc/default/syncthing-discosrv", perm: 0o644},
 			{src: "cmd/stdiscosrv/etc/firewall-ufw/stdiscosrv", dst: "deb/etc/ufw/applications.d/stdiscosrv", perm: 0o644},
 		},
+		tags: []string{"purego"},
 	},
 	"strelaysrv": {
 		name:        "strelaysrv",
@@ -187,9 +190,23 @@ var targets = map[string]target{
 	},
 	"strelaypoolsrv": {
 		name:        "strelaypoolsrv",
+		debname:     "syncthing-relaypoolsrv",
+		debdeps:     []string{"libc6"},
 		description: "Syncthing Relay Pool Server",
 		buildPkgs:   []string{"github.com/syncthing/syncthing/cmd/infra/strelaypoolsrv"},
-		binaryName:  "strelaypoolsrv",
+		binaryName:  "strelaypoolsrv", // .exe will be added automatically for Windows builds
+		archiveFiles: []archiveFile{
+			{src: "{{binary}}", dst: "{{binary}}", perm: 0o755},
+			{src: "cmd/infra/strelaypoolsrv/README.md", dst: "README.txt", perm: 0o644},
+			{src: "cmd/infra/strelaypoolsrv/LICENSE", dst: "LICENSE.txt", perm: 0o644},
+			{src: "AUTHORS", dst: "AUTHORS.txt", perm: 0o644},
+		},
+		installationFiles: []archiveFile{
+			{src: "{{binary}}", dst: "deb/usr/bin/{{binary}}", perm: 0o755},
+			{src: "cmd/infra/strelaypoolsrv/README.md", dst: "deb/usr/share/doc/syncthing-relaypoolsrv/README.txt", perm: 0o644},
+			{src: "cmd/infra/strelaypoolsrv/LICENSE", dst: "deb/usr/share/doc/syncthing-relaypoolsrv/LICENSE.txt", perm: 0o644},
+			{src: "AUTHORS", dst: "deb/usr/share/doc/syncthing-relaypoolsrv/AUTHORS.txt", perm: 0o644},
+		},
 	},
 	"stupgrades": {
 		name:        "stupgrades",
@@ -388,6 +405,7 @@ func parseFlags() {
 func test(tags []string, pkgs ...string) {
 	lazyRebuildAssets()
 
+	tags = append(tags, "purego")
 	args := []string{"test", "-tags", strings.Join(tags, " ")}
 	if long {
 		timeout = longTimeout
@@ -421,7 +439,7 @@ func bench(tags []string, pkgs ...string) {
 func integration(bench bool) {
 	lazyRebuildAssets()
 	args := []string{"test", "-v", "-timeout", "60m", "-tags"}
-	tags := "integration"
+	tags := "purego,integration"
 	if bench {
 		tags += ",benchmark"
 	}
@@ -907,9 +925,22 @@ func updateDependencies() {
 }
 
 func proto() {
-	// buf needs to be installed
-	// https://buf.build/docs/installation/
-	runPrint("buf", "generate")
+	pv := protobufVersion()
+	repo := "https://github.com/gogo/protobuf.git"
+	path := filepath.Join("repos", "protobuf")
+
+	runPrint(goCmd, "install", fmt.Sprintf("github.com/gogo/protobuf/protoc-gen-gogofast@%v", pv))
+	os.MkdirAll("repos", 0o755)
+
+	if _, err := os.Stat(path); err != nil {
+		runPrint("git", "clone", repo, path)
+	} else {
+		runPrintInDir(path, "git", "fetch")
+	}
+	runPrintInDir(path, "git", "checkout", pv)
+
+	runPrint(goCmd, "generate", "github.com/syncthing/syncthing/cmd/stdiscosrv")
+	runPrint(goCmd, "generate", "proto/generate.go")
 }
 
 func testmocks() {
@@ -1344,7 +1375,10 @@ func zipFile(out string, files []archiveFile) {
 }
 
 func codesign(target target) {
-	if goos == "darwin" {
+	switch goos {
+	case "windows":
+		windowsCodesign(target.BinaryName())
+	case "darwin":
 		macosCodesign(target.BinaryName())
 	}
 }
@@ -1368,6 +1402,70 @@ func macosCodesign(file string) {
 	}
 }
 
+func windowsCodesign(file string) {
+	st := "signtool.exe"
+
+	if path := os.Getenv("CODESIGN_SIGNTOOL"); path != "" {
+		st = path
+	}
+
+	for i, algo := range []string{"sha1", "sha256"} {
+		args := []string{"sign", "/fd", algo}
+		if f := os.Getenv("CODESIGN_CERTIFICATE_FILE"); f != "" {
+			args = append(args, "/f", f)
+		} else if b := os.Getenv("CODESIGN_CERTIFICATE_BASE64"); b != "" {
+			// Decode the PFX certificate from base64.
+			bs, err := base64.RawStdEncoding.DecodeString(b)
+			if err != nil {
+				log.Println("Codesign: signing failed: decoding base64:", err)
+				return
+			}
+
+			// Write it to a temporary file
+			f, err := os.CreateTemp("", "codesign-*.pfx")
+			if err != nil {
+				log.Println("Codesign: signing failed: creating temp file:", err)
+				return
+			}
+			_ = f.Chmod(0o600) // best effort remove other users' access
+			defer os.Remove(f.Name())
+			if _, err := f.Write(bs); err != nil {
+				log.Println("Codesign: signing failed: writing temp file:", err)
+				return
+			}
+			if err := f.Close(); err != nil {
+				log.Println("Codesign: signing failed: closing temp file:", err)
+				return
+			}
+
+			// Use that when signing
+			args = append(args, "/f", f.Name())
+		}
+		if p := os.Getenv("CODESIGN_CERTIFICATE_PASSWORD"); p != "" {
+			args = append(args, "/p", p)
+		}
+		if tr := os.Getenv("CODESIGN_TIMESTAMP_SERVER"); tr != "" {
+			switch algo {
+			case "sha256":
+				args = append(args, "/tr", tr, "/td", algo)
+			default:
+				args = append(args, "/t", tr)
+			}
+		}
+		if i > 0 {
+			args = append(args, "/as")
+		}
+		args = append(args, file)
+
+		bs, err := runError(st, args...)
+		if err != nil {
+			log.Printf("Codesign: signing failed: %v: %s", err, string(bs))
+			return
+		}
+		log.Println("Codesign: successfully signed", file, "using", algo)
+	}
+}
+
 func metalint() {
 	lazyRebuildAssets()
 	runPrint(goCmd, "test", "-run", "Metalint", "./meta")
@@ -1383,6 +1481,14 @@ func (t target) BinaryName() string {
 		return t.binaryName + ".exe"
 	}
 	return t.binaryName
+}
+
+func protobufVersion() string {
+	bs, err := runError(goCmd, "list", "-f", "{{.Version}}", "-m", "github.com/gogo/protobuf")
+	if err != nil {
+		log.Fatal("Getting protobuf version:", err)
+	}
+	return string(bs)
 }
 
 func currentAndLatestVersions(n int) ([]string, error) {

@@ -6,14 +6,6 @@
 
 package config
 
-type Tuning int32
-
-const (
-	TuningAuto  Tuning = 0
-	TuningSmall Tuning = 1
-	TuningLarge Tuning = 2
-)
-
 func (t Tuning) String() string {
 	switch t {
 	case TuningAuto:

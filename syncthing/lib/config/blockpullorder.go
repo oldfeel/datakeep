@@ -6,14 +6,6 @@
 
 package config
 
-type BlockPullOrder int32
-
-const (
-	BlockPullOrderStandard BlockPullOrder = 0
-	BlockPullOrderRandom   BlockPullOrder = 1
-	BlockPullOrderInOrder  BlockPullOrder = 2
-)
-
 func (o BlockPullOrder) String() string {
 	switch o {
 	case BlockPullOrderStandard:

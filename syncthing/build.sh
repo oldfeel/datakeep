@@ -30,6 +30,6 @@ case "${1:-default}" in
 		;;
 
 	*)
-		build --version v0.10.26 --no-upgrade "$@"
+		build "$@"
 		;;
 esac

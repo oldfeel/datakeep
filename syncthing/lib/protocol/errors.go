@@ -1,8 +1,4 @@
-// Copyright (C) 2014 The Syncthing Authors.
-//
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this file,
-// You can obtain one at https://mozilla.org/MPL/2.0/.
+// Copyright (C) 2014 The Protocol Authors.
 
 package protocol
 
@@ -28,12 +24,12 @@ func codeToError(code ErrorCode) error {
 }
 
 func errorToCode(err error) ErrorCode {
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		return ErrorCodeNoError
-	case errors.Is(err, ErrNoSuchFile):
+	case ErrNoSuchFile:
 		return ErrorCodeNoSuchFile
-	case errors.Is(err, ErrInvalid):
+	case ErrInvalid:
 		return ErrorCodeInvalidFile
 	default:
 		return ErrorCodeGeneric

@@ -402,9 +402,6 @@ func (s *service) Serve(ctx context.Context) error {
 		// care about we log ourselves from the handlers.
 		ErrorLog: log.New(io.Discard, "", 0),
 	}
-	if shouldDebugHTTP() {
-		srv.ErrorLog = log.Default()
-	}
 
 	l.Infoln("GUI and API listening on", listener.Addr())
 	l.Infoln("Access the GUI via the following URL:", guiCfg.URL())
@@ -1751,10 +1748,10 @@ func (*service) getSystemBrowse(w http.ResponseWriter, r *http.Request) {
 	current := qs.Get("current")
 
 	// Default value or in case of error unmarshalling ends up being basic fs.
-	var fsType config.FilesystemType
+	var fsType fs.FilesystemType
 	fsType.UnmarshalText([]byte(qs.Get("filesystem")))
 
-	sendJSON(w, browse(fsType.ToFS(), current))
+	sendJSON(w, browse(fsType, current))
 }
 
 func browse(fsType fs.FilesystemType, current string) []string {
@@ -1873,10 +1870,10 @@ func (*service) getHeapProf(w http.ResponseWriter, _ *http.Request) {
 	pprof.WriteHeapProfile(w)
 }
 
-func toJsonFileInfoSlice(fs []protocol.FileInfo) []jsonFileInfo {
-	res := make([]jsonFileInfo, len(fs))
+func toJsonFileInfoSlice(fs []db.FileInfoTruncated) []jsonFileInfoTrunc {
+	res := make([]jsonFileInfoTrunc, len(fs))
 	for i, f := range fs {
-		res[i] = jsonFileInfo(f)
+		res[i] = jsonFileInfoTrunc(f)
 	}
 	return res
 }
@@ -1891,7 +1888,15 @@ func (f jsonFileInfo) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-func fileIntfJSONMap(f protocol.FileInfo) map[string]interface{} {
+type jsonFileInfoTrunc db.FileInfoTruncated
+
+func (f jsonFileInfoTrunc) MarshalJSON() ([]byte, error) {
+	m := fileIntfJSONMap(db.FileInfoTruncated(f))
+	m["numBlocks"] = nil // explicitly unknown
+	return json.Marshal(m)
+}
+
+func fileIntfJSONMap(f protocol.FileIntf) map[string]interface{} {
 	out := map[string]interface{}{
 		"name":          f.FileName(),
 		"type":          f.FileType().String(),

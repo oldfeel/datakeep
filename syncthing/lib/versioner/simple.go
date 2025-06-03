@@ -43,7 +43,7 @@ func newSimple(cfg config.FolderConfiguration) Versioner {
 		cleanoutDays:    cleanoutDays,
 		folderFs:        cfg.Filesystem(nil),
 		versionsFs:      versionerFsFromFolderCfg(cfg),
-		copyRangeMethod: cfg.CopyRangeMethod.ToFS(),
+		copyRangeMethod: cfg.CopyRangeMethod,
 	}
 
 	l.Debugf("instantiated %#v", s)

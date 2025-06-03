@@ -92,7 +92,8 @@ func (f *receiveOnlyFolder) revert() error {
 		return err
 	}
 	defer snap.Release()
-	snap.WithHave(protocol.LocalDeviceID, func(fi protocol.FileInfo) bool {
+	snap.WithHave(protocol.LocalDeviceID, func(intf protocol.FileIntf) bool {
+		fi := intf.(protocol.FileInfo)
 		if !fi.IsReceiveOnlyChanged() {
 			// We're only interested in files that have changed locally in
 			// receive only mode.
@@ -215,7 +216,7 @@ func (q *deleteQueue) flush(snap *db.Snapshot) ([]string, error) {
 	for _, dir := range q.dirs {
 		if err := q.handler.deleteDirOnDisk(dir, snap, q.scanChan); err == nil {
 			deleted = append(deleted, dir)
-		} else if firstError == nil {
+		} else if err != nil && firstError == nil {
 			firstError = err
 		}
 	}

@@ -48,22 +48,24 @@ func (f *sendOnlyFolder) pull() (bool, error) {
 		return false, err
 	}
 	defer snap.Release()
-	snap.WithNeed(protocol.LocalDeviceID, func(file protocol.FileInfo) bool {
+	snap.WithNeed(protocol.LocalDeviceID, func(intf protocol.FileIntf) bool {
 		batch.FlushIfFull()
 
-		if f.ignores.Match(file.FileName()).IsIgnored() {
+		file := intf.(protocol.FileInfo)
+
+		if f.ignores.Match(intf.FileName()).IsIgnored() {
 			file.SetIgnored()
 			batch.Append(file)
 			l.Debugln(f, "Handling ignored file", file)
 			return true
 		}
 
-		curFile, ok := snap.Get(protocol.LocalDeviceID, file.FileName())
+		curFile, ok := snap.Get(protocol.LocalDeviceID, intf.FileName())
 		if !ok {
-			if file.IsInvalid() {
+			if intf.IsInvalid() {
 				// Global invalid file just exists for need accounting
 				batch.Append(file)
-			} else if file.IsDeleted() {
+			} else if intf.IsDeleted() {
 				l.Debugln("Should never get a deleted file as needed when we don't have it")
 				f.evLogger.Log(events.Failure, "got deleted file that doesn't exist locally as needed when pulling on send-only")
 			}
@@ -109,7 +111,8 @@ func (f *sendOnlyFolder) override() error {
 		return err
 	}
 	defer snap.Release()
-	snap.WithNeed(protocol.LocalDeviceID, func(need protocol.FileInfo) bool {
+	snap.WithNeed(protocol.LocalDeviceID, func(fi protocol.FileIntf) bool {
+		need := fi.(protocol.FileInfo)
 		_ = batch.FlushIfFull()
 
 		have, ok := snap.Get(protocol.LocalDeviceID, need.Name)

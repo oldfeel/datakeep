@@ -17,9 +17,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"google.golang.org/protobuf/proto"
-
-	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/osutil"
@@ -283,11 +280,10 @@ func loadEncryptedFileInfo(fd fs.File) (*protocol.FileInfo, error) {
 		return nil, err
 	}
 
-	var encFi bep.FileInfo
-	if err := proto.Unmarshal(trailer, &encFi); err != nil {
+	var encFi protocol.FileInfo
+	if err := encFi.Unmarshal(trailer); err != nil {
 		return nil, err
 	}
-	fi := protocol.FileInfoFromWire(&encFi)
 
-	return &fi, nil
+	return &encFi, nil
 }

@@ -9,6 +9,7 @@ package tools
 
 import (
 	_ "github.com/calmh/xdr"
+	_ "github.com/gogo/protobuf/protoc-gen-gogofast"
 	_ "github.com/maxbrunsfeld/counterfeiter/v6"
 	_ "golang.org/x/tools/cmd/goimports"
 )

@@ -21,12 +21,11 @@ import (
 	stdsync "sync"
 	"time"
 
-	"golang.org/x/net/http2"
-
 	"github.com/syncthing/syncthing/lib/connections/registry"
 	"github.com/syncthing/syncthing/lib/dialer"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/protocol"
+	"golang.org/x/net/http2"
 )
 
 type globalClient struct {

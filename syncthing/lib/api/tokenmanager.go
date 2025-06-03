@@ -12,9 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
-	"github.com/syncthing/syncthing/internal/gen/apiproto"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
@@ -31,17 +28,16 @@ type tokenManager struct {
 	timeNow func() time.Time // can be overridden for testing
 
 	mut       sync.Mutex
-	tokens    *apiproto.TokenSet
+	tokens    *TokenSet
 	saveTimer *time.Timer
 }
 
 func newTokenManager(key string, miscDB *db.NamespacedKV, lifetime time.Duration, maxItems int) *tokenManager {
-	var tokens apiproto.TokenSet
-	if bs, ok, _ := miscDB.Bytes(key); ok {
-		_ = proto.Unmarshal(bs, &tokens) // best effort
+	tokens := &TokenSet{
+		Tokens: make(map[string]int64),
 	}
-	if tokens.Tokens == nil {
-		tokens.Tokens = make(map[string]int64)
+	if bs, ok, _ := miscDB.Bytes(key); ok {
+		_ = tokens.Unmarshal(bs) // best effort
 	}
 	return &tokenManager{
 		key:      key,
@@ -50,7 +46,7 @@ func newTokenManager(key string, miscDB *db.NamespacedKV, lifetime time.Duration
 		maxItems: maxItems,
 		timeNow:  time.Now,
 		mut:      sync.NewMutex(),
-		tokens:   &tokens,
+		tokens:   tokens,
 	}
 }
 
@@ -140,7 +136,7 @@ func (m *tokenManager) scheduledSave() {
 
 	m.saveTimer = nil
 
-	bs, _ := proto.Marshal(m.tokens) // can't fail
+	bs, _ := m.tokens.Marshal()      // can't fail
 	_ = m.miscDB.PutBytes(m.key, bs) // can fail, but what are we going to do?
 }
 

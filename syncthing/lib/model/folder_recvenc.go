@@ -56,25 +56,26 @@ func (f *receiveEncryptedFolder) revert() error {
 	defer snap.Release()
 	var iterErr error
 	var dirs []string
-	snap.WithHaveTruncated(protocol.LocalDeviceID, func(fi protocol.FileInfo) bool {
+	snap.WithHaveTruncated(protocol.LocalDeviceID, func(intf protocol.FileIntf) bool {
 		if iterErr = batch.FlushIfFull(); iterErr != nil {
 			return false
 		}
 
-		if !fi.IsReceiveOnlyChanged() || fi.IsDeleted() {
+		fit := intf.(db.FileInfoTruncated)
+		if !fit.IsReceiveOnlyChanged() || intf.IsDeleted() {
 			return true
 		}
 
-		if fi.IsDirectory() {
-			dirs = append(dirs, fi.Name)
+		if fit.IsDirectory() {
+			dirs = append(dirs, fit.Name)
 			return true
 		}
 
-		if err := f.inWritableDir(f.mtimefs.Remove, fi.Name); err != nil && !fs.IsNotExist(err) {
-			f.newScanError(fi.Name, fmt.Errorf("deleting unexpected item: %w", err))
+		if err := f.inWritableDir(f.mtimefs.Remove, fit.Name); err != nil && !fs.IsNotExist(err) {
+			f.newScanError(fit.Name, fmt.Errorf("deleting unexpected item: %w", err))
 		}
 
-		fi.SetDeleted(f.shortID)
+		fi := fit.ConvertToDeletedFileInfo(f.shortID)
 		// Set version to zero, such that we pull the global version in case
 		// this is a valid filename that was erroneously changed locally.
 		// Should already be zero from scanning, but lets be safe.

@@ -7,11 +7,9 @@
 package discover
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -19,15 +17,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/thejerf/suture/v4"
-	"google.golang.org/protobuf/proto"
-
-	"github.com/syncthing/syncthing/internal/gen/discoproto"
 	"github.com/syncthing/syncthing/lib/beacon"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/rand"
 	"github.com/syncthing/syncthing/lib/svcutil"
+	"github.com/thejerf/suture/v4"
 )
 
 type localClient struct {
@@ -126,12 +121,12 @@ func (c *localClient) announcementPkt(instanceID int64, msg []byte) ([]byte, boo
 		return msg, false
 	}
 
-	pkt := &discoproto.Announce{
-		Id:         c.myID[:],
+	pkt := Announce{
+		ID:         c.myID,
 		Addresses:  addrs,
-		InstanceId: instanceID,
+		InstanceID: instanceID,
 	}
-	bs, _ := proto.Marshal(pkt)
+	bs, _ := pkt.Marshal()
 
 	if pktLen := 4 + len(bs); cap(msg) < pktLen {
 		msg = make([]byte, 0, pktLen)
@@ -198,19 +193,18 @@ func (c *localClient) recvAnnouncements(ctx context.Context) error {
 			continue
 		}
 
-		var pkt discoproto.Announce
-		err := proto.Unmarshal(buf[4:], &pkt)
-		if err != nil && !errors.Is(err, io.EOF) {
-			l.Debugf("discover: Failed to unmarshal local announcement from %s (%s):\n%s", addr, err, hex.Dump(buf[4:]))
+		var pkt Announce
+		err := pkt.Unmarshal(buf[4:])
+		if err != nil && err != io.EOF {
+			l.Debugf("discover: Failed to unmarshal local announcement from %s:\n%s", addr, hex.Dump(buf))
 			continue
 		}
 
-		id, _ := protocol.DeviceIDFromBytes(pkt.Id)
-		l.Debugf("discover: Received local announcement from %s for %s", addr, id)
+		l.Debugf("discover: Received local announcement from %s for %s", addr, pkt.ID)
 
 		var newDevice bool
-		if !bytes.Equal(pkt.Id, c.myID[:]) {
-			newDevice = c.registerDevice(addr, &pkt)
+		if pkt.ID != c.myID {
+			newDevice = c.registerDevice(addr, pkt)
 		}
 
 		if newDevice {
@@ -224,24 +218,18 @@ func (c *localClient) recvAnnouncements(ctx context.Context) error {
 	}
 }
 
-func (c *localClient) registerDevice(src net.Addr, device *discoproto.Announce) bool {
+func (c *localClient) registerDevice(src net.Addr, device Announce) bool {
 	// Remember whether we already had a valid cache entry for this device.
 	// If the instance ID has changed the remote device has restarted since
 	// we last heard from it, so we should treat it as a new device.
 
-	id, err := protocol.DeviceIDFromBytes(device.Id)
-	if err != nil {
-		l.Debugf("discover: Failed to parse device ID %x: %v", device.Id, err)
-		return false
-	}
-
-	ce, existsAlready := c.Get(id)
-	isNewDevice := !existsAlready || time.Since(ce.when) > CacheLifeTime || ce.instanceID != device.InstanceId
+	ce, existsAlready := c.Get(device.ID)
+	isNewDevice := !existsAlready || time.Since(ce.when) > CacheLifeTime || ce.instanceID != device.InstanceID
 
 	// Any empty or unspecified addresses should be set to the source address
 	// of the announcement. We also skip any addresses we can't parse.
 
-	l.Debugln("discover: Registering addresses for", id)
+	l.Debugln("discover: Registering addresses for", device.ID)
 	var validAddresses []string
 	for _, addr := range device.Addresses {
 		u, err := url.Parse(addr)
@@ -284,16 +272,16 @@ func (c *localClient) registerDevice(src net.Addr, device *discoproto.Announce) 
 		}
 	}
 
-	c.Set(id, CacheEntry{
+	c.Set(device.ID, CacheEntry{
 		Addresses:  validAddresses,
 		when:       time.Now(),
 		found:      true,
-		instanceID: device.InstanceId,
+		instanceID: device.InstanceID,
 	})
 
 	if isNewDevice {
 		c.evLogger.Log(events.DeviceDiscovered, map[string]interface{}{
-			"device": id.String(),
+			"device": device.ID.String(),
 			"addrs":  validAddresses,
 		})
 	}

@@ -6,15 +6,6 @@
 
 package config
 
-type FolderType int32
-
-const (
-	FolderTypeSendReceive      FolderType = 0
-	FolderTypeSendOnly         FolderType = 1
-	FolderTypeReceiveOnly      FolderType = 2
-	FolderTypeReceiveEncrypted FolderType = 3
-)
-
 func (t FolderType) String() string {
 	switch t {
 	case FolderTypeSendReceive:

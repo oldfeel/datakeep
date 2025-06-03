@@ -111,11 +111,3 @@ tasks.register<Delete>("deleteUnsupportedPlayTranslations") {
         "src/main/play/listings/ta/",
     )
 }
-
-project.afterEvaluate {
-    android.buildTypes.forEach {
-        tasks.named("merge${it.name.capitalized()}JniLibFolders") {
-            dependsOn(":syncthing:buildNative")
-        }
-    }
-}

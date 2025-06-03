@@ -19,10 +19,6 @@ import (
 	"time"
 
 	"github.com/greatroar/blobloom"
-	"github.com/thejerf/suture/v4"
-	"google.golang.org/protobuf/proto"
-
-	"github.com/syncthing/syncthing/internal/gen/dbproto"
 	"github.com/syncthing/syncthing/lib/db/backend"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/fs"
@@ -30,6 +26,7 @@ import (
 	"github.com/syncthing/syncthing/lib/stringutil"
 	"github.com/syncthing/syncthing/lib/svcutil"
 	"github.com/syncthing/syncthing/lib/sync"
+	"github.com/thejerf/suture/v4"
 )
 
 const (
@@ -524,8 +521,8 @@ func (db *Lowlevel) checkGlobals(folderStr string) (int, error) {
 	var dk []byte
 	ro := t.readOnlyTransaction
 	for dbi.Next() {
-		var vl dbproto.VersionList
-		if err := proto.Unmarshal(dbi.Value(), &vl); err != nil || len(vl.Versions) == 0 {
+		var vl VersionList
+		if err := vl.Unmarshal(dbi.Value()); err != nil || vl.Empty() {
 			if err := t.Delete(dbi.Key()); err != nil && !backend.IsNotFound(err) {
 				return 0, err
 			}
@@ -538,9 +535,9 @@ func (db *Lowlevel) checkGlobals(folderStr string) (int, error) {
 		// we find those and clear them out.
 
 		name := db.keyer.NameFromGlobalVersionKey(dbi.Key())
-		newVL := &dbproto.VersionList{}
+		newVL := &VersionList{}
 		var changed, changedHere bool
-		for _, fv := range vl.Versions {
+		for _, fv := range vl.RawVersions {
 			changedHere, err = checkGlobalsFilterDevices(dk, folder, name, fv.Devices, newVL, ro)
 			if err != nil {
 				return 0, err
@@ -554,7 +551,7 @@ func (db *Lowlevel) checkGlobals(folderStr string) (int, error) {
 			changed = changed || changedHere
 		}
 
-		if len(newVL.Versions) == 0 {
+		if newVL.Empty() {
 			if err := t.Delete(dbi.Key()); err != nil && !backend.IsNotFound(err) {
 				return 0, err
 			}
@@ -575,7 +572,7 @@ func (db *Lowlevel) checkGlobals(folderStr string) (int, error) {
 	return fixed, t.Commit()
 }
 
-func checkGlobalsFilterDevices(dk, folder, name []byte, devices [][]byte, vl *dbproto.VersionList, t readOnlyTransaction) (bool, error) {
+func checkGlobalsFilterDevices(dk, folder, name []byte, devices [][]byte, vl *VersionList, t readOnlyTransaction) (bool, error) {
 	var changed bool
 	var err error
 	for _, device := range devices {
@@ -591,7 +588,7 @@ func checkGlobalsFilterDevices(dk, folder, name []byte, devices [][]byte, vl *db
 			changed = true
 			continue
 		}
-		_, _, _, _, _, _, err = vlUpdate(vl, folder, device, f, t)
+		_, _, _, _, _, _, err = vl.update(folder, device, f, t)
 		if err != nil {
 			return false, err
 		}
@@ -613,7 +610,7 @@ func (db *Lowlevel) getIndexID(device, folder []byte) (protocol.IndexID, error) 
 
 	var id protocol.IndexID
 	if err := id.Unmarshal(cur); err != nil {
-		return 0, nil //nolint: nilerr
+		return 0, nil
 	}
 
 	return id, nil
@@ -819,11 +816,11 @@ func (db *Lowlevel) gcIndirect(ctx context.Context) (err error) {
 		default:
 		}
 
-		var hashes dbproto.IndirectionHashesOnly
-		if err := proto.Unmarshal(it.Value(), &hashes); err != nil {
+		var hashes IndirectionHashesOnly
+		if err := hashes.Unmarshal(it.Value()); err != nil {
 			return err
 		}
-		db.recordIndirectionHashes(&hashes)
+		db.recordIndirectionHashes(hashes)
 	}
 	it.Release()
 	if err := it.Error(); err != nil {
@@ -927,10 +924,10 @@ func (db *Lowlevel) gcIndirect(ctx context.Context) (err error) {
 }
 
 func (db *Lowlevel) recordIndirectionHashesForFile(f *protocol.FileInfo) {
-	db.recordIndirectionHashes(&dbproto.IndirectionHashesOnly{BlocksHash: f.BlocksHash, VersionHash: f.VersionHash})
+	db.recordIndirectionHashes(IndirectionHashesOnly{BlocksHash: f.BlocksHash, VersionHash: f.VersionHash})
 }
 
-func (db *Lowlevel) recordIndirectionHashes(hs *dbproto.IndirectionHashesOnly) {
+func (db *Lowlevel) recordIndirectionHashes(hs IndirectionHashesOnly) {
 	// must be called with gcMut held (at least read-held)
 	if db.blockFilter != nil && len(hs.BlocksHash) > 0 {
 		db.blockFilter.add(hs.BlocksHash)
@@ -969,7 +966,7 @@ func (b *bloomFilter) hash(id []byte) uint64 {
 	}
 	var h maphash.Hash
 	h.SetSeed(b.seed)
-	_, _ = h.Write(id)
+	h.Write(id)
 	return h.Sum64()
 }
 
@@ -1038,7 +1035,7 @@ func (db *Lowlevel) getMetaAndCheckGCLocked(folder string) (*metadataTracker, er
 func (db *Lowlevel) loadMetadataTracker(folder string) (*metadataTracker, error) {
 	meta := newMetadataTracker(db.keyer, db.evLogger)
 	if err := meta.fromDB(db, []byte(folder)); err != nil {
-		if errors.Is(err, errMetaInconsistent) {
+		if err == errMetaInconsistent {
 			l.Infof("Stored folder metadata for %q is inconsistent; recalculating", folder)
 		} else {
 			l.Infof("No stored folder metadata for %q; recalculating", folder)
@@ -1074,7 +1071,7 @@ func (db *Lowlevel) recalcMeta(folderStr string) (*metadataTracker, error) {
 	defer t.close()
 
 	var deviceID protocol.DeviceID
-	err = t.withAllFolderTruncated(folder, func(device []byte, f protocol.FileInfo) bool {
+	err = t.withAllFolderTruncated(folder, func(device []byte, f FileInfoTruncated) bool {
 		copy(deviceID[:], device)
 		meta.addFile(deviceID, f)
 		return true
@@ -1083,7 +1080,7 @@ func (db *Lowlevel) recalcMeta(folderStr string) (*metadataTracker, error) {
 		return nil, err
 	}
 
-	err = t.withGlobal(folder, nil, true, func(f protocol.FileInfo) bool {
+	err = t.withGlobal(folder, nil, true, func(f protocol.FileIntf) bool {
 		meta.addFile(protocol.GlobalDeviceID, f)
 		return true
 	})
@@ -1092,7 +1089,7 @@ func (db *Lowlevel) recalcMeta(folderStr string) (*metadataTracker, error) {
 	}
 
 	meta.emptyNeeded(protocol.LocalDeviceID)
-	err = t.withNeed(folder, protocol.LocalDeviceID[:], true, func(f protocol.FileInfo) bool {
+	err = t.withNeed(folder, protocol.LocalDeviceID[:], true, func(f protocol.FileIntf) bool {
 		meta.addNeeded(protocol.LocalDeviceID, f)
 		return true
 	})
@@ -1101,7 +1098,7 @@ func (db *Lowlevel) recalcMeta(folderStr string) (*metadataTracker, error) {
 	}
 	for _, device := range meta.devices() {
 		meta.emptyNeeded(device)
-		err = t.withNeed(folder, device[:], true, func(f protocol.FileInfo) bool {
+		err = t.withNeed(folder, device[:], true, func(f protocol.FileIntf) bool {
 			meta.addNeeded(device, f)
 			return true
 		})
@@ -1135,7 +1132,7 @@ func (db *Lowlevel) verifyLocalSequence(curSeq int64, folder string) (bool, erro
 		return false, err
 	}
 	ok := true
-	if err := t.withHaveSequence([]byte(folder), curSeq+1, func(_ protocol.FileInfo) bool {
+	if err := t.withHaveSequence([]byte(folder), curSeq+1, func(fi protocol.FileIntf) bool {
 		ok = false // we got something, which we should not have
 		return false
 	}); err != nil {
@@ -1207,7 +1204,8 @@ func (db *Lowlevel) repairSequenceGCLocked(folderStr string, meta *metadataTrack
 			}
 			return 0, err
 		}
-		if sk, err = t.keyer.GenerateSequenceKey(sk, folder, intf.Sequence); err != nil {
+		fi := intf.(protocol.FileInfo)
+		if sk, err = t.keyer.GenerateSequenceKey(sk, folder, fi.Sequence); err != nil {
 			return 0, err
 		}
 		switch dk, err = t.Get(sk); {
@@ -1218,14 +1216,14 @@ func (db *Lowlevel) repairSequenceGCLocked(folderStr string, meta *metadataTrack
 			fallthrough
 		case !bytes.Equal(it.Key(), dk):
 			fixed++
-			intf.Sequence = meta.nextLocalSeq()
-			if sk, err = t.keyer.GenerateSequenceKey(sk, folder, intf.Sequence); err != nil {
+			fi.Sequence = meta.nextLocalSeq()
+			if sk, err = t.keyer.GenerateSequenceKey(sk, folder, fi.Sequence); err != nil {
 				return 0, err
 			}
 			if err := t.Put(sk, it.Key()); err != nil {
 				return 0, err
 			}
-			if err := t.putFile(it.Key(), intf); err != nil {
+			if err := t.putFile(it.Key(), fi); err != nil {
 				return 0, err
 			}
 		}
@@ -1309,8 +1307,9 @@ func (db *Lowlevel) checkLocalNeed(folder []byte) (int, error) {
 		}
 	}
 	next()
-	itErr := t.withNeedIteratingGlobal(folder, protocol.LocalDeviceID[:], true, func(fi protocol.FileInfo) bool {
-		for !needDone && needName < fi.Name {
+	t.withNeedIteratingGlobal(folder, protocol.LocalDeviceID[:], true, func(fi protocol.FileIntf) bool {
+		f := fi.(FileInfoTruncated)
+		for !needDone && needName < f.Name {
 			repaired++
 			if err = t.Delete(dbi.Key()); err != nil && !backend.IsNotFound(err) {
 				return false
@@ -1318,26 +1317,23 @@ func (db *Lowlevel) checkLocalNeed(folder []byte) (int, error) {
 			l.Debugln("check local need: removing", needName)
 			next()
 		}
-		if needName == fi.Name {
+		if needName == f.Name {
 			next()
 		} else {
 			repaired++
-			key, err = t.keyer.GenerateNeedFileKey(key, folder, []byte(fi.Name))
+			key, err = t.keyer.GenerateNeedFileKey(key, folder, []byte(f.Name))
 			if err != nil {
 				return false
 			}
 			if err = t.Put(key, nil); err != nil {
 				return false
 			}
-			l.Debugln("check local need: adding", fi.Name)
+			l.Debugln("check local need: adding", f.Name)
 		}
 		return true
 	})
 	if err != nil {
 		return 0, err
-	}
-	if itErr != nil {
-		return 0, itErr
 	}
 
 	for !needDone {

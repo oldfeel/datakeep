@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	_ "github.com/syncthing/syncthing/lib/automaxprocs"
 	"github.com/thejerf/suture/v4"
 	"github.com/willabides/kongplete"
 
@@ -37,7 +38,6 @@ import (
 	"github.com/syncthing/syncthing/cmd/syncthing/cmdutil"
 	"github.com/syncthing/syncthing/cmd/syncthing/decrypt"
 	"github.com/syncthing/syncthing/cmd/syncthing/generate"
-	_ "github.com/syncthing/syncthing/lib/automaxprocs"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
@@ -163,7 +163,6 @@ type serveOptions struct {
 	UpgradeTo        string `placeholder:"URL" help:"Force upgrade directly from specified URL"`
 	Verbose          bool   `help:"Print verbose log output"`
 	Version          bool   `help:"Show version"`
-	EchoPort         int    `name:"echo-port" default:"8090" help:"Echo server port"`
 
 	// Debug options below
 	DebugDBIndirectGCInterval time.Duration `env:"STGCINDIRECTEVERY" help:"Database indirection GC interval"`
@@ -212,9 +211,6 @@ func main() {
 	// converting -options to --options.
 
 	args := os.Args[1:]
-	// 添加默认参数 --no-upgrade,如果需要自动升级,去掉此行
-	args = append(args, "--no-upgrade")
-
 	switch {
 	case len(args) == 0:
 		// Empty command line is equivalent to just calling serve
@@ -646,25 +642,6 @@ func syncthingMain(options serveOptions) {
 
 	if autoUpgradePossible {
 		go autoUpgrade(cfgWrapper, app, evLogger)
-	}
-
-	// 创建并启动 Echo 服务器
-	if options.EchoPort > 0 {
-		echoServer := NewEchoServer(options.EchoPort)
-		go func() {
-			if err := echoServer.Start(); err != nil && err != http.ErrServerClosed {
-				l.Warnln("Echo server error:", err)
-			}
-		}()
-
-		// 在应用停止前关闭 Echo 服务器
-		defer func() {
-			if err := echoServer.Stop(); err != nil {
-				l.Warnln("Error stopping Echo server:", err)
-			}
-		}()
-
-		l.Infoln("Echo server listening on port", options.EchoPort)
 	}
 
 	setupSignalHandling(app)

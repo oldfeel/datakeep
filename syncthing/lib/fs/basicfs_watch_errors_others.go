@@ -9,6 +9,6 @@
 
 package fs
 
-func reachedMaxUserWatches(_ error) bool {
+func reachedMaxUserWatches(err error) bool {
 	return false
 }

@@ -1,21 +1,3 @@
-# 启动命令
-
-```
-go run ./cmd/syncthing/ -no-upgrade
-```
-
-# 编译命令
-
-```
-./build.sh
-```
-
-# 启动编译的二进制文件
-
-```
-./bin/syncthing
-```
-
 [![Syncthing][14]][15]
 
 ---
@@ -100,11 +82,13 @@ build process.
 
 ## Signed Releases
 
-Release binaries are GPG signed with the key available from
-https://syncthing.net/security/. There is also a built-in automatic
-upgrade mechanism (disabled in some distribution channels) which uses a
-compiled in ECDSA signature. macOS and Windows binaries are also
-code-signed.
+As of v0.10.15 and onwards, release binaries are GPG signed with the key
+D26E6ED000654A3E, available from https://syncthing.net/security/ and
+most key servers.
+
+There is also a built-in automatic upgrade mechanism (disabled in some
+distribution channels) which uses a compiled in ECDSA signature. macOS
+binaries are also properly code signed.
 
 ## Documentation
 

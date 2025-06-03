@@ -6,10 +6,7 @@
 
 package db
 
-import (
-	"github.com/syncthing/syncthing/lib/protocol"
-	"google.golang.org/protobuf/proto"
-)
+import "github.com/syncthing/syncthing/lib/protocol"
 
 // How many files to send in each Index/IndexUpdate message.
 const (
@@ -47,7 +44,7 @@ func (b *FileInfoBatch) Append(f protocol.FileInfo) {
 		b.infos = make([]protocol.FileInfo, 0, MaxBatchSizeFiles)
 	}
 	b.infos = append(b.infos, f)
-	b.size += proto.Size(f.ToWire(true))
+	b.size += f.ProtoSize()
 }
 
 func (b *FileInfoBatch) Full() bool {

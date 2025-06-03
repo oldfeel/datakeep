@@ -36,7 +36,7 @@ func newTrashcan(cfg config.FolderConfiguration) Versioner {
 		folderFs:        cfg.Filesystem(nil),
 		versionsFs:      versionerFsFromFolderCfg(cfg),
 		cleanoutDays:    cleanoutDays,
-		copyRangeMethod: cfg.CopyRangeMethod.ToFS(),
+		copyRangeMethod: cfg.CopyRangeMethod,
 	}
 
 	l.Debugf("instantiated %#v", s)

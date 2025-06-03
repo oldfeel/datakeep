@@ -80,7 +80,8 @@ func encryptionTrailerSizeMigration(ll *db.Lowlevel, cfg config.Wrapper) error {
 		})
 		filesystem := folderCfg.Filesystem(fset)
 		var innerErr error
-		snap.WithHave(protocol.LocalDeviceID, func(fi protocol.FileInfo) bool {
+		snap.WithHave(protocol.LocalDeviceID, func(intf protocol.FileIntf) bool {
+			fi := intf.(protocol.FileInfo)
 			size, err := sizeOfEncryptedTrailer(filesystem, fi.Name)
 			if err != nil {
 				// Best effort: If we fail to read a file, it will show as
