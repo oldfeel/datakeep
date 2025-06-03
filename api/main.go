@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -23,15 +26,54 @@ type SyncthingConfig struct {
 
 const (
 	syncthingAPI = "http://127.0.0.1:8384/rest/config" // Syncthing REST API 地址
-	apiKey       = "WkVAzozoXTJt4PWm9hj7xX5Ex2xkq3QN"  // 替换为你的 Syncthing API Key
+	apiKey       = ""                                  // 替换为你的 Syncthing API Key
 )
+
+func getConfigPath() string {
+	if runtime.GOOS == "android" {
+		return "/data/data/com.nutomic.syncthingandroid/files/config.xml"
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "~" // fallback
+	}
+	switch runtime.GOOS {
+	case "windows":
+		return home + `\\AppData\\Local\\Syncthing\\config.xml`
+	case "darwin":
+		return home + "/Library/Application Support/Syncthing/config.xml"
+	default: // linux, etc.
+		return home + "/.config/syncthing/config.xml"
+	}
+}
+
+// 解析 config.xml 获取 apikey
+func getApiKeyFromConfig() string {
+	configPath := getConfigPath()
+	type Gui struct {
+		APIKey string `xml:"apikey"`
+	}
+	type Config struct {
+		Gui Gui `xml:"gui"`
+	}
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return apiKey // 失败时用常量
+	}
+	var cfg Config
+	err = xml.Unmarshal(data, &cfg)
+	if err != nil || cfg.Gui.APIKey == "" {
+		return apiKey
+	}
+	return cfg.Gui.APIKey
+}
 
 func getFoldersFromSyncthing() ([]Folder, error) {
 	req, err := http.NewRequest("GET", syncthingAPI, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-API-Key", apiKey)
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
