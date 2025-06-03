@@ -782,4 +782,6 @@
     <string name="notification_permission_title">Notification permission</string>
     <string name="enable_notification_permission">Enable Notification Permission</string>
 
+    <string name="local_files_tab">本机文件</string>
+
 </resources>

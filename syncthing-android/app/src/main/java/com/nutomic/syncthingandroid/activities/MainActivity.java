@@ -39,12 +39,17 @@ import android.util.Log;
 import android.util.TypedValue;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.LinearLayout;
+import android.widget.Button;
+import android.widget.ImageButton;
 
 import com.annimon.stream.function.Consumer;
 import com.nutomic.syncthingandroid.R;
@@ -52,6 +57,8 @@ import com.nutomic.syncthingandroid.SyncthingApp;
 import com.nutomic.syncthingandroid.fragments.DeviceListFragment;
 import com.nutomic.syncthingandroid.fragments.DrawerFragment;
 import com.nutomic.syncthingandroid.fragments.FolderListFragment;
+import com.nutomic.syncthingandroid.fragments.DeviceFragment;
+import com.nutomic.syncthingandroid.model.Device;
 import com.nutomic.syncthingandroid.service.Constants;
 import com.nutomic.syncthingandroid.service.RestApi;
 import com.nutomic.syncthingandroid.service.SyncthingService;
@@ -61,6 +68,8 @@ import com.nutomic.syncthingandroid.util.Util;
 
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
+import java.util.ArrayList;
+import java.util.List;
 
 import javax.inject.Inject;
 
@@ -104,6 +113,13 @@ public class MainActivity extends StateDialogActivity
     private DrawerLayout          mDrawerLayout;
     @Inject SharedPreferences mPreferences;
 
+    private List<Fragment> mFragments = new ArrayList<>();
+    private List<String> mFragmentTitles = new ArrayList<>();
+    private FragmentPagerAdapter mDynamicPagerAdapter;
+
+    private LinearLayout mTabButtonContainer;
+    private int mCurrentTabIndex = 0;
+
     /**
      * Handles various dialogs based on current state.
      */
@@ -117,8 +133,7 @@ public class MainActivity extends StateDialogActivity
                 showBatteryOptimizationDialogIfNecessary();
                 mDrawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED);
                 mDrawerFragment.requestGuiUpdate();
-
-                // Check if the usage reporting minimum delay passed by.
+                setupTabs();
                 Boolean usageReportingDelayPassed = (new Date().getTime() > getFirstStartTime() + USAGE_REPORTING_DIALOG_DELAY);
                 RestApi restApi = getApi();
                 if (usageReportingDelayPassed && restApi != null && !restApi.isUsageReportingDecided()) {
@@ -181,38 +196,88 @@ public class MainActivity extends StateDialogActivity
         return firstInstallTime;
     }
 
-    private final FragmentPagerAdapter mSectionsPagerAdapter =
-            new FragmentPagerAdapter(getSupportFragmentManager()) {
+    private void setupTabs() {
+        mFragments.clear();
+        mFragmentTitles.clear();
+        // 本机文件tab
+        mFragments.add(mFolderListFragment);
+        mFragmentTitles.add(getString(R.string.local_files_tab));
+        // 动态添加设备tab
+        RestApi api = getApi();
+        if (api != null && api.isConfigLoaded()) {
+            List<Device> devices = api.getDevices(false);
+            for (Device device : devices) {
+                mFragments.add(DeviceFragment.newInstance(device.deviceID));
+                mFragmentTitles.add(device.getDisplayName());
+            }
+        }
+        mDynamicPagerAdapter = new FragmentPagerAdapter(getSupportFragmentManager()) {
+            @Override
+            public Fragment getItem(int position) { return mFragments.get(position); }
+            @Override
+            public int getCount() { return mFragments.size(); }
+            @Override
+            public CharSequence getPageTitle(int position) { return mFragmentTitles.get(position); }
+        };
+        mViewPager.setAdapter(mDynamicPagerAdapter);
+        // 设置按钮导航栏
+        setupTabButtons();
+    }
 
-                @Override
-                public Fragment getItem(int position) {
-                    switch (position) {
-                        case 0:
-                            return mFolderListFragment;
-                        case 1:
-                            return mDeviceListFragment;
-                        default:
-                            return null;
-                    }
-                }
+    private void setupTabButtons() {
+        if (mTabButtonContainer == null) {
+            mTabButtonContainer = findViewById(R.id.tabButtonContainer);
+        }
+        mTabButtonContainer.removeAllViews();
+        // 本机文件按钮
+        addTabButton(getString(R.string.local_files_tab), 0);
+        // 设备按钮
+        for (int i = 1; i < mFragmentTitles.size(); i++) {
+            addTabButton(mFragmentTitles.get(i), i);
+        }
+        // 添加"+"按钮
+        ImageButton addBtn = new ImageButton(this);
+        addBtn.setImageResource(android.R.drawable.ic_menu_add);
+        addBtn.setContentDescription(getString(R.string.add_device));
+        addBtn.setBackgroundResource(android.R.color.transparent);
+        addBtn.setPadding(32, 8, 32, 8);
+        addBtn.setOnClickListener(v -> {
+            Intent intent = new Intent(this, com.nutomic.syncthingandroid.activities.DeviceActivity.class)
+                    .putExtra(com.nutomic.syncthingandroid.activities.DeviceActivity.EXTRA_IS_CREATE, true);
+            startActivity(intent);
+        });
+        mTabButtonContainer.addView(addBtn);
+    }
 
-                @Override
-                public int getCount() {
-                    return 2;
-                }
+    private void addTabButton(String title, int index) {
+        Button btn = new Button(this);
+        btn.setText(title);
+        btn.setAllCaps(false);
+        btn.setBackgroundResource(android.R.color.transparent);
+        btn.setPadding(32, 8, 32, 8);
+        btn.setTextColor(getResources().getColor(android.R.color.black));
+        btn.setOnClickListener(v -> {
+            mViewPager.setCurrentItem(index, true);
+            highlightTabButton(index);
+        });
+        mTabButtonContainer.addView(btn);
+        // 默认高亮第一个
+        if (index == mCurrentTabIndex) {
+            btn.setAlpha(1f);
+        } else {
+            btn.setAlpha(0.6f);
+        }
+    }
 
-                @Override
-                public CharSequence getPageTitle(int position) {
-                    switch (position) {
-                        case 0:
-                            return getResources().getString(R.string.folders_fragment_title);
-                        case 1:
-                            return getResources().getString(R.string.devices_fragment_title);
-                        default:
-                            return String.valueOf(position);
-                    }
-                }
-            };
+    private void highlightTabButton(int index) {
+        mCurrentTabIndex = index;
+        for (int i = 0; i < mTabButtonContainer.getChildCount(); i++) {
+            View v = mTabButtonContainer.getChildAt(i);
+            if (v instanceof Button) {
+                v.setAlpha(i == index ? 1f : 0.6f);
+            }
+        }
+    }
 
     /**
      * Initializes tab navigation.
@@ -221,57 +286,45 @@ public class MainActivity extends StateDialogActivity
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         ((SyncthingApp) getApplication()).component().inject(this);
-        // 检查存储权限
         if (!PermissionUtil.haveStoragePermission(this)) {
             requestStoragePermission();
         }
         setContentView(R.layout.activity_main);
         mDrawerLayout = findViewById(R.id.drawer_layout);
-
+        mTabButtonContainer = findViewById(R.id.tabButtonContainer);
         FragmentManager fm = getSupportFragmentManager();
         if (savedInstanceState != null) {
             mFolderListFragment = (FolderListFragment) fm.getFragment(
                     savedInstanceState, FolderListFragment.class.getName());
-            mDeviceListFragment = (DeviceListFragment) fm.getFragment(
-                    savedInstanceState, DeviceListFragment.class.getName());
             mDrawerFragment = (DrawerFragment) fm.getFragment(
                     savedInstanceState, DrawerFragment.class.getName());
         } else {
             mFolderListFragment = new FolderListFragment();
-            mDeviceListFragment = new DeviceListFragment();
             mDrawerFragment = new DrawerFragment();
         }
-
         mViewPager = findViewById(R.id.pager);
-        mViewPager.setAdapter(mSectionsPagerAdapter);
-        TabLayout tabLayout = findViewById(R.id.tabContainer);
-        tabLayout.setupWithViewPager(mViewPager);
-        if (savedInstanceState != null) {
-            mViewPager.setCurrentItem(savedInstanceState.getInt("currentTab"));
-            if (savedInstanceState.getBoolean(IS_SHOWING_RESTART_DIALOG)){
-                showRestartDialog();
+        setupTabs();
+        mViewPager.addOnPageChangeListener(new ViewPager.OnPageChangeListener() {
+            @Override
+            public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {}
+            @Override
+            public void onPageSelected(int position) {
+                highlightTabButton(position);
             }
-            mBatteryOptimizationDialogDismissed = savedInstanceState.getBoolean(BATTERY_DIALOG_DISMISSED);
-            if(savedInstanceState.getBoolean(IS_QRCODE_DIALOG_DISPLAYED)) {
-                showQrCodeDialog(savedInstanceState.getString(DEVICEID_KEY), savedInstanceState.getParcelable(QRCODE_BITMAP_KEY));
-            }
-        }
-
+            @Override
+            public void onPageScrollStateChanged(int state) {}
+        });
         fm.beginTransaction().replace(R.id.drawer, mDrawerFragment).commit();
         mDrawerToggle = new Toggle(this, mDrawerLayout);
         mDrawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
         mDrawerLayout.addDrawerListener(mDrawerToggle);
         setOptimalDrawerWidth(findViewById(R.id.drawer));
-
-        // SyncthingService needs to be started from this activity as the user
-        // can directly launch this activity from the recent activity switcher.
         Intent serviceIntent = new Intent(this, SyncthingService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent);
         } else {
             startService(serviceIntent);
         }
-
         onNewIntent(getIntent());
     }
 
@@ -308,8 +361,14 @@ public class MainActivity extends StateDialogActivity
         SyncthingServiceBinder syncthingServiceBinder = (SyncthingServiceBinder) iBinder;
         SyncthingService syncthingService = syncthingServiceBinder.getService();
         syncthingService.registerOnServiceStateChangeListener(this);
-        syncthingService.registerOnServiceStateChangeListener(mFolderListFragment);
-        syncthingService.registerOnServiceStateChangeListener(mDeviceListFragment);
+        // 只遍历所有 tab fragment，注册需要监听的
+        if (mFragments != null) {
+            for (Fragment f : mFragments) {
+                if (f instanceof SyncthingService.OnServiceStateChangeListener) {
+                    syncthingService.registerOnServiceStateChangeListener((SyncthingService.OnServiceStateChangeListener) f);
+                }
+            }
+        }
     }
 
     /**
@@ -403,8 +462,18 @@ public class MainActivity extends StateDialogActivity
     }
 
     @Override
-     public boolean onOptionsItemSelected(MenuItem item) {
-        return mDrawerToggle.onOptionsItemSelected(item) || super.onOptionsItemSelected(item);
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // 不再显示右上角添加文件夹菜单
+        return false;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        // 让 DrawerToggle 处理左上角菜单按钮
+        if (mDrawerToggle != null && mDrawerToggle.onOptionsItemSelected(item)) {
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
 
     /**

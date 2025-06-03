@@ -61,10 +61,16 @@ public class FolderListFragment extends ListFragment implements SyncthingService
     @Override
     public void onViewCreated(View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-
         setHasOptionsMenu(true);
         setEmptyText(getString(R.string.folder_list_empty));
         getListView().setOnItemClickListener(this);
+        View footer = getLayoutInflater().inflate(R.layout.folder_list_footer, getListView(), false);
+        footer.findViewById(R.id.btn_add_folder).setOnClickListener(v -> {
+            Intent intent = new Intent(getActivity(), com.nutomic.syncthingandroid.activities.FolderActivity.class)
+                    .putExtra(com.nutomic.syncthingandroid.activities.FolderActivity.EXTRA_IS_CREATE, true);
+            startActivity(intent);
+        });
+        getListView().addFooterView(footer);
     }
 
     /**
@@ -109,20 +115,12 @@ public class FolderListFragment extends ListFragment implements SyncthingService
 
     @Override
     public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
-        inflater.inflate(R.menu.folder_list, menu);
+        // 不再显示右上角添加文件夹菜单
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        switch (item.getItemId()) {
-            case R.id.add_folder:
-                Intent intent = new Intent(getActivity(), FolderActivity.class)
-                        .putExtra(FolderActivity.EXTRA_IS_CREATE, true);
-                startActivity(intent);
-                return true;
-            default:
-                return super.onOptionsItemSelected(item);
-        }
+        return super.onOptionsItemSelected(item);
     }
 
 }
