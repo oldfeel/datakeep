@@ -217,10 +217,14 @@ public class MainActivity extends StateDialogActivity
     /**
      * Initializes tab navigation.
      */
-    public void onCreate(Bundle savedInstanceState) {
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         ((SyncthingApp) getApplication()).component().inject(this);
-
+        // 检查存储权限
+        if (!PermissionUtil.haveStoragePermission(this)) {
+            requestStoragePermission();
+        }
         setContentView(R.layout.activity_main);
         mDrawerLayout = findViewById(R.id.drawer_layout);
 
@@ -273,10 +277,10 @@ public class MainActivity extends StateDialogActivity
 
     @Override
     public void onResume() {
-        // Check if storage permission has been revoked at runtime.
+        // 检查存储权限，如果没有则重新申请
         if (!PermissionUtil.haveStoragePermission(this)) {
-            startActivity(new Intent(this, FirstStartActivity.class));
-            this.finish();
+            requestStoragePermission();
+            // 可选：return; // 防止后续逻辑执行
         }
 
         // Evaluate run conditions to detect changes made to the metered wifi flags.
@@ -525,6 +529,48 @@ public class MainActivity extends StateDialogActivity
                     .setNeutralButton(R.string.open_website, listener)
                     .show();
         });
+    }
+
+    // 权限请求相关方法，参考 FirstStartActivity
+    private void requestStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            requestAllFilesAccessPermission();
+        } else {
+            androidx.core.app.ActivityCompat.requestPermissions(this,
+                    new String[]{android.Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                    com.nutomic.syncthingandroid.service.Constants.PermissionRequestType.STORAGE.ordinal());
+        }
+    }
+
+    @android.annotation.TargetApi(30)
+    private void requestAllFilesAccessPermission() {
+        Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+        intent.setData(Uri.parse("package:" + getPackageName()));
+        try {
+            ComponentName componentName = intent.resolveActivity(getPackageManager());
+            if (componentName != null) {
+                startActivity(intent);
+                return;
+            }
+            Log.w(TAG, "Request all files access not supported");
+        } catch (ActivityNotFoundException e) {
+            Log.w(TAG, "Request all files access not supported", e);
+        }
+        Toast.makeText(this, R.string.dialog_all_files_access_not_supported, Toast.LENGTH_LONG).show();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @androidx.annotation.NonNull String[] permissions, @androidx.annotation.NonNull int[] grantResults) {
+        if (requestCode == com.nutomic.syncthingandroid.service.Constants.PermissionRequestType.STORAGE.ordinal()) {
+            if (grantResults.length == 0 || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Log.i(TAG, "User denied WRITE_EXTERNAL_STORAGE permission.");
+            } else {
+                Toast.makeText(this, R.string.permission_granted, Toast.LENGTH_SHORT).show();
+                Log.i(TAG, "User granted WRITE_EXTERNAL_STORAGE permission.");
+            }
+        } else {
+            super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        }
     }
 
 }
