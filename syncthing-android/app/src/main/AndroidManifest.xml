@@ -127,6 +127,7 @@
                 android:name="android.support.PARENT_ACTIVITY"
                 android:value=".activities.MainActivity" />
         </activity>
+        <activity android:name=".activities.FileListActivity" />
         <service android:name=".service.SyncthingService" />
         <receiver android:name=".receiver.BootReceiver"
             android:exported="false">

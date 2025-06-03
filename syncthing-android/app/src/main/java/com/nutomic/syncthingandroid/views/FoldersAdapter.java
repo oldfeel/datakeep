@@ -16,6 +16,7 @@ import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.ImageButton;
 
 import com.google.android.material.color.MaterialColors;
 import com.nutomic.syncthingandroid.R;
@@ -67,23 +68,9 @@ public class FoldersAdapter extends ArrayAdapter<Folder> {
             mContext.startService(intent);
         });
         binding.openFolder.setOnClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.setDataAndType(Uri.fromFile(new File(folder.path)), "resource/folder");
-            intent.putExtra("org.openintents.extra.ABSOLUTE_PATH", folder.path);
-            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-            if (intent.resolveActivity(mContext.getPackageManager()) != null) {
-                mContext.startActivity(intent);
-            } else {
-                // Try a second way to find a compatible file explorer app.
-                Log.v(TAG, "openFolder: Fallback to application chooser to open folder.");
-                intent.setDataAndType(Uri.parse(folder.path), "application/*");
-                Intent chooserIntent = Intent.createChooser(intent, mContext.getString(R.string.open_file_manager));
-                if (chooserIntent != null) {
-                    mContext.startActivity(chooserIntent);
-                } else {
-                    Toast.makeText(mContext, R.string.toast_no_file_manager, Toast.LENGTH_SHORT).show();
-                }
-            }
+            Intent intent = new Intent(getContext(), com.nutomic.syncthingandroid.activities.FileListActivity.class);
+            intent.putExtra("folder_path", folder.path);
+            getContext().startActivity(intent);
         });
 
         updateFolderStatusView(binding, folder);
