@@ -18,12 +18,14 @@ import {
   TextField,
   Divider,
   Chip,
+  Button,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
   Search as SearchIcon,
   Computer as ComputerIcon,
   Devices as DevicesIcon,
+  Add as AddIcon,
 } from '@mui/icons-material';
 import { GetDevices } from '../../wailsjs/go/main/App';
 import './App.css';
@@ -183,6 +185,25 @@ function App() {
               />
             </ListItem>
           ))}
+          <Divider />
+          <ListItem>
+            <Button
+              fullWidth
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => {
+                // TODO: 实现添加设备的功能
+                console.log('添加设备');
+              }}
+              sx={{
+                justifyContent: 'flex-start',
+                pl: 2,
+                py: 1,
+              }}
+            >
+              添加设备
+            </Button>
+          </ListItem>
         </List>
       </Drawer>
 

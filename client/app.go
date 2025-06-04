@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
+	"runtime"
 )
 
 // App struct
@@ -19,6 +22,37 @@ type Folder struct {
 	Label string `json:"label"`
 	Path  string `json:"path"`
 }
+
+// Device 结构体定义
+type Device struct {
+	DeviceID                 string   `json:"deviceID"`
+	Name                     string   `json:"name"`
+	Addresses                []string `json:"addresses"`
+	Compression              string   `json:"compression"`
+	CertName                 string   `json:"certName"`
+	Introducer               bool     `json:"introducer"`
+	SkipIntroductionRemovals bool     `json:"skipIntroductionRemovals"`
+	IntroducedBy             string   `json:"introducedBy"`
+	Paused                   bool     `json:"paused"`
+	AllowedNetworks          []string `json:"allowedNetworks"`
+	AutoAcceptFolders        bool     `json:"autoAcceptFolders"`
+	MaxSendKbps              int      `json:"maxSendKbps"`
+	MaxRecvKbps              int      `json:"maxRecvKbps"`
+	IgnoredFolders           []string `json:"ignoredFolders"`
+	MaxRequestKiB            int      `json:"maxRequestKiB"`
+	Untrusted                bool     `json:"untrusted"`
+	RemoteGUIPort            int      `json:"remoteGUIPort"`
+	NumConnections           int      `json:"numConnections"`
+}
+
+type DevicesConfig struct {
+	Devices []Device `json:"devices"`
+}
+
+const (
+	syncthingAPI = "http://127.0.0.1:8384/rest/config" // Syncthing REST API 地址
+	apiKey       = ""                                  // 替换为你的 Syncthing API Key
+)
 
 // NewApp creates a new App application struct
 func NewApp() *App {
@@ -62,4 +96,75 @@ func (a *App) GetFolders() ([]Folder, error) {
 	}
 
 	return result.Data, nil
+}
+
+func getConfigPath() string {
+	if runtime.GOOS == "android" {
+		return "/data/data/com.nutomic.syncthingandroid/files/config.xml"
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "~" // fallback
+	}
+	switch runtime.GOOS {
+	case "windows":
+		return home + `\\AppData\\Local\\Syncthing\\config.xml`
+	case "darwin":
+		return home + "/Library/Application Support/Syncthing/config.xml"
+	default: // linux, etc.
+		return home + "/.config/syncthing/config.xml"
+	}
+}
+
+// 解析 config.xml 获取 apikey
+func getApiKeyFromConfig() string {
+	configPath := getConfigPath()
+	type Gui struct {
+		APIKey string `xml:"apikey"`
+	}
+	type Config struct {
+		Gui Gui `xml:"gui"`
+	}
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return apiKey // 失败时用常量
+	}
+	var cfg Config
+	err = xml.Unmarshal(data, &cfg)
+	if err != nil || cfg.Gui.APIKey == "" {
+		return apiKey
+	}
+	return cfg.Gui.APIKey
+}
+
+// GetDevices 返回所有设备列表
+func (a *App) GetDevices() ([]Device, error) {
+	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/config/devices", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("syncthing api error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// 直接解析为设备数组
+	var devices []Device
+	if err := json.Unmarshal(body, &devices); err != nil {
+		return nil, err
+	}
+	return devices, nil
 }

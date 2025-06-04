@@ -194,11 +194,6 @@ func devicesHandler(c *fiber.Ctx) error {
 	return success(c, devices)
 }
 
-// GetDevices 返回所有设备列表
-func GetDevices() ([]Device, error) {
-	return getDevicesFromSyncthing()
-}
-
 func main() {
 	app := fiber.New()
 
