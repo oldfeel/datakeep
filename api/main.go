@@ -24,6 +24,19 @@ type SyncthingConfig struct {
 	Folders []Folder `json:"folders"`
 }
 
+type Device struct {
+	DeviceID    string   `json:"deviceID"`
+	Name        string   `json:"name"`
+	Addresses   []string `json:"addresses"`
+	Compression string   `json:"compression"`
+	CertName    string   `json:"certName"`
+	Introducer  bool     `json:"introducer"`
+}
+
+type DevicesConfig struct {
+	Devices []Device `json:"devices"`
+}
+
 const (
 	syncthingAPI = "http://127.0.0.1:8384/rest/config" // Syncthing REST API 地址
 	apiKey       = ""                                  // 替换为你的 Syncthing API Key
@@ -98,6 +111,36 @@ func getFoldersFromSyncthing() ([]Folder, error) {
 	return config.Folders, nil
 }
 
+func getDevicesFromSyncthing() ([]Device, error) {
+	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/config/devices", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("syncthing api error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var config DevicesConfig
+	if err := json.Unmarshal(body, &config); err != nil {
+		return nil, err
+	}
+	return config.Devices, nil
+}
+
 func success(c *fiber.Ctx, data interface{}) error {
 	return c.JSON(fiber.Map{
 		"code": 0,
@@ -143,6 +186,19 @@ func filesHandler(c *fiber.Ctx) error {
 	return success(c, result)
 }
 
+func devicesHandler(c *fiber.Ctx) error {
+	devices, err := getDevicesFromSyncthing()
+	if err != nil {
+		return fail(c, 1004, "Failed to get devices: "+err.Error())
+	}
+	return success(c, devices)
+}
+
+// GetDevices 返回所有设备列表
+func GetDevices() ([]Device, error) {
+	return getDevicesFromSyncthing()
+}
+
 func main() {
 	app := fiber.New()
 
@@ -151,6 +207,7 @@ func main() {
 
 	app.Get("/folders", foldersHandler)
 	app.Get("/files", filesHandler)
+	app.Get("/devices", devicesHandler)
 
 	log.Println("Fiber API server started at :8080")
 	log.Fatal(app.Listen(":8080"))
