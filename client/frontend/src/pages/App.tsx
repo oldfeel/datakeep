@@ -30,6 +30,7 @@ import {
 } from '@mui/icons-material';
 import { GetDevices } from '../../wailsjs/go/main/App';
 import DeviceDetail from './DeviceDetail';
+import FolderDetail from './FolderDetail';
 import './App.css';
 
 interface Device {
@@ -110,8 +111,8 @@ function DeviceList({ devices, onDeviceClick }: { devices: Device[], onDeviceCli
           <ListItemText 
             primary={device.name || device.deviceID}
             secondary={
-              <Box sx={{ mt: 0.5 }}>
-                <Typography variant="caption" display="block" color="text.secondary">
+              <Box component="span" sx={{ mt: 0.5, display: 'block' }}>
+                <Typography component="span" variant="caption" display="block" color="text.secondary">
                   {device.deviceID}
                 </Typography>
                 {device.addresses.map((addr, index) => (
@@ -234,6 +235,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/device/local" replace />} />
           <Route path="/device/:deviceId" element={<DeviceDetail />} />
+          <Route path="/folder/:folderId" element={<FolderDetail />} />
         </Routes>
       </Box>
     </Box>

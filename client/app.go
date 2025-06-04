@@ -58,9 +58,41 @@ type SyncthingConfig struct {
 	Folders []Folder `json:"folders"`
 }
 
+// Block 结构体定义文件块信息
+type Block struct {
+	Hash   string `json:"hash"`
+	Offset int64  `json:"offset"`
+	Size   int    `json:"size"`
+}
+
+// File 结构体定义文件信息
+type File struct {
+	Name          string  `json:"name"`
+	Type          string  `json:"type"`
+	Size          int64   `json:"size"`
+	Modified      string  `json:"modified"`
+	Version       string  `json:"version"`
+	LocalFlags    int     `json:"localFlags"`
+	Permissions   string  `json:"permissions"`
+	Deleted       bool    `json:"deleted"`
+	Invalid       bool    `json:"invalid"`
+	IgnoreDelete  bool    `json:"ignoreDelete"`
+	NoPermissions bool    `json:"noPermissions"`
+	Sequence      int64   `json:"sequence"`
+	ModTimeBy     string  `json:"modTimeBy"`
+	BlockSize     int     `json:"blockSize"`
+	SymlinkTarget string  `json:"symlinkTarget"`
+	Blocks        []Block `json:"blocks"`
+}
+
+// FolderContents 结构体定义文件夹内容
+type FolderContents struct {
+	Files []File `json:"files"`
+}
+
 const (
-	syncthingAPI = "http://127.0.0.1:8384/rest/config" // Syncthing REST API 地址
-	apiKey       = ""                                  // 替换为你的 Syncthing API Key
+	syncthingAPI = "http://127.0.0.1:8384" // Syncthing REST API 地址
+	apiKey       = ""                      // 替换为你的 Syncthing API Key
 )
 
 // NewApp creates a new App application struct
@@ -218,4 +250,42 @@ func (a *App) GetDeviceFolders(deviceID string) ([]Folder, error) {
 		return nil, err
 	}
 	return folders, nil
+}
+
+// GetFolderContents 获取指定文件夹的内容
+func (a *App) GetFolderContents(folderId string) ([]File, error) {
+	url := fmt.Sprintf("%s/rest/db/browse?folder=%s", syncthingAPI, folderId)
+	// 创建带 API Key 的请求
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %v", err)
+	}
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("获取文件夹内容失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API 请求失败，状态码: %d", resp.StatusCode)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var contents []File
+	if err := json.Unmarshal(body, &contents); err != nil {
+		var folderContents FolderContents
+		if err := json.Unmarshal(body, &folderContents); err != nil {
+			return nil, fmt.Errorf("解析响应失败: %v", err)
+		}
+		contents = folderContents.Files
+	}
+
+	return contents, nil
 }
