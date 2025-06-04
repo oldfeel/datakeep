@@ -23,6 +23,11 @@ type Folder struct {
 	Path  string `json:"path"`
 }
 
+type SharedFolder struct {
+	Folder
+	DeviceID string `json:"deviceID"`
+}
+
 // Device 结构体定义
 type Device struct {
 	DeviceID                 string   `json:"deviceID"`
@@ -49,6 +54,10 @@ type DevicesConfig struct {
 	Devices []Device `json:"devices"`
 }
 
+type SyncthingConfig struct {
+	Folders []Folder `json:"folders"`
+}
+
 const (
 	syncthingAPI = "http://127.0.0.1:8384/rest/config" // Syncthing REST API 地址
 	apiKey       = ""                                  // 替换为你的 Syncthing API Key
@@ -70,32 +79,36 @@ func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
 }
 
-// GetFolders 获取文件夹列表
+// GetFolders 返回所有文件夹列表
 func (a *App) GetFolders() ([]Folder, error) {
-	resp, err := http.Get("http://localhost:8080/folders")
+	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/config/folders", nil)
 	if err != nil {
-		return nil, fmt.Errorf("请求文件夹列表失败: %v", err)
+		return nil, err
+	}
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("syncthing api error: %s", resp.Status)
+	}
+
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %v", err)
+		return nil, err
 	}
 
-	var result struct {
-		Code int      `json:"code"`
-		Data []Folder `json:"data"`
+	// 直接解析为文件夹数组
+	var folders []Folder
+	if err := json.Unmarshal(body, &folders); err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %v", err)
-	}
-
-	if result.Code != 0 {
-		return nil, fmt.Errorf("获取文件夹列表失败: code=%d", result.Code)
-	}
-
-	return result.Data, nil
+	return folders, nil
 }
 
 func getConfigPath() string {
@@ -167,4 +180,42 @@ func (a *App) GetDevices() ([]Device, error) {
 		return nil, err
 	}
 	return devices, nil
+}
+
+// GetDeviceFolders 返回指定设备的文件夹列表
+func (a *App) GetDeviceFolders(deviceID string) ([]Folder, error) {
+	if deviceID == "local" {
+		// 获取本机文件夹列表
+		return a.GetFolders()
+	}
+
+	// 获取设备共享的文件夹列表
+	req, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:8384/rest/config/folders?device=%s", deviceID), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("syncthing api error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// 解析为文件夹数组
+	var folders []Folder
+	if err := json.Unmarshal(body, &folders); err != nil {
+		return nil, err
+	}
+	return folders, nil
 }

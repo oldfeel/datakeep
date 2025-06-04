@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import {
   AppBar,
   Box,
@@ -28,6 +29,7 @@ import {
   Add as AddIcon,
 } from '@mui/icons-material';
 import { GetDevices } from '../../wailsjs/go/main/App';
+import DeviceDetail from './DeviceDetail';
 import './App.css';
 
 interface Device {
@@ -37,6 +39,12 @@ interface Device {
   compression: string;
   certName: string;
   introducer: boolean;
+}
+
+interface Folder {
+  id: string;
+  label: string;
+  path: string;
 }
 
 const drawerWidth = 240;
@@ -80,10 +88,72 @@ const StyledInputBase = styled(InputBase)(({ theme }) => ({
   },
 }));
 
+// 设备列表组件
+function DeviceList({ devices, onDeviceClick }: { devices: Device[], onDeviceClick: (device: Device) => void }) {
+  return (
+    <List>
+      <ListItemButton onClick={() => onDeviceClick({ deviceID: 'local', name: '本机' } as Device)}>
+        <ListItemIcon>
+          <ComputerIcon />
+        </ListItemIcon>
+        <ListItemText primary="本机" />
+      </ListItemButton>
+      <Divider />
+      {devices.map((device) => (
+        <ListItemButton
+          key={device.deviceID}
+          onClick={() => onDeviceClick(device)}
+        >
+          <ListItemIcon>
+            <DevicesIcon />
+          </ListItemIcon>
+          <ListItemText 
+            primary={device.name || device.deviceID}
+            secondary={
+              <Box sx={{ mt: 0.5 }}>
+                <Typography variant="caption" display="block" color="text.secondary">
+                  {device.deviceID}
+                </Typography>
+                {device.addresses.map((addr, index) => (
+                  <Chip
+                    key={index}
+                    size="small"
+                    label={addr}
+                    sx={{ mr: 0.5, mt: 0.5 }}
+                  />
+                ))}
+              </Box>
+            }
+          />
+        </ListItemButton>
+      ))}
+      <Divider />
+      <ListItem>
+        <Button
+          fullWidth
+          variant="outlined"
+          startIcon={<AddIcon />}
+          onClick={() => {
+            // TODO: 实现添加设备的功能
+            console.log('添加设备');
+          }}
+          sx={{
+            justifyContent: 'flex-start',
+            pl: 2,
+            py: 1,
+          }}
+        >
+          添加设备
+        </Button>
+      </ListItem>
+    </List>
+  );
+}
+
 function App() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [searchText, setSearchText] = useState('');
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     loadDevices();
@@ -100,6 +170,10 @@ function App() {
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearchText(event.target.value);
+  };
+
+  const handleDeviceClick = (device: Device) => {
+    navigate(`/device/${device.deviceID}`);
   };
 
   const filteredDevices = devices.filter(device => 
@@ -152,64 +226,15 @@ function App() {
           },
         }}
       >
-        <List>
-          <ListItem>
-            <ListItemIcon>
-              <ComputerIcon />
-            </ListItemIcon>
-            <ListItemText primary="本机" />
-          </ListItem>
-          <Divider />
-          {filteredDevices.map((device) => (
-            <ListItem key={device.deviceID}>
-              <ListItemIcon>
-                <DevicesIcon />
-              </ListItemIcon>
-              <ListItemText 
-                primary={device.name || device.deviceID}
-                secondary={
-                  <Box sx={{ mt: 0.5 }}>
-                    <Typography variant="caption" display="block" color="text.secondary">
-                      {device.deviceID}
-                    </Typography>
-                    {device.addresses.map((addr, index) => (
-                      <Chip
-                        key={index}
-                        size="small"
-                        label={addr}
-                        sx={{ mr: 0.5, mt: 0.5 }}
-                      />
-                    ))}
-                  </Box>
-                }
-              />
-            </ListItem>
-          ))}
-          <Divider />
-          <ListItem>
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<AddIcon />}
-              onClick={() => {
-                // TODO: 实现添加设备的功能
-                console.log('添加设备');
-              }}
-              sx={{
-                justifyContent: 'flex-start',
-                pl: 2,
-                py: 1,
-              }}
-            >
-              添加设备
-            </Button>
-          </ListItem>
-        </List>
+        <DeviceList devices={filteredDevices} onDeviceClick={handleDeviceClick} />
       </Drawer>
 
       {/* 主内容区域 */}
       <Box component="main" sx={{ flexGrow: 1, p: 3, marginTop: '64px' }}>
-        {/* 这里可以添加设备详情等内容 */}
+        <Routes>
+          <Route path="/" element={<Navigate to="/device/local" replace />} />
+          <Route path="/device/:deviceId" element={<DeviceDetail />} />
+        </Routes>
       </Box>
     </Box>
   );

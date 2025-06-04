@@ -7,6 +7,18 @@ export namespace main {
 	    compression: string;
 	    certName: string;
 	    introducer: boolean;
+	    skipIntroductionRemovals: boolean;
+	    introducedBy: string;
+	    paused: boolean;
+	    allowedNetworks: string[];
+	    autoAcceptFolders: boolean;
+	    maxSendKbps: number;
+	    maxRecvKbps: number;
+	    ignoredFolders: string[];
+	    maxRequestKiB: number;
+	    untrusted: boolean;
+	    remoteGUIPort: number;
+	    numConnections: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Device(source);
@@ -20,6 +32,18 @@ export namespace main {
 	        this.compression = source["compression"];
 	        this.certName = source["certName"];
 	        this.introducer = source["introducer"];
+	        this.skipIntroductionRemovals = source["skipIntroductionRemovals"];
+	        this.introducedBy = source["introducedBy"];
+	        this.paused = source["paused"];
+	        this.allowedNetworks = source["allowedNetworks"];
+	        this.autoAcceptFolders = source["autoAcceptFolders"];
+	        this.maxSendKbps = source["maxSendKbps"];
+	        this.maxRecvKbps = source["maxRecvKbps"];
+	        this.ignoredFolders = source["ignoredFolders"];
+	        this.maxRequestKiB = source["maxRequestKiB"];
+	        this.untrusted = source["untrusted"];
+	        this.remoteGUIPort = source["remoteGUIPort"];
+	        this.numConnections = source["numConnections"];
 	    }
 	}
 	export class Folder {
