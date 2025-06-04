@@ -1,13 +1,28 @@
-# 编译 syncthing
+# 项目需求说明
 
-```
-go run build.go --version v0.10.26 --no-upgrade
-```
+## 1. 管理范围
+- 只管理本机 Syncthing 已添加的文件夹（即 config.xml 里定义的 folders），不遍历所有本地文件夹。
 
-# 编译 syncthing android libs
+## 2. 实现思路
+- 通过解析本机 Syncthing 的 config.xml，获取所有已添加的同步文件夹路径。
+- 只对这些路径进行遍历、索引、数据库存储和 API 暴露。
+- 保证和 Syncthing 的同步策略一致，避免无关目录被暴露或管理。
 
-```
-cd syncthing-android/lib_build
-go run main.go
+## 3. 典型流程
+1. 启动时读取 config.xml，获取所有 <folder> 的 path。
+2. 遍历这些 path，将文件信息存入数据库。
+3. API 只提供这些文件夹及其子目录的内容。
+4. 前端/其他设备通过 API 访问这些内容，实现局域网内的"同步文件夹互查"。
 
-```
+## 4. 优点
+- 与 Syncthing 的同步策略完全一致，安全、可控。
+- 不会暴露或管理未授权的本地目录。
+- 便于多端协作和权限管理。
+
+## 5. 适用场景
+- 桌面端、Android 端等所有运行 Syncthing 的设备都可运行本地 API 服务。
+- 局域网内多端互查、互访、管理同步文件夹。
+
+---
+
+如需补充细节或扩展功能，直接在此基础上修改即可。 
