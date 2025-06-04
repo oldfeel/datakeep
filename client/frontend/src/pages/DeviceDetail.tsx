@@ -15,7 +15,6 @@ import {
   Folder as FolderIcon,
   Home as HomeIcon,
 } from '@mui/icons-material';
-import { GetDevices, GetDeviceFolders } from '../../wailsjs/go/main/App';
 
 interface Folder {
   id: string;
@@ -95,8 +94,11 @@ export default function DeviceDetail() {
         if (deviceId === 'local') {
           setDeviceName('本机');
         } else {
-          const devices = await GetDevices();
-          const device = devices.find(d => d.deviceID === deviceId);
+          const resp = await fetch('http://localhost:8080/api/devices');
+          if (!resp.ok) throw new Error('API 请求失败');
+          const result = await resp.json();
+          if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+          const device = result.data.devices.find((d: any) => d.deviceID === deviceId);
           if (device) {
             setDeviceName(device.name || device.deviceID);
           } else {
@@ -105,8 +107,11 @@ export default function DeviceDetail() {
         }
 
         // 获取文件夹列表
-        const folders = await GetDeviceFolders(deviceId);
-        setFolders(folders);
+        const resp2 = await fetch(`http://localhost:8080/api/device/${deviceId}/folders`);
+        if (!resp2.ok) throw new Error('API 请求失败');
+        const result2 = await resp2.json();
+        if (result2.code !== 0) throw new Error(result2.data || 'API 返回错误');
+        setFolders(result2.data);
       } catch (err) {
         console.error('Failed to load data:', err);
         setError('加载数据失败');

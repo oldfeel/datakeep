@@ -28,7 +28,6 @@ import {
   Devices as DevicesIcon,
   Add as AddIcon,
 } from '@mui/icons-material';
-import { GetDevices } from '../../wailsjs/go/main/App';
 import DeviceDetail from './DeviceDetail';
 import FolderDetail from './FolderDetail';
 import './App.css';
@@ -162,8 +161,11 @@ function App() {
 
   const loadDevices = async () => {
     try {
-      const devices = await GetDevices();
-      setDevices(devices);
+      const resp = await fetch('http://localhost:8080/api/devices');
+      if (!resp.ok) throw new Error('API 请求失败');
+      const result = await resp.json();
+      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+      setDevices(result.data);
     } catch (err) {
       console.error('Failed to load devices:', err);
     }
@@ -187,7 +189,13 @@ function App() {
       {/* 顶部 AppBar */}
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
         <Toolbar>
-          <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 0, mr: 2 }}>
+          <Typography
+            variant="h6"
+            noWrap
+            component="div"
+            sx={{ flexGrow: 0, mr: 2, cursor: 'pointer' }}
+            onClick={() => navigate('/')}
+          >
             MyData
           </Typography>
           <TextField

@@ -8,10 +8,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
-	"runtime"
+	"sync"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 type Folder struct {
@@ -21,7 +26,14 @@ type Folder struct {
 }
 
 type SyncthingConfig struct {
-	Folders []Folder `json:"folders"`
+	XMLName xml.Name      `xml:"configuration"`
+	Folders []FolderEntry `xml:"folder"`
+}
+
+type FolderEntry struct {
+	ID    string `xml:"id,attr" json:"id"`
+	Label string `xml:"label,attr" json:"label"`
+	Path  string `xml:"path,attr" json:"path"`
 }
 
 type Device struct {
@@ -37,27 +49,47 @@ type DevicesConfig struct {
 	Devices []Device `json:"devices"`
 }
 
+type File struct {
+	ID       uint   `gorm:"primaryKey" json:"id"`
+	FolderID string `json:"folderId"`
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	ModTime  int64  `json:"modTime"`
+	IsDir    bool   `json:"isDir"`
+}
+
 const (
 	syncthingAPI = "http://127.0.0.1:8384/rest/config" // Syncthing REST API 地址
 	apiKey       = ""                                  // 替换为你的 Syncthing API Key
 )
 
+var (
+	db         *gorm.DB
+	configPath string
+	folders    []FolderEntry
+	mu         sync.Mutex
+)
+
 func getConfigPath() string {
-	if runtime.GOOS == "android" {
-		return "/data/data/com.nutomic.syncthingandroid/files/config.xml"
+	usr, _ := user.Current()
+	home := usr.HomeDir
+	if home == "" {
+		home = os.Getenv("HOME")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "~" // fallback
+	paths := []string{
+		"/data/data/com.nutomic.syncthingandroid/files/config.xml",              // Android
+		filepath.Join(home, "AppData/Local/Syncthing/config.xml"),               // Windows
+		filepath.Join(home, "Library/Application Support/Syncthing/config.xml"), // macOS
+		filepath.Join(home, ".config/syncthing/config.xml"),                     // Linux/通用
+		"config.xml", // fallback
 	}
-	switch runtime.GOOS {
-	case "windows":
-		return home + `\\AppData\\Local\\Syncthing\\config.xml`
-	case "darwin":
-		return home + "/Library/Application Support/Syncthing/config.xml"
-	default: // linux, etc.
-		return home + "/.config/syncthing/config.xml"
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
 	}
+	return "config.xml"
 }
 
 // 解析 config.xml 获取 apikey
@@ -79,36 +111,6 @@ func getApiKeyFromConfig() string {
 		return apiKey
 	}
 	return cfg.Gui.APIKey
-}
-
-func getFoldersFromSyncthing() ([]Folder, error) {
-	req, err := http.NewRequest("GET", syncthingAPI, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-API-Key", getApiKeyFromConfig())
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("syncthing api error: %s", resp.Status)
-	}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var config SyncthingConfig
-	if err := json.Unmarshal(body, &config); err != nil {
-		return nil, err
-	}
-	return config.Folders, nil
 }
 
 func getDevicesFromSyncthing() ([]Device, error) {
@@ -134,11 +136,11 @@ func getDevicesFromSyncthing() ([]Device, error) {
 		return nil, err
 	}
 
-	var config DevicesConfig
-	if err := json.Unmarshal(body, &config); err != nil {
+	var devices []Device
+	if err := json.Unmarshal(body, &devices); err != nil {
 		return nil, err
 	}
-	return config.Devices, nil
+	return devices, nil
 }
 
 func success(c *fiber.Ctx, data interface{}) error {
@@ -153,14 +155,6 @@ func fail(c *fiber.Ctx, code int, msg string) error {
 		"code": code,
 		"data": msg,
 	})
-}
-
-func foldersHandler(c *fiber.Ctx) error {
-	folders, err := getFoldersFromSyncthing()
-	if err != nil {
-		return fail(c, 1001, "Failed to get folders: "+err.Error())
-	}
-	return success(c, folders)
 }
 
 // /files?path=/storage/emulated/0/Syncthing
@@ -194,16 +188,142 @@ func devicesHandler(c *fiber.Ctx) error {
 	return success(c, devices)
 }
 
+func deviceFoldersHandler(c *fiber.Ctx) error {
+	// 目前只返回本机 config.xml 里的所有同步文件夹
+	return success(c, folders)
+}
+
+func folderFilesHandler(c *fiber.Ctx) error {
+	folderId := c.Params("folderId")
+	path := c.Query("path", "")
+	var files []File
+	var err error
+	if path == "" {
+		// 根目录：path 不包含 '/'
+		err = db.Where("folder_id = ? AND path NOT LIKE ?", folderId, "%/%").Find(&files).Error
+	} else {
+		// 子目录：path = "a/b"，只查 a/b/xxx（不递归）
+		prefix := path + "/"
+		// 只查 path 下一级（不含更深层）
+		err = db.Where("folder_id = ? AND path LIKE ? AND path NOT LIKE ?", folderId, prefix+"%", prefix+"%/%/%").Find(&files).Error
+	}
+	if err != nil {
+		return fail(c, 1005, "数据库查询失败: "+err.Error())
+	}
+	return success(c, files)
+}
+
 func main() {
+	var err error
+	// 1. 初始化 GORM 数据库
+	db, err = gorm.Open(sqlite.Open("files.db"), &gorm.Config{})
+	if err != nil {
+		log.Fatal("failed to connect database:", err)
+	}
+	if err := db.AutoMigrate(&File{}); err != nil {
+		log.Fatal("auto migrate failed:", err)
+	}
+
+	// 2. 获取 config.xml 路径
+	configPath = getConfigPath()
+	fmt.Println("Syncthing config.xml:", configPath)
+
+	// 3. 准备索引
+	fmt.Println("准备索引")
+	loadAndIndex()
+	fmt.Println("索引完成")
+
+	// 4. 监听 config.xml 变化
+	go watchConfig()
+
+	// 5. 启动 Fiber API 服务
 	app := fiber.New()
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "*",
+		AllowMethods: "GET,POST,OPTIONS",
+	}))
+	app.Get("/api/folder/:folderId", folderFilesHandler)
+	app.Get("/api/devices", devicesHandler)
+	app.Get("/api/device/:deviceId/folders", deviceFoldersHandler)
+	go func() {
+		if err := app.Listen(":8080"); err != nil {
+			log.Fatal(err)
+		}
+	}()
 
-	// 静态文件服务（如有前端页面）
-	app.Static("/", "./static")
+	// 阻塞主线程
+	select {}
+}
 
-	app.Get("/folders", foldersHandler)
-	app.Get("/files", filesHandler)
-	app.Get("/devices", devicesHandler)
+func loadAndIndex() {
+	mu.Lock()
+	defer mu.Unlock()
+	// 解析 config.xml
+	f, err := os.Open(configPath)
+	if err != nil {
+		log.Println("无法打开 config.xml:", err)
+		return
+	}
+	defer f.Close()
+	var cfg SyncthingConfig
+	if err := xml.NewDecoder(f).Decode(&cfg); err != nil {
+		log.Println("解析 config.xml 失败:", err)
+		return
+	}
+	folders = cfg.Folders
+	fmt.Println("已获取同步文件夹:")
+	for _, folder := range folders {
+		fmt.Printf("- [%s] %s\n", folder.ID, folder.Path)
+	}
+	// 清空旧索引
+	db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&File{})
+	// 遍历所有同步文件夹
+	for _, folder := range folders {
+		walkAndIndex(folder)
+	}
+}
 
-	log.Println("Fiber API server started at :8080")
-	log.Fatal(app.Listen(":8080"))
+func walkAndIndex(folder FolderEntry) {
+	root := folder.Path
+	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		if rel == "." {
+			return nil
+		}
+		file := File{
+			FolderID: folder.ID,
+			Path:     rel,
+			Name:     info.Name(),
+			Size:     info.Size(),
+			ModTime:  info.ModTime().Unix(),
+			IsDir:    info.IsDir(),
+		}
+		db.Create(&file)
+		return nil
+	})
+}
+
+func watchConfig() {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Println("fsnotify 初始化失败:", err)
+		return
+	}
+	defer watcher.Close()
+	watcher.Add(configPath)
+	for {
+		select {
+		case event := <-watcher.Events:
+			if event.Op&fsnotify.Write == fsnotify.Write {
+				fmt.Println("检测到 config.xml 变更，重新加载...")
+				loadAndIndex()
+			}
+		case err := <-watcher.Errors:
+			log.Println("fsnotify 错误:", err)
+		}
+	}
 }

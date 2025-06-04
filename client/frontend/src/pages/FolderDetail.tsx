@@ -24,7 +24,6 @@ import {
   ArrowUpward as UpIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
-import { GetFolderContents } from '../../wailsjs/go/main/App';
 import { Link as RouterLink } from 'react-router-dom';
 import { Link as MuiLink } from '@mui/material';
 
@@ -67,9 +66,12 @@ function FolderDetail() {
       setLoading(true);
       setError(null);
       const path = currentPath.join('/');
-      const contents = await GetFolderContents(folderId!, path);
-      console.log("load files", folderId, path, contents)
-      setFiles(contents);
+      // 通过 HTTP API 获取文件列表（使用绝对路径，避免 dev server 代理问题）
+      const resp = await fetch(`http://localhost:8080/api/folder/${folderId}?path=${encodeURIComponent(path)}`);
+      if (!resp.ok) throw new Error('API 请求失败');
+      const result = await resp.json();
+      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+      setFiles(result.data);
     } catch (err) {
       console.error('Failed to load files:', err);
       setError(err instanceof Error ? err.message : '加载文件失败');
