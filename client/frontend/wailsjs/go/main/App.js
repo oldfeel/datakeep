@@ -10,8 +10,8 @@ export function GetDevices() {
   return window['go']['main']['App']['GetDevices']();
 }
 
-export function GetFolderContents(arg1) {
-  return window['go']['main']['App']['GetFolderContents'](arg1);
+export function GetFolderContents(arg1, arg2) {
+  return window['go']['main']['App']['GetFolderContents'](arg1, arg2);
 }
 
 export function GetFolders() {

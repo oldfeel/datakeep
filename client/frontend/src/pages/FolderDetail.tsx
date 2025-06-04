@@ -40,12 +40,21 @@ interface File {
   symlinkTarget?: string;
 }
 
+// 判断是否为目录
+const isDirectory = (file: File) =>
+  file.type === 'DIRECTORY' || file.type === 'FILE_INFO_TYPE_DIRECTORY';
+
 function FolderDetail() {
   const { folderId } = useParams<{ folderId: string }>();
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState<string[]>([]);
+
+  // 切换 folderId 时重置路径
+  useEffect(() => {
+    setCurrentPath([]);
+  }, [folderId]);
 
   useEffect(() => {
     if (folderId) {
@@ -58,7 +67,8 @@ function FolderDetail() {
       setLoading(true);
       setError(null);
       const path = currentPath.join('/');
-      const contents = await GetFolderContents(folderId!);
+      const contents = await GetFolderContents(folderId!, path);
+      console.log("load files", folderId, path, contents)
       setFiles(contents);
     } catch (err) {
       console.error('Failed to load files:', err);
@@ -69,7 +79,7 @@ function FolderDetail() {
   };
 
   const handleFileClick = (file: File) => {
-    if (file.type === 'DIRECTORY') {
+    if (isDirectory(file)) {
       setCurrentPath([...currentPath, file.name]);
     } else {
       // TODO: 处理文件点击，例如预览或下载
@@ -163,7 +173,7 @@ function FolderDetail() {
               >
                 <TableCell>
                   <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    {file.type === 'DIRECTORY' ? (
+                    {isDirectory(file) ? (
                       <FolderIcon sx={{ mr: 1, color: 'primary.main' }} />
                     ) : (
                       <FileIcon sx={{ mr: 1, color: 'text.secondary' }} />
@@ -176,9 +186,9 @@ function FolderDetail() {
                     )}
                   </Box>
                 </TableCell>
-                <TableCell>{file.type === 'DIRECTORY' ? '文件夹' : '文件'}</TableCell>
+                <TableCell>{isDirectory(file) ? '文件夹' : '文件'}</TableCell>
                 <TableCell align="right">
-                  {file.type === 'DIRECTORY' ? '-' : formatFileSize(file.size)}
+                  {isDirectory(file) ? '-' : formatFileSize(file.size)}
                 </TableCell>
                 <TableCell>{formatDate(file.modified)}</TableCell>
                 <TableCell>{file.permissions}</TableCell>

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 )
@@ -252,11 +253,14 @@ func (a *App) GetDeviceFolders(deviceID string) ([]Folder, error) {
 	return folders, nil
 }
 
-// GetFolderContents 获取指定文件夹的内容
-func (a *App) GetFolderContents(folderId string) ([]File, error) {
-	url := fmt.Sprintf("%s/rest/db/browse?folder=%s", syncthingAPI, folderId)
-	// 创建带 API Key 的请求
-	req, err := http.NewRequest("GET", url, nil)
+// GetFolderContents 获取指定文件夹的内容，支持 path 参数
+func (a *App) GetFolderContents(folderId string, path string) ([]File, error) {
+	apiUrl := fmt.Sprintf("%s/rest/db/browse?folder=%s", syncthingAPI, folderId)
+	if path != "" {
+		apiUrl += "&path=" + url.QueryEscape(path)
+	}
+	fmt.Printf("请求 Syncthing browse API: %s (原始 path: %s)\n", apiUrl, path)
+	req, err := http.NewRequest("GET", apiUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}

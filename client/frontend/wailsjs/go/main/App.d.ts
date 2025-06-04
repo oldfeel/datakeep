@@ -6,7 +6,7 @@ export function GetDeviceFolders(arg1:string):Promise<Array<main.Folder>>;
 
 export function GetDevices():Promise<Array<main.Device>>;
 
-export function GetFolderContents(arg1:string):Promise<Array<main.File>>;
+export function GetFolderContents(arg1:string,arg2:string):Promise<Array<main.File>>;
 
 export function GetFolders():Promise<Array<main.Folder>>;
 
