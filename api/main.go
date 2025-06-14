@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
@@ -82,6 +83,7 @@ func getConfigPath() string {
 		filepath.Join(home, "AppData/Local/Syncthing/config.xml"),               // Windows
 		filepath.Join(home, "Library/Application Support/Syncthing/config.xml"), // macOS
 		filepath.Join(home, ".config/syncthing/config.xml"),                     // Linux/通用
+		filepath.Join(home, ".local/state/syncthing/config.xml"),                // Linux/开发版本
 		"config.xml", // fallback
 	}
 	for _, p := range paths {
@@ -259,41 +261,81 @@ func main() {
 func loadAndIndex() {
 	mu.Lock()
 	defer mu.Unlock()
+	log.Println("开始加载和索引过程...")
+
 	// 解析 config.xml
 	f, err := os.Open(configPath)
 	if err != nil {
-		log.Println("无法打开 config.xml:", err)
+		log.Printf("无法打开 config.xml: %v, 路径: %s", err, configPath)
 		return
 	}
 	defer f.Close()
+
 	var cfg SyncthingConfig
 	if err := xml.NewDecoder(f).Decode(&cfg); err != nil {
-		log.Println("解析 config.xml 失败:", err)
+		log.Printf("解析 config.xml 失败: %v", err)
 		return
 	}
+
 	folders = cfg.Folders
-	fmt.Println("已获取同步文件夹:")
+	log.Printf("从配置文件读取到 %d 个同步文件夹", len(folders))
 	for _, folder := range folders {
-		fmt.Printf("- [%s] %s\n", folder.ID, folder.Path)
+		log.Printf("同步文件夹: [%s] %s", folder.ID, folder.Path)
 	}
+
 	// 清空旧索引
-	db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&File{})
+	result := db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&File{})
+	log.Printf("清空旧索引，删除记录数: %d", result.RowsAffected)
+
 	// 遍历所有同步文件夹
 	for _, folder := range folders {
+		log.Printf("开始索引文件夹: [%s] %s", folder.ID, folder.Path)
 		walkAndIndex(folder)
 	}
+	log.Println("索引过程完成")
+}
+
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		usr, err := user.Current()
+		if err != nil {
+			log.Printf("获取用户主目录失败: %v", err)
+			return path
+		}
+		return filepath.Join(usr.HomeDir, path[2:])
+	}
+	return path
 }
 
 func walkAndIndex(folder FolderEntry) {
-	root := folder.Path
+	root := expandPath(folder.Path)
+	log.Printf("开始遍历文件夹: %s (原始路径: %s)", root, folder.Path)
+
+	var fileCount int64
+	var dirCount int64
+
+	// 检查目录是否存在
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		log.Printf("警告: 目录不存在: %s", root)
+		return
+	}
+
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			log.Printf("遍历文件出错 %s: %v", path, err)
 			return nil
 		}
-		rel, _ := filepath.Rel(root, path)
+
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			log.Printf("获取相对路径出错 %s: %v", path, err)
+			return nil
+		}
+
 		if rel == "." {
 			return nil
 		}
+
 		file := File{
 			FolderID: folder.ID,
 			Path:     rel,
@@ -302,9 +344,23 @@ func walkAndIndex(folder FolderEntry) {
 			ModTime:  info.ModTime().Unix(),
 			IsDir:    info.IsDir(),
 		}
-		db.Create(&file)
+
+		result := db.Create(&file)
+		if result.Error != nil {
+			log.Printf("数据库写入失败 %s: %v", path, result.Error)
+			return nil
+		}
+
+		if info.IsDir() {
+			dirCount++
+		} else {
+			fileCount++
+		}
+
 		return nil
 	})
+
+	log.Printf("文件夹 [%s] 索引完成: 文件数 %d, 目录数 %d", folder.ID, fileCount, dirCount)
 }
 
 func watchConfig() {
