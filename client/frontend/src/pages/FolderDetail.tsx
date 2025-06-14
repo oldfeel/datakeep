@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -23,32 +23,93 @@ import {
   InsertDriveFile as FileIcon,
   ArrowUpward as UpIcon,
   Refresh as RefreshIcon,
+  Image as ImageIcon,
+  PictureAsPdf as PdfIcon,
+  Description as DocIcon,
+  Movie as VideoIcon,
+  Audiotrack as AudioIcon,
+  Code as CodeIcon,
+  Archive as ArchiveIcon,
+  TextSnippet as TextIcon,
+  Computer as ComputerIcon,
 } from '@mui/icons-material';
 import { Link as RouterLink } from 'react-router-dom';
 import { Link as MuiLink } from '@mui/material';
 
 interface File {
+  id: number;
+  folderId: string;
+  path: string;
   name: string;
-  type: string;
   size: number;
-  modified: string;
-  version: string;
-  permissions: string;
-  deleted: boolean;
-  invalid: boolean;
-  symlinkTarget?: string;
+  modTime: number;
+  isDir: boolean;
 }
 
 // 判断是否为目录
-const isDirectory = (file: File) =>
-  file.type === 'DIRECTORY' || file.type === 'FILE_INFO_TYPE_DIRECTORY';
+const isDirectory = (file: File) => file.isDir;
+
+// 获取文件图标
+const getFileIcon = (fileName: string, isDir: boolean) => {
+  if (isDir) {
+    return <FolderIcon sx={{ mr: 1, color: 'primary.main' }} />;
+  }
+
+  const ext = fileName.toLowerCase().split('.').pop() || '';
+
+  // 图片文件
+  if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'].includes(ext)) {
+    return <ImageIcon sx={{ mr: 1, color: '#2196f3' }} />;
+  }
+
+  // PDF文件
+  if (ext === 'pdf') {
+    return <PdfIcon sx={{ mr: 1, color: '#f44336' }} />;
+  }
+
+  // 文档文件
+  if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
+    return <DocIcon sx={{ mr: 1, color: '#4caf50' }} />;
+  }
+
+  // 视频文件
+  if (['mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv', 'webm'].includes(ext)) {
+    return <VideoIcon sx={{ mr: 1, color: '#ff9800' }} />;
+  }
+
+  // 音频文件
+  if (['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'].includes(ext)) {
+    return <AudioIcon sx={{ mr: 1, color: '#9c27b0' }} />;
+  }
+
+  // 代码文件
+  if (['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'go', 'rs', 'php', 'html', 'css', 'json', 'xml', 'yaml', 'yml'].includes(ext)) {
+    return <CodeIcon sx={{ mr: 1, color: '#795548' }} />;
+  }
+
+  // 压缩文件
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(ext)) {
+    return <ArchiveIcon sx={{ mr: 1, color: '#607d8b' }} />;
+  }
+
+  // 文本文件
+  if (['txt', 'md', 'log', 'ini', 'conf'].includes(ext)) {
+    return <TextIcon sx={{ mr: 1, color: '#9e9e9e' }} />;
+  }
+
+  // 默认文件图标
+  return <FileIcon sx={{ mr: 1, color: 'text.secondary' }} />;
+};
 
 function FolderDetail() {
   const { folderId } = useParams<{ folderId: string }>();
+  const [searchParams] = useSearchParams();
+  const deviceName = searchParams.get('deviceName') || '本机';
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState<string[]>([]);
+  const navigate = useNavigate();
 
   // 切换 folderId 时重置路径
   useEffect(() => {
@@ -135,22 +196,27 @@ function FolderDetail() {
         <MuiLink
           component="button"
           variant="body1"
-          onClick={() => setCurrentPath([])}
-          sx={{ textDecoration: 'none' }}
+          onClick={() => navigate(-1)}
+          sx={{ textDecoration: 'none', display: 'flex', alignItems: 'center' }}
         >
-          根目录
+          <ComputerIcon sx={{ mr: 0.5 }} fontSize="small" />
+          {deviceName}
         </MuiLink>
-        {currentPath.map((path, index) => (
-          <MuiLink
-            key={index}
-            component="button"
-            variant="body1"
-            onClick={() => handleBreadcrumbClick(index)}
-            sx={{ textDecoration: 'none' }}
-          >
-            {path}
-          </MuiLink>
-        ))}
+        {currentPath.length === 0 ? (
+          <Typography color="text.primary">根目录</Typography>
+        ) : (
+          currentPath.map((path, index) => (
+            <MuiLink
+              key={index}
+              component="button"
+              variant="body1"
+              onClick={() => handleBreadcrumbClick(index)}
+              sx={{ textDecoration: 'none' }}
+            >
+              {path}
+            </MuiLink>
+          ))
+        )}
       </Breadcrumbs>
 
       {/* 文件列表 */}
@@ -168,32 +234,23 @@ function FolderDetail() {
           <TableBody>
             {files.map((file) => (
               <TableRow
-                key={file.name}
+                key={file.id}
                 hover
                 onClick={() => handleFileClick(file)}
                 sx={{ cursor: 'pointer' }}
               >
                 <TableCell>
                   <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    {isDirectory(file) ? (
-                      <FolderIcon sx={{ mr: 1, color: 'primary.main' }} />
-                    ) : (
-                      <FileIcon sx={{ mr: 1, color: 'text.secondary' }} />
-                    )}
+                    {getFileIcon(file.name, isDirectory(file))}
                     {file.name}
-                    {file.symlinkTarget && (
-                      <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                        → {file.symlinkTarget}
-                      </Typography>
-                    )}
                   </Box>
                 </TableCell>
                 <TableCell>{isDirectory(file) ? '文件夹' : '文件'}</TableCell>
                 <TableCell align="right">
                   {isDirectory(file) ? '-' : formatFileSize(file.size)}
                 </TableCell>
-                <TableCell>{formatDate(file.modified)}</TableCell>
-                <TableCell>{file.permissions}</TableCell>
+                <TableCell>{new Date(file.modTime * 1000).toLocaleString('zh-CN')}</TableCell>
+                <TableCell>-</TableCell>
               </TableRow>
             ))}
           </TableBody>
