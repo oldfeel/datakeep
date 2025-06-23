@@ -48,7 +48,7 @@ function FolderList({ folders, deviceName, deviceId }: { folders: Folder[], devi
           >
             <CardActionArea
               component={Link}
-              to={`/folder/${deviceId}/${folder.id}`}
+              to={`/folder/${folder.id}?deviceName=${encodeURIComponent(deviceName)}`}
               sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}
             >
               <CardContent sx={{ flexGrow: 1 }}>

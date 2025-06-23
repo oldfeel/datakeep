@@ -313,21 +313,21 @@ func loadAndIndex() {
 	// 解析 config.xml
 	f, err := os.Open(configPath)
 	if err != nil {
-		log.Println("无法打开 config.xml:", err)
+		log.Printf("无法打开 config.xml: %v, 路径: %s", err, configPath)
 		return
 	}
 	defer f.Close()
 
 	var cfg SyncthingConfig
 	if err := xml.NewDecoder(f).Decode(&cfg); err != nil {
-		log.Println("解析 config.xml 失败:", err)
+		log.Printf("解析 config.xml 失败: %v", err)
 		return
 	}
 
 	folders = cfg.Folders
 	fmt.Printf("从 config.xml 解析到 %d 个同步文件夹:\n", len(folders))
 	for _, folder := range folders {
-		fmt.Printf("- [%s] %s\n", folder.ID, folder.Path)
+		log.Printf("同步文件夹: [%s] %s", folder.ID, folder.Path)
 	}
 
 	// 清空旧索引
@@ -340,6 +340,7 @@ func loadAndIndex() {
 
 	// 遍历所有同步文件夹
 	for _, folder := range folders {
+		log.Printf("开始索引文件夹: [%s] %s", folder.ID, folder.Path)
 		walkAndIndex(folder)
 	}
 
@@ -356,7 +357,7 @@ func walkAndIndex(folder FolderEntry) {
 			fmt.Printf("跳过文件 %s (错误: %v)\n", path, err)
 			return nil
 		}
-		rel, _ := filepath.Rel(root, path)
+
 		if rel == "." {
 			return nil
 		}
