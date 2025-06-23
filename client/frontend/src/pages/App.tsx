@@ -20,6 +20,7 @@ import {
   Divider,
   Chip,
   Button,
+  Badge,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -27,6 +28,10 @@ import {
   Computer as ComputerIcon,
   Devices as DevicesIcon,
   Add as AddIcon,
+  Wifi as WifiIcon,
+  WifiOff as WifiOffIcon,
+  SignalCellular4Bar as SignalCellular4BarIcon,
+  SignalCellular0Bar as SignalCellular0BarIcon,
 } from '@mui/icons-material';
 import DeviceDetail from './DeviceDetail';
 import FolderDetail from './FolderDetail';
@@ -39,6 +44,13 @@ interface Device {
   compression: string;
   certName: string;
   introducer: boolean;
+  connected: boolean;
+  connectionType: string;
+  clientVersion: string;
+  inBytesTotal: number;
+  outBytesTotal: number;
+  isLocal: boolean;
+  crypto: string;
 }
 
 interface Folder {
@@ -90,9 +102,53 @@ const StyledInputBase = styled(InputBase)(({ theme }) => ({
 
 // 设备列表组件
 function DeviceList({ devices, onDeviceClick }: { devices: Device[], onDeviceClick: (device: Device) => void }) {
+  // 格式化字节数为可读格式
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // 获取连接状态图标
+  const getConnectionIcon = (device: Device) => {
+    if (device.connected) {
+      return <WifiIcon color="success" />;
+    } else {
+      return <WifiOffIcon color="error" />;
+    }
+  };
+
+  // 获取连接类型显示文本
+  const getConnectionTypeText = (device: Device) => {
+    if (!device.connected) return '离线';
+    if (device.isLocal) return '本地连接';
+    switch (device.connectionType) {
+      case 'tcp-server': return 'TCP 服务器';
+      case 'tcp-client': return 'TCP 客户端';
+      case 'quic': return 'QUIC';
+      default: return device.connectionType || '未知';
+    }
+  };
+
   return (
     <List>
-      <ListItemButton onClick={() => onDeviceClick({ deviceID: 'local', name: '本机' } as Device)}>
+      <ListItemButton onClick={() => onDeviceClick({ 
+        deviceID: 'local', 
+        name: '本机',
+        addresses: [],
+        compression: '',
+        certName: '',
+        introducer: false,
+        connected: true,
+        connectionType: 'local',
+        clientVersion: '',
+        inBytesTotal: 0,
+        outBytesTotal: 0,
+        isLocal: true,
+        crypto: ''
+      } as Device)}>
         <ListItemIcon>
           <ComputerIcon />
         </ListItemIcon>
@@ -105,23 +161,76 @@ function DeviceList({ devices, onDeviceClick }: { devices: Device[], onDeviceCli
           onClick={() => onDeviceClick(device)}
         >
           <ListItemIcon>
-            <DevicesIcon />
+            <Badge
+              badgeContent={device.connected ? '在线' : '离线'}
+              color={device.connected ? 'success' : 'error'}
+              sx={{
+                '& .MuiBadge-badge': {
+                  fontSize: '0.6rem',
+                  height: '16px',
+                  minWidth: '16px',
+                }
+              }}
+            >
+              {getConnectionIcon(device)}
+            </Badge>
           </ListItemIcon>
           <ListItemText 
-            primary={device.name || device.deviceID}
+            primary={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="body1">
+                  {device.name || device.deviceID}
+                </Typography>
+                <Chip
+                  size="small"
+                  label={getConnectionTypeText(device)}
+                  color={device.connected ? 'success' : 'default'}
+                  variant={device.connected ? 'filled' : 'outlined'}
+                  sx={{ fontSize: '0.7rem', height: '20px' }}
+                />
+              </Box>
+            }
             secondary={
               <Box sx={{ mt: 0.5, display: 'block' }}>
                 <Typography variant="caption" display="block" color="text.secondary">
                   {device.deviceID}
                 </Typography>
-                {device.addresses.map((addr, index) => (
-                  <Chip
-                    key={index}
-                    size="small"
-                    label={addr}
-                    sx={{ mr: 0.5, mt: 0.5 }}
-                  />
-                ))}
+                {device.connected && (
+                  <Box sx={{ mt: 0.5, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                    <Typography variant="caption" color="text.secondary">
+                      接收: {formatBytes(device.inBytesTotal)}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      发送: {formatBytes(device.outBytesTotal)}
+                    </Typography>
+                    {device.clientVersion && (
+                      <Typography variant="caption" color="text.secondary">
+                        版本: {device.clientVersion}
+                      </Typography>
+                    )}
+                  </Box>
+                )}
+                {device.addresses.length > 0 && (
+                  <Box sx={{ mt: 0.5 }}>
+                    {device.addresses.slice(0, 2).map((addr, index) => (
+                      <Chip
+                        key={index}
+                        size="small"
+                        label={addr}
+                        variant="outlined"
+                        sx={{ mr: 0.5, mt: 0.5, fontSize: '0.7rem' }}
+                      />
+                    ))}
+                    {device.addresses.length > 2 && (
+                      <Chip
+                        size="small"
+                        label={`+${device.addresses.length - 2} 更多`}
+                        variant="outlined"
+                        sx={{ mr: 0.5, mt: 0.5, fontSize: '0.7rem' }}
+                      />
+                    )}
+                  </Box>
+                )}
               </Box>
             }
           />
@@ -157,6 +266,13 @@ function App() {
 
   useEffect(() => {
     loadDevices();
+    
+    // 每30秒自动刷新设备列表以更新连接状态
+    const interval = setInterval(() => {
+      loadDevices();
+    }, 30000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const loadDevices = async () => {
