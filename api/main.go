@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
@@ -37,12 +38,19 @@ type FolderEntry struct {
 }
 
 type Device struct {
-	DeviceID    string   `json:"deviceID"`
-	Name        string   `json:"name"`
-	Addresses   []string `json:"addresses"`
-	Compression string   `json:"compression"`
-	CertName    string   `json:"certName"`
-	Introducer  bool     `json:"introducer"`
+	DeviceID       string   `json:"deviceID"`
+	Name           string   `json:"name"`
+	Addresses      []string `json:"addresses"`
+	Compression    string   `json:"compression"`
+	CertName       string   `json:"certName"`
+	Introducer     bool     `json:"introducer"`
+	Connected      bool     `json:"connected"`
+	ConnectionType string   `json:"connectionType"`
+	ClientVersion  string   `json:"clientVersion"`
+	InBytesTotal   int64    `json:"inBytesTotal"`
+	OutBytesTotal  int64    `json:"outBytesTotal"`
+	IsLocal        bool     `json:"isLocal"`
+	Crypto         string   `json:"crypto"`
 }
 
 type DevicesConfig struct {
@@ -57,6 +65,27 @@ type File struct {
 	Size     int64  `json:"size"`
 	ModTime  int64  `json:"modTime"`
 	IsDir    bool   `json:"isDir"`
+}
+
+// 连接信息结构
+type ConnectionInfo struct {
+	Addresses     []string `json:"addresses"`
+	Connected     bool     `json:"connected"`
+	InBytesTotal  int64    `json:"inBytesTotal"`
+	OutBytesTotal int64    `json:"outBytesTotal"`
+	Type          string   `json:"type"`
+	Address       string   `json:"address"` // 添加单个地址字段
+	ClientVersion string   `json:"clientVersion"`
+	IsLocal       bool     `json:"isLocal"`
+	Crypto        string   `json:"crypto"`
+	Primary       struct {
+		Address string `json:"address"`
+		Type    string `json:"type"`
+	} `json:"primary"`
+}
+
+type DiscoveryInfo struct {
+	Addresses []string `json:"addresses"`
 }
 
 const (
@@ -114,7 +143,199 @@ func getApiKeyFromConfig() string {
 }
 
 func getDevicesFromSyncthing() ([]Device, error) {
+	fmt.Printf("=== getDevicesFromSyncthing 开始 ===\n")
+
+	// 获取设备配置
+	fmt.Printf("正在调用 Syncthing API: GET /rest/config/devices\n")
 	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/config/devices", nil)
+	if err != nil {
+		fmt.Printf("创建请求失败: %v\n", err)
+		return nil, err
+	}
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+	fmt.Printf("API Key: %s\n", getApiKeyFromConfig())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("HTTP 请求失败: %v\n", err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("HTTP 响应状态码: %d\n", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		fmt.Printf("Syncthing API 错误: %s\n", resp.Status)
+		return nil, fmt.Errorf("syncthing api error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("读取响应体失败: %v\n", err)
+		return nil, err
+	}
+	fmt.Printf("响应体长度: %d 字节\n", len(body))
+
+	var devices []Device
+	if err := json.Unmarshal(body, &devices); err != nil {
+		fmt.Printf("JSON 解析失败: %v\n", err)
+		fmt.Printf("响应体内容: %s\n", string(body))
+		return nil, err
+	}
+	fmt.Printf("成功解析到 %d 个设备:\n", len(devices))
+	for i, device := range devices {
+		fmt.Printf("  [%d] DeviceID: %s, Name: %s, Addresses: %v\n", i+1, device.DeviceID, device.Name, device.Addresses)
+	}
+
+	// 获取设备连接状态
+	fmt.Printf("\n正在获取设备连接状态...\n")
+	connections, err := getDeviceConnections()
+	if err != nil {
+		fmt.Printf("获取设备连接状态失败: %v\n", err)
+		fmt.Printf("继续返回设备列表（不包含连接信息）\n")
+		// 即使获取连接状态失败，也返回设备列表
+		fmt.Printf("=== getDevicesFromSyncthing 结束 ===\n")
+		return devices, nil
+	}
+
+	fmt.Printf("成功获取到 %d 个设备的连接信息:\n", len(connections))
+	for deviceID, conn := range connections {
+		fmt.Printf("  DeviceID: %s, Connected: %t, Type: %s, Address: %s, Primary Address: %s\n",
+			deviceID, conn.Connected, conn.Type, conn.Address, conn.Primary.Address)
+	}
+
+	// 获取设备发现信息
+	fmt.Printf("\n正在获取设备发现信息...\n")
+	discoveryInfo, err := getDeviceDiscovery()
+	if err != nil {
+		fmt.Printf("获取设备发现信息失败: %v\n", err)
+	} else {
+		fmt.Printf("设备发现信息: %+v\n", discoveryInfo)
+	}
+
+	// 将连接信息和发现信息合并到设备信息中
+	fmt.Printf("\n正在合并连接信息到设备列表...\n")
+	for i, device := range devices {
+		var addresses []string
+
+		// 1. 从连接状态获取地址和连接信息
+		if conn, exists := connections[device.DeviceID]; exists {
+			// 填充连接状态信息
+			devices[i].Connected = conn.Connected
+			devices[i].ConnectionType = conn.Type
+			devices[i].ClientVersion = conn.ClientVersion
+			devices[i].InBytesTotal = conn.InBytesTotal
+			devices[i].OutBytesTotal = conn.OutBytesTotal
+			devices[i].IsLocal = conn.IsLocal
+			devices[i].Crypto = conn.Crypto
+
+			// 获取地址
+			if conn.Connected && conn.Address != "" {
+				addresses = append(addresses, conn.Address)
+			}
+			if conn.Connected && conn.Primary.Address != "" && conn.Primary.Address != conn.Address {
+				addresses = append(addresses, conn.Primary.Address)
+			}
+		}
+
+		// 2. 从设备发现信息获取地址
+		if discoveryInfo != nil {
+			if deviceAddrs, exists := discoveryInfo[device.DeviceID]; exists {
+				if addrs, ok := deviceAddrs.(map[string]interface{}); ok {
+					if addrList, ok := addrs["addresses"].([]interface{}); ok {
+						for _, addr := range addrList {
+							if addrStr, ok := addr.(string); ok {
+								// 只添加局域网地址，过滤掉 relay 地址
+								if !strings.Contains(addrStr, "relay://") {
+									addresses = append(addresses, addrStr)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// 去重
+		uniqueAddresses := make([]string, 0)
+		seen := make(map[string]bool)
+		for _, addr := range addresses {
+			if !seen[addr] {
+				seen[addr] = true
+				uniqueAddresses = append(uniqueAddresses, addr)
+			}
+		}
+
+		devices[i].Addresses = uniqueAddresses
+		fmt.Printf("  设备 %s 更新地址: %v, 连接状态: %t, 类型: %s\n",
+			device.Name, uniqueAddresses, devices[i].Connected, devices[i].ConnectionType)
+	}
+
+	fmt.Printf("=== getDevicesFromSyncthing 结束 ===\n")
+	return devices, nil
+}
+
+// 获取设备连接状态
+func getDeviceConnections() (map[string]ConnectionInfo, error) {
+	fmt.Printf("正在调用 Syncthing API: GET /rest/system/connections\n")
+	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/system/connections", nil)
+	if err != nil {
+		fmt.Printf("创建连接状态请求失败: %v\n", err)
+		return nil, err
+	}
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("连接状态 HTTP 请求失败: %v\n", err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("连接状态 HTTP 响应状态码: %d\n", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		fmt.Printf("Syncthing 连接状态 API 错误: %s\n", resp.Status)
+		return nil, fmt.Errorf("syncthing connections api error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("读取连接状态响应体失败: %v\n", err)
+		return nil, err
+	}
+	fmt.Printf("连接状态响应体长度: %d 字节\n", len(body))
+
+	// 输出完整的 JSON 响应内容，用于调试
+	fmt.Printf("连接状态完整响应内容:\n%s\n", string(body))
+
+	var connections struct {
+		Connections map[string]ConnectionInfo `json:"connections"`
+	}
+	if err := json.Unmarshal(body, &connections); err != nil {
+		fmt.Printf("连接状态 JSON 解析失败: %v\n", err)
+		fmt.Printf("连接状态响应体内容: %s\n", string(body))
+		return nil, err
+	}
+
+	fmt.Printf("成功解析连接状态，共 %d 个设备\n", len(connections.Connections))
+
+	// 输出每个设备的详细连接信息
+	for deviceID, conn := range connections.Connections {
+		fmt.Printf("设备 %s 详细连接信息:\n", deviceID)
+		fmt.Printf("  - Connected: %t\n", conn.Connected)
+		fmt.Printf("  - Type: %s\n", conn.Type)
+		fmt.Printf("  - Addresses: %v\n", conn.Addresses)
+		fmt.Printf("  - InBytesTotal: %d\n", conn.InBytesTotal)
+		fmt.Printf("  - OutBytesTotal: %d\n", conn.OutBytesTotal)
+	}
+
+	return connections.Connections, nil
+}
+
+// 获取系统状态
+func getSystemStatus() (map[string]interface{}, error) {
+	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/system/status", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +349,7 @@ func getDevicesFromSyncthing() ([]Device, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("syncthing api error: %s", resp.Status)
+		return nil, fmt.Errorf("system status api error: %s", resp.Status)
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
@@ -136,11 +357,44 @@ func getDevicesFromSyncthing() ([]Device, error) {
 		return nil, err
 	}
 
-	var devices []Device
-	if err := json.Unmarshal(body, &devices); err != nil {
+	var status map[string]interface{}
+	if err := json.Unmarshal(body, &status); err != nil {
 		return nil, err
 	}
-	return devices, nil
+
+	return status, nil
+}
+
+// 获取设备发现信息
+func getDeviceDiscovery() (map[string]interface{}, error) {
+	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/system/discovery", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("device discovery api error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var discovery map[string]interface{}
+	if err := json.Unmarshal(body, &discovery); err != nil {
+		return nil, err
+	}
+
+	return discovery, nil
 }
 
 func success(c *fiber.Ctx, data interface{}) error {
@@ -355,6 +609,13 @@ func walkAndIndex(folder FolderEntry) {
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			fmt.Printf("跳过文件 %s (错误: %v)\n", path, err)
+			return nil
+		}
+
+		// 计算相对路径
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			fmt.Printf("计算相对路径失败 %s: %v\n", path, err)
 			return nil
 		}
 
