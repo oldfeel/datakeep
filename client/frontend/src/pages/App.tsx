@@ -110,8 +110,8 @@ function DeviceList({ devices, onDeviceClick }: { devices: Device[], onDeviceCli
           <ListItemText 
             primary={device.name || device.deviceID}
             secondary={
-              <Box component="span" sx={{ mt: 0.5, display: 'block' }}>
-                <Typography component="span" variant="caption" display="block" color="text.secondary">
+              <Box sx={{ mt: 0.5, display: 'block' }}>
+                <Typography variant="caption" display="block" color="text.secondary">
                   {device.deviceID}
                 </Typography>
                 {device.addresses.map((addr, index) => (

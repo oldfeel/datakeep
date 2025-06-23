@@ -23,6 +23,16 @@ import {
   InsertDriveFile as FileIcon,
   ArrowUpward as UpIcon,
   Refresh as RefreshIcon,
+  Image as ImageIcon,
+  Description as DocumentIcon,
+  PictureAsPdf as PdfIcon,
+  VideoFile as VideoIcon,
+  Audiotrack as AudioIcon,
+  Archive as ArchiveIcon,
+  Code as CodeIcon,
+  TableChart as SpreadsheetIcon,
+  Slideshow as PresentationIcon,
+  PlayArrow as ExecutableIcon,
 } from '@mui/icons-material';
 import { Link as RouterLink } from 'react-router-dom';
 import { Link as MuiLink } from '@mui/material';
@@ -38,15 +48,75 @@ interface File {
 }
 
 // 判断是否为目录
-const isDirectory = (file: File) =>
-  file.type === 'DIRECTORY' || file.type === 'FILE_INFO_TYPE_DIRECTORY';
+const isDirectory = (file: File) => file.isDir;
+
+// 根据文件扩展名获取对应的图标
+const getFileIcon = (fileName: string) => {
+  const extension = fileName.toLowerCase().split('.').pop() || '';
+  
+  // 图片文件
+  if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico', 'tiff', 'tif'].includes(extension)) {
+    return <ImageIcon sx={{ mr: 1, color: '#4CAF50' }} />;
+  }
+  
+  // PDF 文件
+  if (extension === 'pdf') {
+    return <PdfIcon sx={{ mr: 1, color: '#F44336' }} />;
+  }
+  
+  // 文档文件
+  if (['doc', 'docx', 'txt', 'rtf', 'odt'].includes(extension)) {
+    return <DocumentIcon sx={{ mr: 1, color: '#2196F3' }} />;
+  }
+  
+  // 视频文件
+  if (['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv', 'm4v', '3gp'].includes(extension)) {
+    return <VideoIcon sx={{ mr: 1, color: '#FF9800' }} />;
+  }
+  
+  // 音频文件
+  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a'].includes(extension)) {
+    return <AudioIcon sx={{ mr: 1, color: '#9C27B0' }} />;
+  }
+  
+  // 压缩文件
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'].includes(extension)) {
+    return <ArchiveIcon sx={{ mr: 1, color: '#795548' }} />;
+  }
+  
+  // 代码文件
+  if (['js', 'ts', 'jsx', 'tsx', 'html', 'css', 'scss', 'sass', 'less', 'json', 'xml', 'yaml', 'yml', 'py', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go', 'rs', 'swift', 'kt', 'dart'].includes(extension)) {
+    return <CodeIcon sx={{ mr: 1, color: '#607D8B' }} />;
+  }
+  
+  // 表格文件
+  if (['xls', 'xlsx', 'csv', 'ods'].includes(extension)) {
+    return <SpreadsheetIcon sx={{ mr: 1, color: '#4CAF50' }} />;
+  }
+  
+  // 演示文件
+  if (['ppt', 'pptx', 'odp'].includes(extension)) {
+    return <PresentationIcon sx={{ mr: 1, color: '#FF5722' }} />;
+  }
+  
+  // 可执行文件
+  if (['exe', 'msi', 'app', 'dmg', 'deb', 'rpm', 'pkg', 'sh', 'bat', 'cmd'].includes(extension)) {
+    return <ExecutableIcon sx={{ mr: 1, color: '#E91E63' }} />;
+  }
+  
+  // 默认文件图标
+  return <FileIcon sx={{ mr: 1, color: 'text.secondary' }} />;
+};
 
 function FolderDetail() {
-  const { folderId } = useParams<{ folderId: string }>();
+  const { deviceId, folderId } = useParams<{ deviceId: string; folderId: string }>();
+  const navigate = useNavigate();
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState<string[]>([]);
+  const [deviceName, setDeviceName] = useState<string>('');
+  const [folderInfo, setFolderInfo] = useState<{ id: string; label: string; path: string } | null>(null);
 
   // 切换 deviceId 或 folderId 时重置路径
   useEffect(() => {
@@ -190,26 +260,22 @@ function FolderDetail() {
         <MuiLink
           component="button"
           variant="body1"
-          onClick={() => navigate(-1)}
+          onClick={() => setCurrentPath([])}
           sx={{ textDecoration: 'none', display: 'flex', alignItems: 'center' }}
         >
-          根目录
+          {folderInfo?.label || '根目录'}
         </MuiLink>
-        {currentPath.length === 0 ? (
-          <Typography color="text.primary">根目录</Typography>
-        ) : (
-          currentPath.map((path, index) => (
-            <MuiLink
-              key={index}
-              component="button"
-              variant="body1"
-              onClick={() => handleBreadcrumbClick(index)}
-              sx={{ textDecoration: 'none' }}
-            >
-              {path}
-            </MuiLink>
-          ))
-        )}
+        {currentPath.map((path, index) => (
+          <MuiLink
+            key={index}
+            component="button"
+            variant="body1"
+            onClick={() => handleBreadcrumbClick(index)}
+            sx={{ textDecoration: 'none' }}
+          >
+            {path}
+          </MuiLink>
+        ))}
       </Breadcrumbs>
 
       {/* 文件列表 */}
@@ -237,7 +303,7 @@ function FolderDetail() {
                     {isDirectory(file) ? (
                       <FolderIcon sx={{ mr: 1, color: 'primary.main' }} />
                     ) : (
-                      <FileIcon sx={{ mr: 1, color: 'text.secondary' }} />
+                      getFileIcon(file.name)
                     )}
                     {file.name}
                   </Box>
@@ -246,8 +312,8 @@ function FolderDetail() {
                 <TableCell align="right">
                   {isDirectory(file) ? '-' : formatFileSize(file.size)}
                 </TableCell>
-                <TableCell>{formatDate(file.modified)}</TableCell>
-                <TableCell>{file.permissions}</TableCell>
+                <TableCell>{formatDate(new Date(file.modTime * 1000).toISOString())}</TableCell>
+                <TableCell>-</TableCell>
               </TableRow>
             ))}
           </TableBody>
