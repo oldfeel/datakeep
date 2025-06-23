@@ -23,7 +23,7 @@ interface Folder {
 }
 
 // 文件夹列表组件
-function FolderList({ folders, deviceName }: { folders: Folder[], deviceName: string }) {
+function FolderList({ folders, deviceName, deviceId }: { folders: Folder[], deviceName: string, deviceId: string }) {
   if (folders.length === 0) {
     return (
       <Alert severity="info" sx={{ mt: 2 }}>
@@ -48,7 +48,7 @@ function FolderList({ folders, deviceName }: { folders: Folder[], deviceName: st
           >
             <CardActionArea
               component={Link}
-              to={`/folder/${folder.id}`}
+              to={`/folder/${deviceId}/${folder.id}`}
               sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}
             >
               <CardContent sx={{ flexGrow: 1 }}>
@@ -162,7 +162,7 @@ export default function DeviceDetail() {
         {deviceName} 的文件夹
       </Typography>
 
-      <FolderList folders={folders} deviceName={deviceName} />
+      <FolderList folders={folders} deviceName={deviceName} deviceId={deviceId} />
     </Box>
   );
 } 

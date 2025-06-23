@@ -243,7 +243,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/device/local" replace />} />
           <Route path="/device/:deviceId" element={<DeviceDetail />} />
-          <Route path="/folder/:folderId" element={<FolderDetail />} />
+          <Route path="/folder/:deviceId/:folderId" element={<FolderDetail />} />
         </Routes>
       </Box>
     </Box>

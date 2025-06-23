@@ -78,10 +78,10 @@ func getConfigPath() string {
 		home = os.Getenv("HOME")
 	}
 	paths := []string{
-		"/data/data/com.nutomic.syncthingandroid/files/config.xml",              // Android
-		filepath.Join(home, "AppData/Local/Syncthing/config.xml"),               // Windows
-		filepath.Join(home, "Library/Application Support/Syncthing/config.xml"), // macOS
-		filepath.Join(home, ".config/syncthing/config.xml"),                     // Linux/通用
+		"/data/data/com.nutomic.syncthingandroid/files/config.xml",                       // Android
+		filepath.Join(home, "AppData", "Local", "Syncthing", "config.xml"),               // Windows
+		filepath.Join(home, "Library", "Application Support", "Syncthing", "config.xml"), // macOS
+		filepath.Join(home, ".config", "syncthing", "config.xml"),                        // Linux/通用
 		"config.xml", // fallback
 	}
 	for _, p := range paths {
@@ -196,20 +196,68 @@ func deviceFoldersHandler(c *fiber.Ctx) error {
 func folderFilesHandler(c *fiber.Ctx) error {
 	folderId := c.Params("folderId")
 	path := c.Query("path", "")
+
+	fmt.Printf("=== folderFilesHandler 开始 ===\n")
+	fmt.Printf("folderId: %s\n", folderId)
+	fmt.Printf("原始 path: %s\n", path)
+
+	// 标准化路径分隔符，确保使用系统相关的分隔符
+	path = filepath.Clean(path)
+	fmt.Printf("标准化后 path: %s\n", path)
+
 	var files []File
 	var err error
-	if path == "" {
-		// 根目录：path 不包含 '/'
-		err = db.Where("folder_id = ? AND path NOT LIKE ?", folderId, "%/%").Find(&files).Error
+	if path == "" || path == "." {
+		// 根目录：path 不包含路径分隔符
+		query := "%" + string(filepath.Separator) + "%"
+		fmt.Printf("查询根目录，SQL条件: folder_id = %s AND path NOT LIKE %s\n", folderId, query)
+		err = db.Where("folder_id = ? AND path NOT LIKE ?", folderId, query).Find(&files).Error
 	} else {
 		// 子目录：path = "a/b"，只查 a/b/xxx（不递归）
-		prefix := path + "/"
-		// 只查 path 下一级（不含更深层）
-		err = db.Where("folder_id = ? AND path LIKE ? AND path NOT LIKE ?", folderId, prefix+"%", prefix+"%/%/%").Find(&files).Error
+		prefix := path + string(filepath.Separator)
+		excludePattern := prefix + "%" + string(filepath.Separator) + "%" + string(filepath.Separator) + "%"
+		fmt.Printf("查询子目录，SQL条件: folder_id = %s AND path LIKE %s AND path NOT LIKE %s\n", folderId, prefix+"%", excludePattern)
+		err = db.Where("folder_id = ? AND path LIKE ? AND path NOT LIKE ?", folderId, prefix+"%", excludePattern).Find(&files).Error
 	}
+
 	if err != nil {
+		fmt.Printf("数据库查询失败: %v\n", err)
 		return fail(c, 1005, "数据库查询失败: "+err.Error())
 	}
+
+	fmt.Printf("查询结果数量: %d\n", len(files))
+	if len(files) > 0 {
+		fmt.Printf("前3个文件示例:\n")
+		for i, file := range files {
+			if i >= 3 {
+				break
+			}
+			fmt.Printf("  - ID: %d, Path: %s, Name: %s, IsDir: %t\n", file.ID, file.Path, file.Name, file.IsDir)
+		}
+	} else {
+		// 如果没有找到文件，检查数据库中是否有该文件夹的数据
+		var totalCount int64
+		db.Model(&File{}).Where("folder_id = ?", folderId).Count(&totalCount)
+		fmt.Printf("该文件夹在数据库中的总文件数: %d\n", totalCount)
+
+		// 检查所有文件夹
+		var allFolders []File
+		db.Select("DISTINCT folder_id").Find(&allFolders)
+		fmt.Printf("数据库中的所有文件夹ID:\n")
+		for _, f := range allFolders {
+			fmt.Printf("  - %s\n", f.FolderID)
+		}
+
+		// 调试：查看该文件夹的前几个文件
+		var sampleFiles []File
+		db.Where("folder_id = ?", folderId).Limit(5).Find(&sampleFiles)
+		fmt.Printf("该文件夹的前5个文件:\n")
+		for _, file := range sampleFiles {
+			fmt.Printf("  - ID: %d, Path: %s, Name: %s, IsDir: %t\n", file.ID, file.Path, file.Name, file.IsDir)
+		}
+	}
+
+	fmt.Printf("=== folderFilesHandler 结束 ===\n")
 	return success(c, files)
 }
 
@@ -259,6 +307,9 @@ func main() {
 func loadAndIndex() {
 	mu.Lock()
 	defer mu.Unlock()
+
+	fmt.Printf("=== 开始加载和索引 ===\n")
+
 	// 解析 config.xml
 	f, err := os.Open(configPath)
 	if err != nil {
@@ -266,34 +317,50 @@ func loadAndIndex() {
 		return
 	}
 	defer f.Close()
+
 	var cfg SyncthingConfig
 	if err := xml.NewDecoder(f).Decode(&cfg); err != nil {
 		log.Println("解析 config.xml 失败:", err)
 		return
 	}
+
 	folders = cfg.Folders
-	fmt.Println("已获取同步文件夹:")
+	fmt.Printf("从 config.xml 解析到 %d 个同步文件夹:\n", len(folders))
 	for _, folder := range folders {
 		fmt.Printf("- [%s] %s\n", folder.ID, folder.Path)
 	}
+
 	// 清空旧索引
-	db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&File{})
+	fmt.Printf("清空旧索引...\n")
+	if result := db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&File{}); result.Error != nil {
+		fmt.Printf("清空旧索引失败: %v\n", result.Error)
+	} else {
+		fmt.Printf("清空旧索引成功，删除了 %d 条记录\n", result.RowsAffected)
+	}
+
 	// 遍历所有同步文件夹
 	for _, folder := range folders {
 		walkAndIndex(folder)
 	}
+
+	fmt.Printf("=== 加载和索引完成 ===\n")
 }
 
 func walkAndIndex(folder FolderEntry) {
 	root := folder.Path
+	fmt.Printf("开始索引文件夹: [%s] %s\n", folder.ID, root)
+
+	fileCount := 0
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			fmt.Printf("跳过文件 %s (错误: %v)\n", path, err)
 			return nil
 		}
 		rel, _ := filepath.Rel(root, path)
 		if rel == "." {
 			return nil
 		}
+
 		file := File{
 			FolderID: folder.ID,
 			Path:     rel,
@@ -302,9 +369,19 @@ func walkAndIndex(folder FolderEntry) {
 			ModTime:  info.ModTime().Unix(),
 			IsDir:    info.IsDir(),
 		}
-		db.Create(&file)
+
+		if result := db.Create(&file); result.Error != nil {
+			fmt.Printf("插入文件失败 %s: %v\n", rel, result.Error)
+		} else {
+			fileCount++
+			if fileCount%100 == 0 {
+				fmt.Printf("已索引 %d 个文件...\n", fileCount)
+			}
+		}
 		return nil
 	})
+
+	fmt.Printf("文件夹 [%s] 索引完成，共 %d 个文件\n", folder.ID, fileCount)
 }
 
 func watchConfig() {

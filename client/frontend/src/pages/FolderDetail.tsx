@@ -23,37 +23,156 @@ import {
   InsertDriveFile as FileIcon,
   ArrowUpward as UpIcon,
   Refresh as RefreshIcon,
+  // 图片文件图标
+  Image as ImageIcon,
+  // 文档文件图标
+  Description as DocumentIcon,
+  PictureAsPdf as PdfIcon,
+  // 视频文件图标
+  VideoFile as VideoIcon,
+  // 音频文件图标
+  Audiotrack as AudioIcon,
+  // 压缩文件图标
+  Archive as ArchiveIcon,
+  // 代码文件图标
+  Code as CodeIcon,
+  // 表格文件图标
+  TableChart as SpreadsheetIcon,
+  // 演示文件图标
+  Slideshow as PresentationIcon,
+  // 可执行文件图标
+  PlayArrow as ExecutableIcon,
 } from '@mui/icons-material';
 import { Link as RouterLink } from 'react-router-dom';
 import { Link as MuiLink } from '@mui/material';
 
 interface File {
+  id: number;
+  folderId: string;
+  path: string;
   name: string;
-  type: string;
   size: number;
-  modified: string;
-  version: string;
-  permissions: string;
-  deleted: boolean;
-  invalid: boolean;
-  symlinkTarget?: string;
+  modTime: number;
+  isDir: boolean;
 }
 
 // 判断是否为目录
-const isDirectory = (file: File) =>
-  file.type === 'DIRECTORY' || file.type === 'FILE_INFO_TYPE_DIRECTORY';
+const isDirectory = (file: File) => file.isDir;
+
+// 根据文件扩展名获取对应的图标
+const getFileIcon = (fileName: string) => {
+  const extension = fileName.toLowerCase().split('.').pop() || '';
+  
+  // 图片文件
+  if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico', 'tiff', 'tif'].includes(extension)) {
+    return <ImageIcon sx={{ mr: 1, color: '#4CAF50' }} />;
+  }
+  
+  // PDF 文件
+  if (extension === 'pdf') {
+    return <PdfIcon sx={{ mr: 1, color: '#F44336' }} />;
+  }
+  
+  // 文档文件
+  if (['doc', 'docx', 'txt', 'rtf', 'odt'].includes(extension)) {
+    return <DocumentIcon sx={{ mr: 1, color: '#2196F3' }} />;
+  }
+  
+  // 视频文件
+  if (['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv', 'm4v', '3gp'].includes(extension)) {
+    return <VideoIcon sx={{ mr: 1, color: '#FF9800' }} />;
+  }
+  
+  // 音频文件
+  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a'].includes(extension)) {
+    return <AudioIcon sx={{ mr: 1, color: '#9C27B0' }} />;
+  }
+  
+  // 压缩文件
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'].includes(extension)) {
+    return <ArchiveIcon sx={{ mr: 1, color: '#795548' }} />;
+  }
+  
+  // 代码文件
+  if (['js', 'ts', 'jsx', 'tsx', 'html', 'css', 'scss', 'sass', 'less', 'json', 'xml', 'yaml', 'yml', 'py', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go', 'rs', 'swift', 'kt', 'dart'].includes(extension)) {
+    return <CodeIcon sx={{ mr: 1, color: '#607D8B' }} />;
+  }
+  
+  // 表格文件
+  if (['xls', 'xlsx', 'csv', 'ods'].includes(extension)) {
+    return <SpreadsheetIcon sx={{ mr: 1, color: '#4CAF50' }} />;
+  }
+  
+  // 演示文件
+  if (['ppt', 'pptx', 'odp'].includes(extension)) {
+    return <PresentationIcon sx={{ mr: 1, color: '#FF5722' }} />;
+  }
+  
+  // 可执行文件
+  if (['exe', 'msi', 'app', 'dmg', 'deb', 'rpm', 'pkg', 'sh', 'bat', 'cmd'].includes(extension)) {
+    return <ExecutableIcon sx={{ mr: 1, color: '#E91E63' }} />;
+  }
+  
+  // 默认文件图标
+  return <FileIcon sx={{ mr: 1, color: 'text.secondary' }} />;
+};
 
 function FolderDetail() {
-  const { folderId } = useParams<{ folderId: string }>();
+  const { deviceId, folderId } = useParams<{ deviceId: string; folderId: string }>();
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState<string[]>([]);
+  const [deviceName, setDeviceName] = useState<string>('');
+  const [folderInfo, setFolderInfo] = useState<{ id: string; label: string; path: string } | null>(null);
 
-  // 切换 folderId 时重置路径
+  // 切换 deviceId 或 folderId 时重置路径
   useEffect(() => {
     setCurrentPath([]);
-  }, [folderId]);
+  }, [deviceId, folderId]);
+
+  // 加载设备名称和文件夹信息
+  useEffect(() => {
+    const loadDeviceAndFolderInfo = async () => {
+      if (!deviceId || !folderId) return;
+      
+      // 加载设备名称
+      if (deviceId === 'local') {
+        setDeviceName('本机');
+      } else {
+        try {
+          const resp = await fetch('http://localhost:8080/api/devices');
+          if (!resp.ok) throw new Error('API 请求失败');
+          const result = await resp.json();
+          if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+          const device = result.data.find((d: any) => d.deviceID === deviceId);
+          if (device) {
+            setDeviceName(device.name || device.deviceID);
+          } else {
+            setDeviceName(deviceId);
+          }
+        } catch (err) {
+          console.error('Failed to load device name:', err);
+          setDeviceName(deviceId);
+        }
+      }
+
+      // 加载文件夹信息
+      try {
+        const resp = await fetch(`http://localhost:8080/api/device/${deviceId}/folders`);
+        if (!resp.ok) throw new Error('API 请求失败');
+        const result = await resp.json();
+        if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+        const folder = result.data.find((f: any) => f.id === folderId);
+        if (folder) {
+          setFolderInfo(folder);
+        }
+      } catch (err) {
+        console.error('Failed to load folder info:', err);
+      }
+    };
+    loadDeviceAndFolderInfo();
+  }, [deviceId, folderId]);
 
   useEffect(() => {
     if (folderId) {
@@ -133,12 +252,26 @@ function FolderDetail() {
       {/* 面包屑导航 */}
       <Breadcrumbs sx={{ mb: 2 }}>
         <MuiLink
+          component={Link}
+          to="/"
+          sx={{ textDecoration: 'none' }}
+        >
+          设备
+        </MuiLink>
+        <MuiLink
+          component={Link}
+          to={`/device/${deviceId}`}
+          sx={{ textDecoration: 'none' }}
+        >
+          {deviceName}
+        </MuiLink>
+        <MuiLink
           component="button"
           variant="body1"
           onClick={() => setCurrentPath([])}
           sx={{ textDecoration: 'none' }}
         >
-          根目录
+          {folderInfo?.label || '根目录'}
         </MuiLink>
         {currentPath.map((path, index) => (
           <MuiLink
@@ -178,22 +311,17 @@ function FolderDetail() {
                     {isDirectory(file) ? (
                       <FolderIcon sx={{ mr: 1, color: 'primary.main' }} />
                     ) : (
-                      <FileIcon sx={{ mr: 1, color: 'text.secondary' }} />
+                      getFileIcon(file.name)
                     )}
                     {file.name}
-                    {file.symlinkTarget && (
-                      <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                        → {file.symlinkTarget}
-                      </Typography>
-                    )}
                   </Box>
                 </TableCell>
                 <TableCell>{isDirectory(file) ? '文件夹' : '文件'}</TableCell>
                 <TableCell align="right">
                   {isDirectory(file) ? '-' : formatFileSize(file.size)}
                 </TableCell>
-                <TableCell>{formatDate(file.modified)}</TableCell>
-                <TableCell>{file.permissions}</TableCell>
+                <TableCell>{formatDate(new Date(file.modTime * 1000).toISOString())}</TableCell>
+                <TableCell>-</TableCell>
               </TableRow>
             ))}
           </TableBody>
