@@ -31,7 +31,15 @@ interface Device {
 }
 
 // 文件夹列表组件
-function FolderList({ folders, deviceName, deviceId }: { folders: Folder[], deviceName: string, deviceId: string }) {
+function FolderList({ folders, deviceName, deviceId }: { folders: Folder[] | null, deviceName: string, deviceId: string }) {
+  if (!folders) {
+    return (
+      <Alert severity="warning" sx={{ mt: 2 }}>
+        正在加载文件夹列表...
+      </Alert>
+    );
+  }
+
   if (folders.length === 0) {
     return (
       <Alert severity="info" sx={{ mt: 2 }}>
@@ -164,10 +172,63 @@ export default function DeviceDetail() {
           apiUrl = `http://localhost:8080/api/device/${deviceId}/folders`;
           console.log('Using local API'); // 调试日志
         } else if (device.addresses.length > 0) {
-          // 远程设备，使用第一个可用的 IP 地址
-          const remoteIp = device.addresses[0];
-          apiUrl = `http://${remoteIp}:8080/api/device/${deviceId}/folders`;
-          console.log('Using remote API with IP:', remoteIp); // 调试日志
+          // 远程设备，过滤出 IPv4 地址并使用 8080 端口
+          const ipv4Addresses = device.addresses.filter(addr => {
+            // 过滤出 IPv4 地址，排除 IPv6、relay 等
+            return addr.includes('tcp://') && 
+                   !addr.includes('[') && 
+                   !addr.includes('relay://') &&
+                   !addr.includes('quic://');
+          });
+          
+          if (ipv4Addresses.length > 0) {
+            // 提取 IP 地址（去掉 tcp:// 前缀和端口号）
+            const ipAddresses = ipv4Addresses.map(addr => {
+              const ipMatch = addr.match(/tcp:\/\/([^:]+):\d+/);
+              return ipMatch ? ipMatch[1] : null;
+            }).filter(ip => ip !== null);
+            
+            // 优先选择局域网地址
+            let selectedIp = null;
+            
+            // 1. 优先选择 192.168.x.x
+            selectedIp = ipAddresses.find(ip => ip!.startsWith('192.168.'));
+            if (selectedIp) {
+              console.log('Selected LAN IP (192.168.x.x):', selectedIp);
+            } else {
+              // 2. 其次选择 10.x.x.x
+              selectedIp = ipAddresses.find(ip => ip!.startsWith('10.'));
+              if (selectedIp) {
+                console.log('Selected LAN IP (10.x.x.x):', selectedIp);
+              } else {
+                // 3. 再次选择 172.16-31.x.x
+                selectedIp = ipAddresses.find(ip => {
+                  const parts = ip!.split('.');
+                  if (parts.length === 4) {
+                    const secondOctet = parseInt(parts[1]);
+                    return secondOctet >= 16 && secondOctet <= 31;
+                  }
+                  return false;
+                });
+                if (selectedIp) {
+                  console.log('Selected LAN IP (172.16-31.x.x):', selectedIp);
+                } else {
+                  // 4. 最后选择其他地址
+                  selectedIp = ipAddresses[0];
+                  console.log('Selected fallback IP:', selectedIp);
+                }
+              }
+            }
+            
+            if (selectedIp) {
+              apiUrl = `http://${selectedIp}:8080/api/device/${deviceId}/folders`;
+              console.log('Using remote API with IP:', selectedIp); // 调试日志
+            } else {
+              throw new Error('无法解析设备地址');
+            }
+          } else {
+            throw new Error('设备没有可用的 IPv4 地址');
+          }
         } else {
           throw new Error('设备未连接或没有可用地址');
         }

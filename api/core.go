@@ -1,3 +1,6 @@
+//go:build android
+// +build android
+
 package main
 
 import (
@@ -78,7 +81,10 @@ func getConfigPath() string {
 		home = os.Getenv("HOME")
 	}
 	paths := []string{
-		"/data/data/com.nutomic.syncthingandroid/files/config.xml",                       // Android
+		"/data/data/com.nutomic.syncthingandroid.debug/files/config.xml",                 // Android debug (优先)
+		"/data/data/com.nutomic.syncthingandroid.debug/files/syncthing/config.xml",       // Android debug alternative
+		"/data/data/com.nutomic.syncthingandroid/files/config.xml",                       // Android release
+		"/data/data/com.nutomic.syncthingandroid/files/syncthing/config.xml",             // Android alternative
 		filepath.Join(home, "AppData", "Local", "Syncthing", "config.xml"),               // Windows
 		filepath.Join(home, "Library", "Application Support", "Syncthing", "config.xml"), // macOS
 		filepath.Join(home, ".config", "syncthing", "config.xml"),                        // Linux/通用
@@ -86,9 +92,11 @@ func getConfigPath() string {
 	}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
+			fmt.Printf("找到配置文件: %s\n", p)
 			return p
 		}
 	}
+	fmt.Printf("未找到配置文件，使用默认路径: config.xml\n")
 	return "config.xml"
 }
 

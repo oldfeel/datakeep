@@ -227,9 +227,28 @@ function FolderDetail() {
         // 本地设备，使用本地 API
         apiUrl = `http://localhost:8080/api/folder/${folderId}?path=${encodeURIComponent(path)}`;
       } else if (device.addresses.length > 0) {
-        // 远程设备，使用第一个可用的 IP 地址
-        const remoteIp = device.addresses[0];
-        apiUrl = `http://${remoteIp}:8080/api/folder/${folderId}?path=${encodeURIComponent(path)}`;
+        // 远程设备，过滤出 IPv4 地址并使用 8080 端口
+        const ipv4Addresses = device.addresses.filter(addr => {
+          // 过滤出 IPv4 地址，排除 IPv6、relay 等
+          return addr.includes('tcp://') && 
+                 !addr.includes('[') && 
+                 !addr.includes('relay://') &&
+                 !addr.includes('quic://');
+        });
+        
+        if (ipv4Addresses.length > 0) {
+          // 提取 IP 地址（去掉 tcp:// 前缀和端口号）
+          const firstAddr = ipv4Addresses[0];
+          const ipMatch = firstAddr.match(/tcp:\/\/([^:]+):\d+/);
+          if (ipMatch) {
+            const remoteIp = ipMatch[1];
+            apiUrl = `http://${remoteIp}:8080/api/folder/${folderId}?path=${encodeURIComponent(path)}`;
+          } else {
+            throw new Error('无法解析设备地址');
+          }
+        } else {
+          throw new Error('设备没有可用的 IPv4 地址');
+        }
       } else {
         throw new Error('设备未连接或没有可用地址');
       }

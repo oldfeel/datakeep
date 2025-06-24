@@ -95,6 +95,9 @@ public class MyDataApiService extends Service {
 
     private void startApiProcess() {
         try {
+            // 读取并打印 config.xml 内容
+            readAndLogConfigXml();
+            
             // 获取二进制文件路径
             File binaryFile = new File(getApplicationInfo().nativeLibraryDir, BINARY_NAME);
             
@@ -154,6 +157,87 @@ public class MyDataApiService extends Service {
 
         } catch (IOException e) {
             Log.e(TAG, "Failed to start API process", e);
+        }
+    }
+
+    /**
+     * 读取并打印 config.xml 内容
+     */
+    private void readAndLogConfigXml() {
+        // 检查多个可能的配置文件路径
+        String[] possiblePaths = {
+            "/data/data/com.nutomic.syncthingandroid/files/config.xml",
+            "/data/data/com.nutomic.syncthingandroid.debug/files/config.xml",
+            "/data/data/com.nutomic.syncthingandroid/files/syncthing/config.xml",
+            "/data/data/com.nutomic.syncthingandroid.debug/files/syncthing/config.xml",
+            getFilesDir().getAbsolutePath() + "/config.xml",
+            getFilesDir().getAbsolutePath() + "/syncthing/config.xml"
+        };
+        
+        boolean foundConfig = false;
+        
+        for (String configPath : possiblePaths) {
+            File configFile = new File(configPath);
+            Log.i(TAG, "检查配置文件路径: " + configPath + " (存在: " + configFile.exists() + ")");
+            
+            if (configFile.exists()) {
+                foundConfig = true;
+                try {
+                    java.io.FileInputStream fis = new java.io.FileInputStream(configFile);
+                    byte[] buffer = new byte[(int) configFile.length()];
+                    fis.read(buffer);
+                    fis.close();
+                    String configContent = new String(buffer, "UTF-8");
+                    
+                    Log.i(TAG, "=== config.xml 内容开始 ===");
+                    Log.i(TAG, "文件路径: " + configPath);
+                    Log.i(TAG, "文件大小: " + configFile.length() + " 字节");
+                    
+                    // 查找并打印 folder 标签
+                    String[] lines = configContent.split("\n");
+                    boolean foundFolder = false;
+                    for (String line : lines) {
+                        line = line.trim();
+                        if (line.contains("<folder") || line.contains("</folder>") || 
+                            (line.contains("id=") && line.contains("label=") && line.contains("path="))) {
+                            Log.i(TAG, "FOLDER: " + line);
+                            foundFolder = true;
+                        }
+                    }
+                    
+                    if (!foundFolder) {
+                        Log.w(TAG, "未找到任何 <folder> 标签");
+                    }
+                    
+                    Log.i(TAG, "=== config.xml 内容结束 ===");
+                    break; // 找到第一个存在的配置文件就停止
+                    
+                } catch (Exception e) {
+                    Log.e(TAG, "读取 config.xml 失败: " + e.getMessage(), e);
+                }
+            }
+        }
+        
+        if (!foundConfig) {
+            Log.w(TAG, "所有可能的配置文件路径都不存在");
+            Log.w(TAG, "请确保 Syncthing Android 应用已启动并创建了同步文件夹");
+            
+            // 列出当前应用的文件目录内容
+            try {
+                File filesDir = getFilesDir();
+                Log.i(TAG, "当前应用文件目录: " + filesDir.getAbsolutePath());
+                if (filesDir.exists()) {
+                    File[] files = filesDir.listFiles();
+                    if (files != null) {
+                        Log.i(TAG, "文件目录内容:");
+                        for (File file : files) {
+                            Log.i(TAG, "  - " + file.getName() + " (" + (file.isDirectory() ? "目录" : "文件") + ")");
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "列出文件目录失败: " + e.getMessage());
+            }
         }
     }
 

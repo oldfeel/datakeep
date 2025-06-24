@@ -42,7 +42,7 @@ func AndroidMain() {
 	}
 
 	// 获取 config.xml 路径（Android 版本）
-	configPath = "/data/data/com.nutomic.syncthingandroid/files/config.xml"
+	configPath = getConfigPath()
 	fmt.Println("Syncthing config.xml:", configPath)
 
 	// 准备索引

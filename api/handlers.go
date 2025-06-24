@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -145,7 +146,7 @@ func getDevicesFromSyncthing() ([]Device, error) {
 
 	// 获取设备配置
 	fmt.Printf("正在调用 Syncthing API: GET /rest/config/devices\n")
-	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/config/devices", nil)
+	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/config/devices", nil)
 	if err != nil {
 		fmt.Printf("创建请求失败: %v\n", err)
 		return nil, err
@@ -153,7 +154,12 @@ func getDevicesFromSyncthing() ([]Device, error) {
 	req.Header.Set("X-API-Key", getApiKeyFromConfig())
 	fmt.Printf("API Key: %s\n", getApiKeyFromConfig())
 
-	client := &http.Client{}
+	// 创建跳过证书验证的 HTTP 客户端
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("HTTP 请求失败: %v\n", err)
@@ -270,14 +276,19 @@ func getDevicesFromSyncthing() ([]Device, error) {
 
 func getDeviceConnections() (map[string]ConnectionInfo, error) {
 	fmt.Printf("正在调用 Syncthing API: GET /rest/system/connections\n")
-	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/system/connections", nil)
+	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/system/connections", nil)
 	if err != nil {
 		fmt.Printf("创建连接状态请求失败: %v\n", err)
 		return nil, err
 	}
 	req.Header.Set("X-API-Key", getApiKeyFromConfig())
 
-	client := &http.Client{}
+	// 创建跳过证书验证的 HTTP 客户端
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("连接状态 HTTP 请求失败: %v\n", err)
