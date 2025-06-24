@@ -1,3 +1,6 @@
+//go:build !android
+// +build !android
+
 package main
 
 import (
@@ -554,7 +557,6 @@ func main() {
 		}
 	}()
 
-	// 阻塞主线程
 	select {}
 }
 
