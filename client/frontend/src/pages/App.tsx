@@ -192,9 +192,6 @@ function DeviceList({ devices, onDeviceClick }: { devices: Device[], onDeviceCli
             }
             secondary={
               <Box sx={{ mt: 0.5, display: 'block' }}>
-                <Typography variant="caption" display="block" color="text.secondary">
-                  {device.deviceID}
-                </Typography>
                 {device.connected && (
                   <Box sx={{ mt: 0.5, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                     <Typography variant="caption" color="text.secondary">
@@ -203,11 +200,6 @@ function DeviceList({ devices, onDeviceClick }: { devices: Device[], onDeviceCli
                     <Typography variant="caption" color="text.secondary">
                       发送: {formatBytes(device.outBytesTotal)}
                     </Typography>
-                    {device.clientVersion && (
-                      <Typography variant="caption" color="text.secondary">
-                        版本: {device.clientVersion}
-                      </Typography>
-                    )}
                   </Box>
                 )}
                 {device.addresses && device.addresses.length > 0 && (

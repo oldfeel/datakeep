@@ -50,7 +50,7 @@ interface File {
 interface Device {
   deviceID: string;
   name: string;
-  addresses: string[];
+  addresses?: string[] | null;
   connected: boolean;
   isLocal: boolean;
 }
@@ -186,12 +186,29 @@ function FolderDetail() {
         if (deviceId === 'local') {
           // 本地设备，使用本地 API
           apiUrl = `http://localhost:8080/api/device/${deviceId}/folders`;
+        } else if (device && device.addresses && device.addresses.length > 0) {
+          // 远程设备，现在地址已经是纯IP地址
+          const ipAddresses = device.addresses.filter(addr => {
+            // 过滤出有效的IPv4地址
+            const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+            return ipv4Regex.test(addr) && 
+                   !addr.includes('[') && 
+                   !addr.includes('relay://') &&
+                   !addr.includes('quic://');
+          });
+          
+          if (ipAddresses.length > 0) {
+            // 直接使用第一个IP地址
+            const remoteIp = ipAddresses[0];
+            apiUrl = `http://${remoteIp}:8080/api/device/${deviceId}/folders`;
+          } else {
+            throw new Error('设备没有可用的 IPv4 地址');
+          }
         } else {
-          // 远程设备，暂时使用本地 API 获取文件夹信息
-          // 因为此时 device 状态可能还没有更新
-          apiUrl = `http://localhost:8080/api/device/${deviceId}/folders`;
+          throw new Error('设备未连接或没有可用地址');
         }
 
+        console.log('Fetching folders from:', apiUrl);
         const resp = await fetch(apiUrl);
         if (!resp.ok) throw new Error('API 请求失败');
         const result = await resp.json();
@@ -226,26 +243,21 @@ function FolderDetail() {
       if (deviceId === 'local') {
         // 本地设备，使用本地 API
         apiUrl = `http://localhost:8080/api/folder/${encodeURIComponent(folderId)}?path=${encodeURIComponent(path)}`;
-      } else if (device.addresses.length > 0) {
-        // 远程设备，过滤出 IPv4 地址并使用 8080 端口
-        const ipv4Addresses = device.addresses.filter(addr => {
-          // 过滤出 IPv4 地址，排除 IPv6、relay 等
-          return addr.includes('tcp://') && 
+      } else if (device && device.addresses && device.addresses.length > 0) {
+        // 远程设备，现在地址已经是纯IP地址
+        const ipAddresses = device.addresses.filter(addr => {
+          // 过滤出有效的IPv4地址
+          const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+          return ipv4Regex.test(addr) && 
                  !addr.includes('[') && 
                  !addr.includes('relay://') &&
                  !addr.includes('quic://');
         });
         
-        if (ipv4Addresses.length > 0) {
-          // 提取 IP 地址（去掉 tcp:// 前缀和端口号）
-          const firstAddr = ipv4Addresses[0];
-          const ipMatch = firstAddr.match(/tcp:\/\/([^:]+):\d+/);
-          if (ipMatch) {
-            const remoteIp = ipMatch[1];
-            apiUrl = `http://${remoteIp}:8080/api/folder/${encodeURIComponent(folderId)}?path=${encodeURIComponent(path)}`;
-          } else {
-            throw new Error('无法解析设备地址');
-          }
+        if (ipAddresses.length > 0) {
+          // 直接使用第一个IP地址
+          const remoteIp = ipAddresses[0];
+          apiUrl = `http://${remoteIp}:8080/api/folder/${encodeURIComponent(folderId)}?path=${encodeURIComponent(path)}`;
         } else {
           throw new Error('设备没有可用的 IPv4 地址');
         }
@@ -318,7 +330,7 @@ function FolderDetail() {
   return (
     <Box>
       {/* 远程设备提示 */}
-      {device && !device.isLocal && device.addresses.length > 0 && (
+      {device && !device.isLocal && device.addresses && device.addresses.length > 0 && (
         <Alert severity="info" sx={{ mb: 2 }}>
           正在从远程设备获取数据: {device.addresses[0]}
         </Alert>

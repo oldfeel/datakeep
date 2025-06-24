@@ -107,17 +107,19 @@ func extractIPFromAddress(addr string) string {
 	return ""
 }
 
-// 过滤地址，只保留与本机在同一局域网的地址
-func filterLocalNetworkAddresses(addresses []string) []string {
+// 过滤地址，只保留IP地址（不包含协议和端口），并且去重
+func filterAndExtractIPAddresses(addresses []string) []string {
 	localIPs, err := getLocalNetworkIPs()
 	if err != nil {
 		fmt.Printf("获取本机局域网IP失败: %v，返回原始地址列表\n", err)
-		return addresses
+		return []string{}
 	}
 
 	fmt.Printf("本机局域网IP: %v\n", localIPs)
 
-	var filteredAddresses []string
+	// 用于去重的map
+	uniqueIPs := make(map[string]bool)
+	var filteredIPs []string
 
 	for _, addr := range addresses {
 		fmt.Printf("  检查地址: %s\n", addr)
@@ -145,19 +147,25 @@ func filterLocalNetworkAddresses(addresses []string) []string {
 
 		// 检查是否与本机在同一局域网
 		if isInSameNetwork(ip, localIPs) {
-			fmt.Printf("    保留地址(同网段): %s\n", addr)
-			filteredAddresses = append(filteredAddresses, addr)
+			// 如果IP还没有被添加过，则添加
+			if !uniqueIPs[ip] {
+				fmt.Printf("    添加新IP(同网段): %s\n", ip)
+				uniqueIPs[ip] = true
+				filteredIPs = append(filteredIPs, ip)
+			} else {
+				fmt.Printf("    跳过重复IP: %s\n", ip)
+			}
 		} else {
-			fmt.Printf("    过滤地址(不同网段): %s\n", addr)
+			fmt.Printf("    过滤IP(不同网段): %s\n", ip)
 		}
 	}
 
-	fmt.Printf("过滤前地址数量: %d, 过滤后地址数量: %d\n", len(addresses), len(filteredAddresses))
+	fmt.Printf("过滤前地址数量: %d, 过滤后IP数量: %d\n", len(addresses), len(filteredIPs))
 	// 确保返回空数组而不是 nil
-	if filteredAddresses == nil {
-		filteredAddresses = []string{}
+	if filteredIPs == nil {
+		filteredIPs = []string{}
 	}
-	return filteredAddresses
+	return filteredIPs
 }
 
 // 检查IP是否与本机在同一局域网
@@ -455,7 +463,7 @@ func getDevicesFromSyncthing() ([]Device, error) {
 		}
 
 		// 应用局域网地址过滤
-		filteredAddresses := filterLocalNetworkAddresses(uniqueAddresses)
+		filteredAddresses := filterAndExtractIPAddresses(uniqueAddresses)
 		// 确保 addresses 始终是一个数组而不是 nil
 		if filteredAddresses == nil {
 			filteredAddresses = []string{}

@@ -25,7 +25,7 @@ interface Folder {
 interface Device {
   deviceID: string;
   name: string;
-  addresses: string[];
+  addresses?: string[] | null;
   connected: boolean;
   isLocal: boolean;
 }
@@ -162,7 +162,7 @@ export default function DeviceDetail() {
         setError(null);
 
         console.log('Current device:', device); // 调试日志
-        console.log('Device addresses:', device.addresses); // 调试日志
+        console.log('Device addresses:', device.addresses || []); // 调试日志
         console.log('Device isLocal:', device.isLocal); // 调试日志
 
         // 构建 API URL
@@ -171,44 +171,39 @@ export default function DeviceDetail() {
           // 本地设备，使用本地 API
           apiUrl = `http://localhost:8080/api/device/${deviceId}/folders`;
           console.log('Using local API'); // 调试日志
-        } else if (device.addresses.length > 0) {
-          // 远程设备，过滤出 IPv4 地址并使用 8080 端口
-          const ipv4Addresses = device.addresses.filter(addr => {
-            // 过滤出 IPv4 地址，排除 IPv6、relay 等
-            return addr.includes('tcp://') && 
+        } else if (device.addresses && device.addresses.length > 0) {
+          // 远程设备，现在地址已经是纯IP地址
+          const ipAddresses = device.addresses.filter(addr => {
+            // 过滤出有效的IPv4地址
+            const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+            return ipv4Regex.test(addr) && 
                    !addr.includes('[') && 
                    !addr.includes('relay://') &&
                    !addr.includes('quic://');
           });
           
-          if (ipv4Addresses.length > 0) {
-            // 提取 IP 地址（去掉 tcp:// 前缀和端口号）
-            const ipAddresses = ipv4Addresses.map(addr => {
-              const ipMatch = addr.match(/tcp:\/\/([^:]+):\d+/);
-              return ipMatch ? ipMatch[1] : null;
-            }).filter(ip => ip !== null);
-            
+          if (ipAddresses.length > 0) {
             console.log('All available IPv4 addresses:', ipAddresses); // 调试日志
             
             // 优先选择局域网地址
             let selectedIp = null;
             
             // 1. 优先选择 192.168.2.x（主要网络）
-            const lan192_2Addresses = ipAddresses.filter(ip => ip!.startsWith('192.168.2.'));
+            const lan192_2Addresses = ipAddresses.filter(ip => ip.startsWith('192.168.2.'));
             if (lan192_2Addresses.length > 0) {
               selectedIp = lan192_2Addresses[0];
               console.log('Found 192.168.2.x addresses:', lan192_2Addresses);
               console.log('Selected primary LAN IP (192.168.2.x):', selectedIp);
             } else {
               // 2. 其次选择其他 192.168.x.x
-              const lan192Addresses = ipAddresses.filter(ip => ip!.startsWith('192.168.'));
+              const lan192Addresses = ipAddresses.filter(ip => ip.startsWith('192.168.'));
               if (lan192Addresses.length > 0) {
                 selectedIp = lan192Addresses[0];
                 console.log('Found other 192.168.x.x addresses:', lan192Addresses);
                 console.log('Selected LAN IP (192.168.x.x):', selectedIp);
               } else {
                 // 3. 再次选择 10.x.x.x
-                const lan10Addresses = ipAddresses.filter(ip => ip!.startsWith('10.'));
+                const lan10Addresses = ipAddresses.filter(ip => ip.startsWith('10.'));
                 if (lan10Addresses.length > 0) {
                   selectedIp = lan10Addresses[0];
                   console.log('Found 10.x.x.x addresses:', lan10Addresses);
@@ -216,7 +211,7 @@ export default function DeviceDetail() {
                 } else {
                   // 4. 再次选择 172.16-31.x.x
                   const lan172Addresses = ipAddresses.filter(ip => {
-                    const parts = ip!.split('.');
+                    const parts = ip.split('.');
                     if (parts.length === 4) {
                       const secondOctet = parseInt(parts[1]);
                       return secondOctet >= 16 && secondOctet <= 31;
@@ -305,9 +300,9 @@ export default function DeviceDetail() {
         {deviceName} 的文件夹
       </Typography>
 
-      {device && !device.isLocal && device.addresses.length > 0 && (
+      {device && !device.isLocal && device.addresses && device.addresses.length > 0 && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          正在从远程设备获取数据: {device.addresses[0]}
+          正在从远程设备获取数据: {device.addresses[0] || '未知地址'}
         </Alert>
       )}
 
