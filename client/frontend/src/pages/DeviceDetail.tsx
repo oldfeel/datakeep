@@ -188,34 +188,50 @@ export default function DeviceDetail() {
               return ipMatch ? ipMatch[1] : null;
             }).filter(ip => ip !== null);
             
+            console.log('All available IPv4 addresses:', ipAddresses); // 调试日志
+            
             // 优先选择局域网地址
             let selectedIp = null;
             
-            // 1. 优先选择 192.168.x.x
-            selectedIp = ipAddresses.find(ip => ip!.startsWith('192.168.'));
-            if (selectedIp) {
-              console.log('Selected LAN IP (192.168.x.x):', selectedIp);
+            // 1. 优先选择 192.168.2.x（主要网络）
+            const lan192_2Addresses = ipAddresses.filter(ip => ip!.startsWith('192.168.2.'));
+            if (lan192_2Addresses.length > 0) {
+              selectedIp = lan192_2Addresses[0];
+              console.log('Found 192.168.2.x addresses:', lan192_2Addresses);
+              console.log('Selected primary LAN IP (192.168.2.x):', selectedIp);
             } else {
-              // 2. 其次选择 10.x.x.x
-              selectedIp = ipAddresses.find(ip => ip!.startsWith('10.'));
-              if (selectedIp) {
-                console.log('Selected LAN IP (10.x.x.x):', selectedIp);
+              // 2. 其次选择其他 192.168.x.x
+              const lan192Addresses = ipAddresses.filter(ip => ip!.startsWith('192.168.'));
+              if (lan192Addresses.length > 0) {
+                selectedIp = lan192Addresses[0];
+                console.log('Found other 192.168.x.x addresses:', lan192Addresses);
+                console.log('Selected LAN IP (192.168.x.x):', selectedIp);
               } else {
-                // 3. 再次选择 172.16-31.x.x
-                selectedIp = ipAddresses.find(ip => {
-                  const parts = ip!.split('.');
-                  if (parts.length === 4) {
-                    const secondOctet = parseInt(parts[1]);
-                    return secondOctet >= 16 && secondOctet <= 31;
-                  }
-                  return false;
-                });
-                if (selectedIp) {
-                  console.log('Selected LAN IP (172.16-31.x.x):', selectedIp);
+                // 3. 再次选择 10.x.x.x
+                const lan10Addresses = ipAddresses.filter(ip => ip!.startsWith('10.'));
+                if (lan10Addresses.length > 0) {
+                  selectedIp = lan10Addresses[0];
+                  console.log('Found 10.x.x.x addresses:', lan10Addresses);
+                  console.log('Selected LAN IP (10.x.x.x):', selectedIp);
                 } else {
-                  // 4. 最后选择其他地址
-                  selectedIp = ipAddresses[0];
-                  console.log('Selected fallback IP:', selectedIp);
+                  // 4. 再次选择 172.16-31.x.x
+                  const lan172Addresses = ipAddresses.filter(ip => {
+                    const parts = ip!.split('.');
+                    if (parts.length === 4) {
+                      const secondOctet = parseInt(parts[1]);
+                      return secondOctet >= 16 && secondOctet <= 31;
+                    }
+                    return false;
+                  });
+                  if (lan172Addresses.length > 0) {
+                    selectedIp = lan172Addresses[0];
+                    console.log('Found 172.16-31.x.x addresses:', lan172Addresses);
+                    console.log('Selected LAN IP (172.16-31.x.x):', selectedIp);
+                  } else {
+                    // 5. 最后选择其他地址
+                    selectedIp = ipAddresses[0];
+                    console.log('No LAN addresses found, using fallback IP:', selectedIp);
+                  }
                 }
               }
             }
