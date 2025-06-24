@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -30,6 +32,185 @@ type ConnectionInfo struct {
 
 type DiscoveryInfo struct {
 	Addresses []string `json:"addresses"`
+}
+
+// 获取本机局域网IP地址
+func getLocalNetworkIPs() ([]string, error) {
+	var localIPs []string
+
+	// 获取所有网络接口
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, iface := range interfaces {
+		// 跳过回环接口和down的接口
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			switch v := addr.(type) {
+			case *net.IPNet:
+				// 只获取IPv4地址，并且是私有地址
+				if v.IP.To4() != nil && isPrivateIP(v.IP) {
+					localIPs = append(localIPs, v.IP.String())
+				}
+			}
+		}
+	}
+
+	return localIPs, nil
+}
+
+// 判断是否为私有IP地址
+func isPrivateIP(ip net.IP) bool {
+	// 私有IP地址范围
+	privateRanges := []struct {
+		start net.IP
+		end   net.IP
+	}{
+		{net.ParseIP("10.0.0.0"), net.ParseIP("10.255.255.255")},     // 10.0.0.0/8
+		{net.ParseIP("172.16.0.0"), net.ParseIP("172.31.255.255")},   // 172.16.0.0/12
+		{net.ParseIP("192.168.0.0"), net.ParseIP("192.168.255.255")}, // 192.168.0.0/16
+	}
+
+	for _, r := range privateRanges {
+		if bytes2Int(ip) >= bytes2Int(r.start) && bytes2Int(ip) <= bytes2Int(r.end) {
+			return true
+		}
+	}
+	return false
+}
+
+// 将IP地址转换为整数进行比较
+func bytes2Int(ip net.IP) uint32 {
+	ip = ip.To4()
+	return uint32(ip[0])<<24 + uint32(ip[1])<<16 + uint32(ip[2])<<8 + uint32(ip[3])
+}
+
+// 从地址字符串中提取IP地址
+func extractIPFromAddress(addr string) string {
+	// 匹配IPv4地址的正则表达式
+	ipv4Regex := regexp.MustCompile(`(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
+	matches := ipv4Regex.FindStringSubmatch(addr)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
+// 过滤地址，只保留与本机在同一局域网的地址
+func filterLocalNetworkAddresses(addresses []string) []string {
+	localIPs, err := getLocalNetworkIPs()
+	if err != nil {
+		fmt.Printf("获取本机局域网IP失败: %v，返回原始地址列表\n", err)
+		return addresses
+	}
+
+	fmt.Printf("本机局域网IP: %v\n", localIPs)
+
+	var filteredAddresses []string
+
+	for _, addr := range addresses {
+		fmt.Printf("  检查地址: %s\n", addr)
+
+		// 跳过relay地址
+		if strings.Contains(addr, "relay://") {
+			fmt.Printf("    跳过relay地址: %s\n", addr)
+			continue
+		}
+
+		// 跳过IPv6地址（暂时）
+		if strings.Contains(addr, "[") && strings.Contains(addr, "]") {
+			fmt.Printf("    跳过IPv6地址: %s\n", addr)
+			continue
+		}
+
+		// 提取IP地址
+		ip := extractIPFromAddress(addr)
+		if ip == "" {
+			fmt.Printf("    无法提取IP地址: %s\n", addr)
+			continue
+		}
+
+		fmt.Printf("    提取到IP: %s\n", ip)
+
+		// 检查是否与本机在同一局域网
+		if isInSameNetwork(ip, localIPs) {
+			fmt.Printf("    保留地址(同网段): %s\n", addr)
+			filteredAddresses = append(filteredAddresses, addr)
+		} else {
+			fmt.Printf("    过滤地址(不同网段): %s\n", addr)
+		}
+	}
+
+	fmt.Printf("过滤前地址数量: %d, 过滤后地址数量: %d\n", len(addresses), len(filteredAddresses))
+	// 确保返回空数组而不是 nil
+	if filteredAddresses == nil {
+		filteredAddresses = []string{}
+	}
+	return filteredAddresses
+}
+
+// 检查IP是否与本机在同一局域网
+func isInSameNetwork(ip string, localIPs []string) bool {
+	ipAddr := net.ParseIP(ip)
+	if ipAddr == nil {
+		fmt.Printf("      无法解析IP: %s\n", ip)
+		return false
+	}
+
+	for _, localIP := range localIPs {
+		localAddr := net.ParseIP(localIP)
+		if localAddr == nil {
+			continue
+		}
+
+		fmt.Printf("      比较IP: %s 与本地IP: %s\n", ip, localIP)
+
+		// 检查是否在同一网段（前三个字节相同）
+		if ipAddr.To4() != nil && localAddr.To4() != nil {
+			ipBytes := ipAddr.To4()
+			localBytes := localAddr.To4()
+
+			// 对于192.168.x.x，检查前两个字节
+			if ipBytes[0] == 192 && ipBytes[1] == 168 &&
+				localBytes[0] == 192 && localBytes[1] == 168 {
+				if ipBytes[2] == localBytes[2] {
+					fmt.Printf("        192.168.x.x 网段匹配: %d.%d.%d.x\n", ipBytes[0], ipBytes[1], ipBytes[2])
+					return true
+				} else {
+					fmt.Printf("        192.168.x.x 网段不匹配: %d.%d.%d.x vs %d.%d.%d.x\n",
+						ipBytes[0], ipBytes[1], ipBytes[2], localBytes[0], localBytes[1], localBytes[2])
+				}
+			}
+
+			// 对于10.x.x.x，检查第一个字节
+			if ipBytes[0] == 10 && localBytes[0] == 10 {
+				fmt.Printf("        10.x.x.x 网段匹配\n")
+				return true
+			}
+
+			// 对于172.16-31.x.x，检查前两个字节
+			if ipBytes[0] == 172 && localBytes[0] == 172 {
+				if ipBytes[1] >= 16 && ipBytes[1] <= 31 &&
+					localBytes[1] >= 16 && localBytes[1] <= 31 {
+					fmt.Printf("        172.16-31.x.x 网段匹配: %d.%d.x.x\n", ipBytes[0], ipBytes[1])
+					return true
+				}
+			}
+		}
+	}
+
+	fmt.Printf("      不在同一网段\n")
+	return false
 }
 
 func success(c *fiber.Ctx, data interface{}) error {
@@ -265,9 +446,15 @@ func getDevicesFromSyncthing() ([]Device, error) {
 			}
 		}
 
-		devices[i].Addresses = uniqueAddresses
+		// 应用局域网地址过滤
+		filteredAddresses := filterLocalNetworkAddresses(uniqueAddresses)
+		// 确保 addresses 始终是一个数组而不是 nil
+		if filteredAddresses == nil {
+			filteredAddresses = []string{}
+		}
+		devices[i].Addresses = filteredAddresses
 		fmt.Printf("  设备 %s 更新地址: %v, 连接状态: %t, 类型: %s\n",
-			device.Name, uniqueAddresses, devices[i].Connected, devices[i].ConnectionType)
+			device.Name, filteredAddresses, devices[i].Connected, devices[i].ConnectionType)
 	}
 
 	fmt.Printf("=== getDevicesFromSyncthing 结束 ===\n")

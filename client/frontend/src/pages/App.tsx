@@ -40,7 +40,7 @@ import './App.css';
 interface Device {
   deviceID: string;
   name: string;
-  addresses: string[];
+  addresses?: string[] | null;
   compression: string;
   certName: string;
   introducer: boolean;
@@ -210,7 +210,7 @@ function DeviceList({ devices, onDeviceClick }: { devices: Device[], onDeviceCli
                     )}
                   </Box>
                 )}
-                {device.addresses.length > 0 && (
+                {device.addresses && device.addresses.length > 0 && (
                   <Box sx={{ mt: 0.5 }}>
                     {device.addresses.slice(0, 2).map((addr, index) => (
                       <Chip
@@ -281,9 +281,10 @@ function App() {
       if (!resp.ok) throw new Error('API 请求失败');
       const result = await resp.json();
       if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
-      setDevices(result.data);
+      setDevices(result.data || []);
     } catch (err) {
       console.error('Failed to load devices:', err);
+      setDevices([]);
     }
   };
 
