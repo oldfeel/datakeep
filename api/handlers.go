@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -265,24 +266,31 @@ func folderFilesHandler(c *fiber.Ctx) error {
 	folderId := c.Params("folderId")
 	path := c.Query("path", "")
 
+	// URL解码folderId，处理中文字符
+	decodedFolderId, err := url.QueryUnescape(folderId)
+	if err != nil {
+		fmt.Printf("URL解码失败: %v\n", err)
+		decodedFolderId = folderId // 解码失败时使用原始值
+	}
+
 	fmt.Printf("=== folderFilesHandler 开始 ===\n")
-	fmt.Printf("folderId: %s\n", folderId)
+	fmt.Printf("原始 folderId: %s\n", folderId)
+	fmt.Printf("解码后 folderId: %s\n", decodedFolderId)
 	fmt.Printf("原始 path: %s\n", path)
 
 	path = filepath.Clean(path)
 	fmt.Printf("标准化后 path: %s\n", path)
 
 	var files []File
-	var err error
 	if path == "" || path == "." {
 		query := "%" + string(filepath.Separator) + "%"
-		fmt.Printf("查询根目录，SQL条件: folder_id = %s AND path NOT LIKE %s\n", folderId, query)
-		err = db.Where("folder_id = ? AND path NOT LIKE ?", folderId, query).Find(&files).Error
+		fmt.Printf("查询根目录，SQL条件: folder_id = %s AND path NOT LIKE %s\n", decodedFolderId, query)
+		err = db.Where("folder_id = ? AND path NOT LIKE ?", decodedFolderId, query).Find(&files).Error
 	} else {
 		prefix := path + string(filepath.Separator)
 		excludePattern := prefix + "%" + string(filepath.Separator) + "%" + string(filepath.Separator) + "%"
-		fmt.Printf("查询子目录，SQL条件: folder_id = %s AND path LIKE %s AND path NOT LIKE %s\n", folderId, prefix+"%", excludePattern)
-		err = db.Where("folder_id = ? AND path LIKE ? AND path NOT LIKE ?", folderId, prefix+"%", excludePattern).Find(&files).Error
+		fmt.Printf("查询子目录，SQL条件: folder_id = %s AND path LIKE %s AND path NOT LIKE %s\n", decodedFolderId, prefix+"%", excludePattern)
+		err = db.Where("folder_id = ? AND path LIKE ? AND path NOT LIKE ?", decodedFolderId, prefix+"%", excludePattern).Find(&files).Error
 	}
 
 	if err != nil {
@@ -301,7 +309,7 @@ func folderFilesHandler(c *fiber.Ctx) error {
 		}
 	} else {
 		var totalCount int64
-		db.Model(&File{}).Where("folder_id = ?", folderId).Count(&totalCount)
+		db.Model(&File{}).Where("folder_id = ?", decodedFolderId).Count(&totalCount)
 		fmt.Printf("该文件夹在数据库中的总文件数: %d\n", totalCount)
 		var allFolders []File
 		db.Select("DISTINCT folder_id").Find(&allFolders)
@@ -310,7 +318,7 @@ func folderFilesHandler(c *fiber.Ctx) error {
 			fmt.Printf("  - %s\n", f.FolderID)
 		}
 		var sampleFiles []File
-		db.Where("folder_id = ?", folderId).Limit(5).Find(&sampleFiles)
+		db.Where("folder_id = ?", decodedFolderId).Limit(5).Find(&sampleFiles)
 		fmt.Printf("该文件夹的前5个文件:\n")
 		for _, file := range sampleFiles {
 			fmt.Printf("  - ID: %d, Path: %s, Name: %s, IsDir: %t\n", file.ID, file.Path, file.Name, file.IsDir)

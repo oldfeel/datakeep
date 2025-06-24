@@ -214,7 +214,7 @@ function FolderDetail() {
   }, [folderId, currentPath, device]);
 
   const loadFiles = async () => {
-    if (!device) return; // 等待设备信息加载完成
+    if (!device || !folderId) return; // 等待设备信息加载完成，确保folderId存在
 
     try {
       setLoading(true);
@@ -225,7 +225,7 @@ function FolderDetail() {
       let apiUrl: string;
       if (deviceId === 'local') {
         // 本地设备，使用本地 API
-        apiUrl = `http://localhost:8080/api/folder/${folderId}?path=${encodeURIComponent(path)}`;
+        apiUrl = `http://localhost:8080/api/folder/${encodeURIComponent(folderId)}?path=${encodeURIComponent(path)}`;
       } else if (device.addresses.length > 0) {
         // 远程设备，过滤出 IPv4 地址并使用 8080 端口
         const ipv4Addresses = device.addresses.filter(addr => {
@@ -242,7 +242,7 @@ function FolderDetail() {
           const ipMatch = firstAddr.match(/tcp:\/\/([^:]+):\d+/);
           if (ipMatch) {
             const remoteIp = ipMatch[1];
-            apiUrl = `http://${remoteIp}:8080/api/folder/${folderId}?path=${encodeURIComponent(path)}`;
+            apiUrl = `http://${remoteIp}:8080/api/folder/${encodeURIComponent(folderId)}?path=${encodeURIComponent(path)}`;
           } else {
             throw new Error('无法解析设备地址');
           }
