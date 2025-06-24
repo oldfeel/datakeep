@@ -65,6 +65,7 @@ import com.nutomic.syncthingandroid.service.SyncthingService;
 import com.nutomic.syncthingandroid.service.SyncthingServiceBinder;
 import com.nutomic.syncthingandroid.util.PermissionUtil;
 import com.nutomic.syncthingandroid.util.Util;
+import com.nutomic.syncthingandroid.service.MyDataApiService;
 
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
@@ -319,12 +320,23 @@ public class MainActivity extends StateDialogActivity
         mDrawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
         mDrawerLayout.addDrawerListener(mDrawerToggle);
         setOptimalDrawerWidth(findViewById(R.id.drawer));
+        
+        // 启动 SyncthingService
         Intent serviceIntent = new Intent(this, SyncthingService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent);
         } else {
             startService(serviceIntent);
         }
+        
+        // 启动 MyDataApiService
+        Intent myDataServiceIntent = new Intent(this, MyDataApiService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(myDataServiceIntent);
+        } else {
+            startService(myDataServiceIntent);
+        }
+        
         onNewIntent(getIntent());
     }
 
@@ -353,6 +365,9 @@ public class MainActivity extends StateDialogActivity
             mSyncthingService.unregisterOnServiceStateChangeListener(mFolderListFragment);
             mSyncthingService.unregisterOnServiceStateChangeListener(mDeviceListFragment);
         }
+        
+        // 停止 MyDataApiService
+        stopService(new Intent(this, MyDataApiService.class));
     }
 
     @Override

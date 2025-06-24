@@ -22,6 +22,14 @@ interface Folder {
   path: string;
 }
 
+interface Device {
+  deviceID: string;
+  name: string;
+  addresses: string[];
+  connected: boolean;
+  isLocal: boolean;
+}
+
 // 文件夹列表组件
 function FolderList({ folders, deviceName, deviceId }: { folders: Folder[], deviceName: string, deviceId: string }) {
   if (folders.length === 0) {
@@ -83,45 +91,103 @@ export default function DeviceDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState<string>('');
+  const [device, setDevice] = useState<Device | null>(null);
 
+  // 获取设备信息
   useEffect(() => {
-    const loadData = async () => {
+    const loadDeviceInfo = async () => {
       try {
-        setLoading(true);
-        setError(null);
-
-        // 获取设备名称
         if (deviceId === 'local') {
           setDeviceName('本机');
+          setDevice({
+            deviceID: 'local',
+            name: '本机',
+            addresses: [],
+            connected: true,
+            isLocal: true
+          });
         } else {
           const resp = await fetch('http://localhost:8080/api/devices');
           if (!resp.ok) throw new Error('API 请求失败');
           const result = await resp.json();
           if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
-          const device = result.data.devices.find((d: any) => d.deviceID === deviceId);
-          if (device) {
-            setDeviceName(device.name || device.deviceID);
+          const foundDevice = result.data.find((d: any) => d.deviceID === deviceId);
+          console.log('Found device:', foundDevice); // 调试日志
+          if (foundDevice) {
+            setDeviceName(foundDevice.name || foundDevice.deviceID);
+            setDevice(foundDevice);
+            console.log('Device addresses:', foundDevice.addresses); // 调试日志
           } else {
             setDeviceName(deviceId);
+            setDevice({
+              deviceID: deviceId,
+              name: deviceId,
+              addresses: [],
+              connected: false,
+              isLocal: false
+            });
           }
         }
-
-        // 获取文件夹列表
-        const resp2 = await fetch(`http://localhost:8080/api/device/${deviceId}/folders`);
-        if (!resp2.ok) throw new Error('API 请求失败');
-        const result2 = await resp2.json();
-        if (result2.code !== 0) throw new Error(result2.data || 'API 返回错误');
-        setFolders(result2.data);
       } catch (err) {
-        console.error('Failed to load data:', err);
-        setError('加载数据失败');
+        console.error('Failed to load device info:', err);
+        setDeviceName(deviceId);
+        setDevice({
+          deviceID: deviceId,
+          name: deviceId,
+          addresses: [],
+          connected: false,
+          isLocal: false
+        });
+      }
+    };
+
+    loadDeviceInfo();
+  }, [deviceId]);
+
+  // 获取文件夹列表
+  useEffect(() => {
+    const loadFolders = async () => {
+      if (!device) return; // 等待设备信息加载完成
+
+      try {
+        setLoading(true);
+        setError(null);
+
+        console.log('Current device:', device); // 调试日志
+        console.log('Device addresses:', device.addresses); // 调试日志
+        console.log('Device isLocal:', device.isLocal); // 调试日志
+
+        // 构建 API URL
+        let apiUrl: string;
+        if (deviceId === 'local') {
+          // 本地设备，使用本地 API
+          apiUrl = `http://localhost:8080/api/device/${deviceId}/folders`;
+          console.log('Using local API'); // 调试日志
+        } else if (device.addresses.length > 0) {
+          // 远程设备，使用第一个可用的 IP 地址
+          const remoteIp = device.addresses[0];
+          apiUrl = `http://${remoteIp}:8080/api/device/${deviceId}/folders`;
+          console.log('Using remote API with IP:', remoteIp); // 调试日志
+        } else {
+          throw new Error('设备未连接或没有可用地址');
+        }
+
+        console.log('Fetching folders from:', apiUrl);
+        const resp = await fetch(apiUrl);
+        if (!resp.ok) throw new Error('API 请求失败');
+        const result = await resp.json();
+        if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+        setFolders(result.data);
+      } catch (err) {
+        console.error('Failed to load folders:', err);
+        setError('加载数据失败: ' + (err instanceof Error ? err.message : String(err)));
       } finally {
         setLoading(false);
       }
     };
 
-    loadData();
-  }, [deviceId]);
+    loadFolders();
+  }, [device, deviceId]);
 
   if (loading) {
     return (
@@ -161,6 +227,12 @@ export default function DeviceDetail() {
       <Typography variant="h5" sx={{ mb: 3 }}>
         {deviceName} 的文件夹
       </Typography>
+
+      {device && !device.isLocal && device.addresses.length > 0 && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          正在从远程设备获取数据: {device.addresses[0]}
+        </Alert>
+      )}
 
       <FolderList folders={folders} deviceName={deviceName} deviceId={deviceId} />
     </Box>

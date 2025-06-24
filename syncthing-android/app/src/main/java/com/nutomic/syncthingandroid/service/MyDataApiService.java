@@ -1,7 +1,11 @@
 package com.nutomic.syncthingandroid.service;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
+import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
 import java.io.File;
@@ -17,6 +21,8 @@ import java.io.BufferedReader;
 public class MyDataApiService extends Service {
     private static final String TAG = "MyDataApiService";
     private static final String BINARY_NAME = "libmydata-api.so";
+    private static final String CHANNEL_ID = "mydata_api_service";
+    private static final int NOTIFICATION_ID = 1001;
     
     private Process mApiProcess;
     private Thread mLogThread;
@@ -26,6 +32,7 @@ public class MyDataApiService extends Service {
     public void onCreate() {
         super.onCreate();
         Log.i(TAG, "MyDataApiService created");
+        createNotificationChannel();
     }
 
     @Override
@@ -35,6 +42,9 @@ public class MyDataApiService extends Service {
         if (!mIsRunning) {
             startApiProcess();
         }
+        
+        // 启动前台服务
+        startForeground(NOTIFICATION_ID, createNotification());
         
         return START_STICKY; // 服务被杀死后自动重启
     }
@@ -51,6 +61,38 @@ public class MyDataApiService extends Service {
         return null;
     }
 
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                CHANNEL_ID,
+                "MyData API Service",
+                NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("MyData API 后台服务");
+            
+            NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            if (notificationManager != null) {
+                notificationManager.createNotificationChannel(channel);
+            }
+        }
+    }
+
+    private Notification createNotification() {
+        Notification.Builder builder;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder = new Notification.Builder(this, CHANNEL_ID);
+        } else {
+            builder = new Notification.Builder(this);
+        }
+        
+        return builder
+            .setContentTitle("MyData API")
+            .setContentText("API 服务正在运行")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setOngoing(true)
+            .build();
+    }
+
     private void startApiProcess() {
         try {
             // 获取二进制文件路径
@@ -63,22 +105,44 @@ public class MyDataApiService extends Service {
 
             // 设置可执行权限
             binaryFile.setExecutable(true);
+            Log.i(TAG, "Binary file: " + binaryFile.getAbsolutePath());
 
-            // 构建命令（参考 SyncthingRunnable）
+            // 确保必要的目录存在
+            File filesDir = getFilesDir();
+            File cacheDir = getCacheDir();
+            
+            if (!filesDir.exists()) {
+                boolean created = filesDir.mkdirs();
+                Log.i(TAG, "Created files directory: " + created + " at " + filesDir.getAbsolutePath());
+            } else {
+                Log.i(TAG, "Files directory already exists: " + filesDir.getAbsolutePath());
+            }
+            
+            if (!cacheDir.exists()) {
+                boolean created = cacheDir.mkdirs();
+                Log.i(TAG, "Created cache directory: " + created + " at " + cacheDir.getAbsolutePath());
+            } else {
+                Log.i(TAG, "Cache directory already exists: " + cacheDir.getAbsolutePath());
+            }
+
+            // 构建命令
             String[] command = {
-                binaryFile.getAbsolutePath(),
-                "-home", getFilesDir().getAbsolutePath(),
-                "-no-browser",
-                "-logflags=0"
+                binaryFile.getAbsolutePath()
             };
 
             // 启动进程
             ProcessBuilder pb = new ProcessBuilder(command);
-            pb.directory(getFilesDir());
+            pb.directory(filesDir);
             
             // 设置环境变量
-            pb.environment().put("ANDROID_DATA", getFilesDir().getAbsolutePath());
-            pb.environment().put("TMPDIR", getCacheDir().getAbsolutePath());
+            pb.environment().put("ANDROID_DATA", filesDir.getParent()); // 指向 /data/data/com.nutomic.syncthingandroid
+            pb.environment().put("TMPDIR", cacheDir.getAbsolutePath());
+            pb.environment().put("HOME", filesDir.getAbsolutePath());
+            
+            Log.i(TAG, "Environment variables:");
+            Log.i(TAG, "  ANDROID_DATA: " + pb.environment().get("ANDROID_DATA"));
+            Log.i(TAG, "  TMPDIR: " + pb.environment().get("TMPDIR"));
+            Log.i(TAG, "  HOME: " + pb.environment().get("HOME"));
             
             mApiProcess = pb.start();
             mIsRunning = true;

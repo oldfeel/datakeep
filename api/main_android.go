@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/gofiber/fiber/v2"
@@ -25,7 +26,14 @@ func AndroidMain() {
 
 	// 初始化数据库
 	var err error
-	db, err = gorm.Open(sqlite.Open("/data/data/com.mydata.app/files/mydata.db"), &gorm.Config{})
+	androidData := os.Getenv("ANDROID_DATA")
+	if androidData == "" {
+		androidData = "/data/data/com.nutomic.syncthingandroid"
+	}
+	dbPath := filepath.Join(androidData, "files", "mydata.db")
+	fmt.Printf("数据库路径: %s\n", dbPath)
+
+	db, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
 		log.Fatal("failed to connect database:", err)
 	}
@@ -87,20 +95,22 @@ func AndroidMain() {
 
 // setupAndroidConfig 设置 Android 特定的配置
 func setupAndroidConfig() {
+	// 从环境变量获取路径，而不是硬编码
+	androidData := os.Getenv("ANDROID_DATA")
+	if androidData == "" {
+		androidData = "/data/data/com.nutomic.syncthingandroid"
+	}
+
 	// 设置 Android 特定的环境变量
-	os.Setenv("ANDROID_DATA", "/data/data/com.mydata.app")
+	os.Setenv("ANDROID_DATA", androidData)
 
-	// 创建必要的目录
-	dirs := []string{
-		"/data/data/com.mydata.app/files",
-		"/data/data/com.mydata.app/cache",
-	}
+	// 使用环境变量中的路径，而不是硬编码
+	filesDir := filepath.Join(androidData, "files")
+	cacheDir := filepath.Join(androidData, "cache")
 
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			fmt.Printf("创建目录失败 %s: %v\n", dir, err)
-		}
-	}
+	// 只记录路径，不尝试创建（由 Java 端负责创建）
+	fmt.Printf("Android 文件目录: %s\n", filesDir)
+	fmt.Printf("Android 缓存目录: %s\n", cacheDir)
 }
 
 // 导出函数供 Android 调用
