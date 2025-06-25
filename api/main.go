@@ -123,18 +123,39 @@ func getConfigPath() string {
 	if home == "" {
 		home = os.Getenv("HOME")
 	}
+
+	// 检查环境变量
+	xdgStateHome := os.Getenv("XDG_STATE_HOME")
+	xdgConfigHome := os.Getenv("XDG_CONFIG_HOME")
+
 	paths := []string{
 		"/data/data/com.nutomic.syncthingandroid/files/config.xml",                       // Android
 		filepath.Join(home, "AppData", "Local", "Syncthing", "config.xml"),               // Windows
 		filepath.Join(home, "Library", "Application Support", "Syncthing", "config.xml"), // macOS
-		filepath.Join(home, ".config", "syncthing", "config.xml"),                        // Linux/通用
-		"config.xml", // fallback
 	}
+
+	// 添加 XDG 标准路径
+	if xdgStateHome != "" && filepath.IsAbs(xdgStateHome) {
+		paths = append(paths, filepath.Join(xdgStateHome, "syncthing", "config.xml"))
+	}
+	if xdgConfigHome != "" {
+		paths = append(paths, filepath.Join(xdgConfigHome, "syncthing", "config.xml"))
+	}
+
+	// 添加默认路径
+	paths = append(paths,
+		filepath.Join(home, ".local", "state", "syncthing", "config.xml"), // Linux 新版本 (1.27.0+)
+		filepath.Join(home, ".config", "syncthing", "config.xml"),         // Linux 旧版本
+		"config.xml", // fallback
+	)
+
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
+			fmt.Printf("找到配置文件: %s\n", p)
 			return p
 		}
 	}
+	fmt.Printf("未找到配置文件，使用默认路径: config.xml\n")
 	return "config.xml"
 }
 
