@@ -59,17 +59,13 @@ There are a few examples for keeping Syncthing running in the background
 on your system in [the etc directory][3]. There are also several [GUI
 implementations][11] for Windows, Mac, and Linux.
 
-## Docker
-
-To run Syncthing in Docker, see [the Docker README][16].
-
 ## Getting in Touch
 
 The first and best point of contact is the [Forum][8].
 If you've found something that is clearly a
 bug, feel free to report it in the [GitHub issue tracker][10].
 
-If you believe that you’ve found a Syncthing-related security vulnerability,
+If you believe that you've found a Syncthing-related security vulnerability,
 please report it by emailing security@syncthing.net. Do not report it in the
 Forum or issue tracker.
 
@@ -92,7 +88,7 @@ binaries are also properly code signed.
 
 ## Documentation
 
-Please see the Syncthing [documentation site][6] [[source]][17].
+Please see the Syncthing [documentation site][6] [[source]][16].
 
 All code is licensed under the [MPLv2 License][7].
 
@@ -108,5 +104,4 @@ All code is licensed under the [MPLv2 License][7].
 [13]: https://github.com/syncthing/syncthing/blob/main/GOALS.md
 [14]: assets/logo-text-128.png
 [15]: https://syncthing.net/
-[16]: https://github.com/syncthing/syncthing/blob/main/README-Docker.md
-[17]: https://github.com/syncthing/docs
+[16]: https://github.com/syncthing/docs
