@@ -70,6 +70,7 @@ interface Folder {
     introducer?: boolean;
     encryptionPassword?: string;
   }>;
+  sharedDevices?: string[];
 }
 
 interface Device {
@@ -77,7 +78,7 @@ interface Device {
   name: string;
   addresses?: string[] | null;
   connected: boolean;
-  isLocal: boolean;
+  isLocalNetwork: boolean;
 }
 
 // 生成随机文件夹 ID
@@ -122,6 +123,7 @@ function FolderEditDialog({
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [allDevices, setAllDevices] = useState<Device[]>([]);
   const [loadingDevices, setLoadingDevices] = useState(false);
+  const [localDeviceID, setLocalDeviceID] = useState<string>('');
   const [sharedDevices, setSharedDevices] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -196,6 +198,24 @@ function FolderEditDialog({
     }
   };
 
+  // 获取本机设备ID
+  const loadLocalDeviceID = async () => {
+    try {
+      const response = await fetch('http://localhost:8080/api/local-device-id');
+      if (!response.ok) {
+        throw new Error(`API 请求失败: ${response.status}`);
+      }
+      const result = await response.json();
+      if (result.code !== 0) {
+        throw new Error(result.data || 'API 返回错误');
+      }
+      setLocalDeviceID(result.data.deviceID);
+    } catch (error) {
+      console.error('获取本机设备ID失败:', error);
+      // 如果获取失败，不影响其他功能
+    }
+  };
+
   // 获取所有设备列表
   const loadAllDevices = async () => {
     try {
@@ -221,22 +241,28 @@ function FolderEditDialog({
     }
   };
 
-  // 当切换到共享设置Tab时加载设备列表
+  // 当切换到共享设置Tab时加载设备列表和本机设备ID
   useEffect(() => {
     if (open && activeTab === 1) {
+      loadLocalDeviceID();
       loadAllDevices();
     }
   }, [open, activeTab]);
 
   // 更新共享设备状态
   useEffect(() => {
-    if (editedFolder?.devices) {
+    if (editedFolder?.sharedDevices) {
+      // 优先使用 sharedDevices 数组
+      const sharedSet = new Set(editedFolder.sharedDevices);
+      setSharedDevices(sharedSet);
+    } else if (editedFolder?.devices) {
+      // 回退到 devices 数组
       const sharedSet = new Set(editedFolder.devices.map(d => d.deviceID));
       setSharedDevices(sharedSet);
     } else {
       setSharedDevices(new Set());
     }
-  }, [editedFolder?.devices]);
+  }, [editedFolder?.sharedDevices, editedFolder?.devices]);
 
   // 处理设备共享状态变化
   const handleDeviceShareChange = async (deviceId: string, isShared: boolean) => {
@@ -257,7 +283,11 @@ function FolderEditDialog({
       encryptionPassword: ''
     }));
 
-    setEditedFolder(prev => prev ? { ...prev, devices: newDevices } : null);
+    setEditedFolder(prev => prev ? {
+      ...prev,
+      devices: newDevices,
+      sharedDevices: Array.from(newSharedDevices)
+    } : null);
 
     // 如果不是添加模式，立即调用后端 API 更新共享配置
     if (!isAddMode && editedFolder) {
@@ -307,7 +337,11 @@ function FolderEditDialog({
           introducer: false,
           encryptionPassword: ''
         }));
-        setEditedFolder(prev => prev ? { ...prev, devices: oldDevices } : null);
+        setEditedFolder(prev => prev ? {
+          ...prev,
+          devices: oldDevices,
+          sharedDevices: Array.from(sharedDevices)
+        } : null);
       }
     }
   };
@@ -439,14 +473,14 @@ function FolderEditDialog({
                       <CheckCircleIcon color="success" fontSize="small" />
                       已共享设备
                     </Typography>
-                    {allDevices.filter(device => sharedDevices.has(device.deviceID) && device.deviceID !== 'local').length === 0 ? (
+                    {allDevices.filter(device => sharedDevices.has(device.deviceID) && device.deviceID !== localDeviceID).length === 0 ? (
                       <Typography variant="body2" color="text.secondary" sx={{ pl: 2 }}>
                         暂无共享设备
                       </Typography>
                     ) : (
                       <Box sx={{ pl: 2 }}>
                         {allDevices
-                          .filter(device => sharedDevices.has(device.deviceID) && device.deviceID !== 'local')
+                          .filter(device => sharedDevices.has(device.deviceID) && device.deviceID !== localDeviceID)
                           .map((device) => (
                             <FormControlLabel
                               key={device.deviceID}
@@ -480,14 +514,14 @@ function FolderEditDialog({
                       <CancelIcon color="action" fontSize="small" />
                       未共享设备
                     </Typography>
-                    {allDevices.filter(device => !sharedDevices.has(device.deviceID) && device.deviceID !== 'local').length === 0 ? (
+                    {allDevices.filter(device => !sharedDevices.has(device.deviceID) && device.deviceID !== localDeviceID).length === 0 ? (
                       <Typography variant="body2" color="text.secondary" sx={{ pl: 2 }}>
                         所有设备都已共享
                       </Typography>
                     ) : (
                       <Box sx={{ pl: 2 }}>
                         {allDevices
-                          .filter(device => !sharedDevices.has(device.deviceID) && device.deviceID !== 'local')
+                          .filter(device => !sharedDevices.has(device.deviceID) && device.deviceID !== localDeviceID)
                           .map((device) => (
                             <FormControlLabel
                               key={device.deviceID}
@@ -521,7 +555,7 @@ function FolderEditDialog({
                   {/* 提示信息 */}
                   <Alert severity="info" sx={{ mt: 2 }}>
                     <Typography variant="body2">
-                      💡 提示：勾选设备以共享文件夹，取消勾选以停止共享。本机设备不会显示在列表中。
+                      💡 提示：勾选设备以共享文件夹，取消勾选以停止共享。本机设备（当前设备）不会显示在列表中。
                     </Typography>
                   </Alert>
                 </>
@@ -976,7 +1010,7 @@ export default function DeviceDetail() {
 
       console.log('Current device:', device);
       console.log('Device addresses:', device.addresses || []);
-      console.log('Device isLocal:', device.isLocal);
+      console.log('Device isLocal:', device.isLocalNetwork);
 
       let apiUrl: string;
       if (deviceId === 'local') {
@@ -1072,7 +1106,7 @@ export default function DeviceDetail() {
             name: '本机',
             addresses: [],
             connected: true,
-            isLocal: true
+            isLocalNetwork: true
           });
         } else {
           const resp = await fetch('http://localhost:8080/api/devices');
@@ -1092,7 +1126,7 @@ export default function DeviceDetail() {
               name: deviceId,
               addresses: [],
               connected: false,
-              isLocal: false
+              isLocalNetwork: false
             });
           }
         }
@@ -1104,7 +1138,7 @@ export default function DeviceDetail() {
           name: deviceId,
           addresses: [],
           connected: false,
-          isLocal: false
+          isLocalNetwork: false
         });
       }
     };
@@ -1156,7 +1190,7 @@ export default function DeviceDetail() {
         {deviceName} 的文件夹
       </Typography>
 
-      {device && !device.isLocal && device.addresses && device.addresses.length > 0 && (
+      {device && !device.isLocalNetwork && device.addresses && device.addresses.length > 0 && (
         <Alert severity="info" sx={{ mb: 2 }}>
           正在从远程设备获取数据: {device.addresses[0] || '未知地址'}
         </Alert>

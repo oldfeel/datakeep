@@ -6,12 +6,14 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -26,9 +28,10 @@ import (
 )
 
 type Folder struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Path  string `json:"path"`
+	ID            string   `json:"id"`
+	Label         string   `json:"label"`
+	Path          string   `json:"path"`
+	SharedDevices []string `json:"sharedDevices,omitempty"`
 }
 
 type SyncthingConfig struct {
@@ -55,7 +58,7 @@ type Device struct {
 	ClientVersion  string   `json:"clientVersion"`
 	InBytesTotal   int64    `json:"inBytesTotal"`
 	OutBytesTotal  int64    `json:"outBytesTotal"`
-	IsLocal        bool     `json:"isLocal"`
+	IsLocalNetwork bool     `json:"isLocalNetwork"`
 	Crypto         string   `json:"crypto"`
 }
 
@@ -181,6 +184,102 @@ func getApiKeyFromConfig() string {
 	return cfg.Gui.APIKey
 }
 
+// 从 Syncthing API 加载文件夹配置
+func loadFoldersFromSyncthing() ([]FolderEntry, error) {
+	// 构建 syncthing API URL
+	syncthingURL := "http://127.0.0.1:8384/rest/config/folders"
+
+	// 创建请求
+	req, err := http.NewRequest("GET", syncthingURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// 添加 API Key 认证（如果需要）
+	apiKey := getApiKeyFromConfig()
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request to syncthing: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return nil, fmt.Errorf("syncthing API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// 解析响应
+	var syncthingFolders []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&syncthingFolders); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	// 转换为 FolderEntry 格式
+	var folders []FolderEntry
+	for _, sf := range syncthingFolders {
+		folder := FolderEntry{
+			ID:    getString(sf, "id"),
+			Label: getString(sf, "label"),
+			Path:  getString(sf, "path"),
+		}
+
+		// 提取共享设备信息
+		if devices, ok := sf["devices"].([]interface{}); ok {
+			for _, device := range devices {
+				if deviceMap, ok := device.(map[string]interface{}); ok {
+					if deviceID := getString(deviceMap, "deviceID"); deviceID != "" {
+						folder.SharedDevices = append(folder.SharedDevices, deviceID)
+					}
+				}
+			}
+		}
+
+		folders = append(folders, folder)
+	}
+
+	return folders, nil
+}
+
+// 从 config.xml 加载文件夹配置（回退方案）
+func loadFoldersFromConfig() {
+	// 解析 config.xml
+	f, err := os.Open(configPath)
+	if err != nil {
+		log.Printf("无法打开 config.xml: %v, 路径: %s", err, configPath)
+		return
+	}
+	defer f.Close()
+
+	var cfg SyncthingConfig
+	if err := xml.NewDecoder(f).Decode(&cfg); err != nil {
+		log.Printf("解析 config.xml 失败: %v", err)
+		return
+	}
+
+	folders = cfg.Folders
+	fmt.Printf("从 config.xml 解析到 %d 个同步文件夹:\n", len(folders))
+	for _, folder := range folders {
+		log.Printf("同步文件夹: [%s] %s", folder.ID, folder.Path)
+	}
+}
+
+// 辅助函数：安全地从 map 中获取字符串值
+func getString(m map[string]interface{}, key string) string {
+	if val, ok := m[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
 func main() {
 	// 解析命令行参数
 	flag.Parse()
@@ -235,8 +334,10 @@ func main() {
 	}))
 	app.Get("/api/folder/:folderId", folderFilesHandler)
 	app.Get("/api/devices", devicesHandler)
+	app.Get("/api/local-device-id", getLocalDeviceIDHandler)
 	app.Get("/api/device/:deviceId/folders", deviceFoldersHandler)
 	app.Post("/api/device/:deviceId/folders", deviceFoldersHandler)
+	app.Put("/api/device/:deviceId/folders/:folderId", deviceFoldersHandler)
 	app.Delete("/api/device/:deviceId/folders/:folderId", deviceFoldersHandler)
 	// 添加文件夹共享更新接口
 	app.Put("/api/folder/:folderId/sharing", updateFolderSharingHandler)
@@ -298,35 +399,26 @@ func asyncLoadAndIndex() {
 	defer mu.Unlock()
 
 	indexingStatus.Lock()
-	indexingStatus.progress = "解析配置文件"
+	indexingStatus.progress = "从 Syncthing API 获取文件夹配置"
 	indexingStatus.Unlock()
 
 	fmt.Printf("=== 开始异步增量索引 ===\n")
 
-	// 解析 config.xml
-	f, err := os.Open(configPath)
+	// 从 Syncthing API 获取完整的文件夹配置
+	syncthingFolders, err := loadFoldersFromSyncthing()
 	if err != nil {
 		indexingStatus.Lock()
 		indexingStatus.error = err
 		indexingStatus.Unlock()
-		log.Printf("无法打开 config.xml: %v, 路径: %s", err, configPath)
-		return
-	}
-	defer f.Close()
-
-	var cfg SyncthingConfig
-	if err := xml.NewDecoder(f).Decode(&cfg); err != nil {
-		indexingStatus.Lock()
-		indexingStatus.error = err
-		indexingStatus.Unlock()
-		log.Printf("解析 config.xml 失败: %v", err)
-		return
-	}
-
-	folders = cfg.Folders
-	fmt.Printf("从 config.xml 解析到 %d 个同步文件夹:\n", len(folders))
-	for _, folder := range folders {
-		log.Printf("同步文件夹: [%s] %s", folder.ID, folder.Path)
+		log.Printf("从 Syncthing API 获取文件夹失败: %v，回退到 config.xml", err)
+		// 回退到从 config.xml 加载
+		loadFoldersFromConfig()
+	} else {
+		folders = syncthingFolders
+		fmt.Printf("从 Syncthing API 获取到 %d 个同步文件夹:\n", len(folders))
+		for _, folder := range folders {
+			log.Printf("同步文件夹: [%s] %s (共享设备: %v)", folder.ID, folder.Path, folder.SharedDevices)
+		}
 	}
 
 	// 遍历所有同步文件夹进行增量索引
@@ -418,30 +510,21 @@ func asyncForceReindexAll() {
 
 	fmt.Printf("=== 开始异步强制重新索引 ===\n")
 
-	// 解析 config.xml
-	f, err := os.Open(configPath)
+	// 从 Syncthing API 获取完整的文件夹配置
+	syncthingFolders, err := loadFoldersFromSyncthing()
 	if err != nil {
 		indexingStatus.Lock()
 		indexingStatus.error = err
 		indexingStatus.Unlock()
-		log.Printf("无法打开 config.xml: %v, 路径: %s", err, configPath)
-		return
-	}
-	defer f.Close()
-
-	var cfg SyncthingConfig
-	if err := xml.NewDecoder(f).Decode(&cfg); err != nil {
-		indexingStatus.Lock()
-		indexingStatus.error = err
-		indexingStatus.Unlock()
-		log.Printf("解析 config.xml 失败: %v", err)
-		return
-	}
-
-	folders = cfg.Folders
-	fmt.Printf("从 config.xml 解析到 %d 个同步文件夹:\n", len(folders))
-	for _, folder := range folders {
-		log.Printf("同步文件夹: [%s] %s", folder.ID, folder.Path)
+		log.Printf("从 Syncthing API 获取文件夹失败: %v，回退到 config.xml", err)
+		// 回退到从 config.xml 加载
+		loadFoldersFromConfig()
+	} else {
+		folders = syncthingFolders
+		fmt.Printf("从 Syncthing API 获取到 %d 个同步文件夹:\n", len(folders))
+		for _, folder := range folders {
+			log.Printf("同步文件夹: [%s] %s (共享设备: %v)", folder.ID, folder.Path, folder.SharedDevices)
+		}
 	}
 
 	// 清空旧索引

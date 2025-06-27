@@ -52,7 +52,7 @@ interface Device {
   name: string;
   addresses?: string[] | null;
   connected: boolean;
-  isLocal: boolean;
+  isLocalNetwork: boolean;
 }
 
 // 判断是否为目录
@@ -61,57 +61,57 @@ const isDirectory = (file: File) => file.isDir;
 // 根据文件扩展名获取对应的图标
 const getFileIcon = (fileName: string) => {
   const extension = fileName.toLowerCase().split('.').pop() || '';
-  
+
   // 图片文件
   if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico', 'tiff', 'tif'].includes(extension)) {
     return <ImageIcon sx={{ mr: 1, color: '#4CAF50' }} />;
   }
-  
+
   // PDF 文件
   if (extension === 'pdf') {
     return <PdfIcon sx={{ mr: 1, color: '#F44336' }} />;
   }
-  
+
   // 文档文件
   if (['doc', 'docx', 'txt', 'rtf', 'odt'].includes(extension)) {
     return <DocumentIcon sx={{ mr: 1, color: '#2196F3' }} />;
   }
-  
+
   // 视频文件
   if (['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv', 'm4v', '3gp'].includes(extension)) {
     return <VideoIcon sx={{ mr: 1, color: '#FF9800' }} />;
   }
-  
+
   // 音频文件
   if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a'].includes(extension)) {
     return <AudioIcon sx={{ mr: 1, color: '#9C27B0' }} />;
   }
-  
+
   // 压缩文件
   if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'].includes(extension)) {
     return <ArchiveIcon sx={{ mr: 1, color: '#795548' }} />;
   }
-  
+
   // 代码文件
   if (['js', 'ts', 'jsx', 'tsx', 'html', 'css', 'scss', 'sass', 'less', 'json', 'xml', 'yaml', 'yml', 'py', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go', 'rs', 'swift', 'kt', 'dart'].includes(extension)) {
     return <CodeIcon sx={{ mr: 1, color: '#607D8B' }} />;
   }
-  
+
   // 表格文件
   if (['xls', 'xlsx', 'csv', 'ods'].includes(extension)) {
     return <SpreadsheetIcon sx={{ mr: 1, color: '#4CAF50' }} />;
   }
-  
+
   // 演示文件
   if (['ppt', 'pptx', 'odp'].includes(extension)) {
     return <PresentationIcon sx={{ mr: 1, color: '#FF5722' }} />;
   }
-  
+
   // 可执行文件
   if (['exe', 'msi', 'app', 'dmg', 'deb', 'rpm', 'pkg', 'sh', 'bat', 'cmd'].includes(extension)) {
     return <ExecutableIcon sx={{ mr: 1, color: '#E91E63' }} />;
   }
-  
+
   // 默认文件图标
   return <FileIcon sx={{ mr: 1, color: 'text.secondary' }} />;
 };
@@ -136,7 +136,7 @@ function FolderDetail() {
   useEffect(() => {
     const loadDeviceAndFolderInfo = async () => {
       if (!deviceId || !folderId) return;
-      
+
       // 加载设备信息
       if (deviceId === 'local') {
         setDeviceName('本机');
@@ -145,7 +145,7 @@ function FolderDetail() {
           name: '本机',
           addresses: [],
           connected: true,
-          isLocal: true
+          isLocalNetwork: true
         });
       } else {
         try {
@@ -164,7 +164,7 @@ function FolderDetail() {
               name: deviceId,
               addresses: [],
               connected: false,
-              isLocal: false
+              isLocalNetwork: false
             });
           }
         } catch (err) {
@@ -175,7 +175,7 @@ function FolderDetail() {
             name: deviceId,
             addresses: [],
             connected: false,
-            isLocal: false
+            isLocalNetwork: false
           });
         }
       }
@@ -191,12 +191,12 @@ function FolderDetail() {
           const ipAddresses = device.addresses.filter(addr => {
             // 过滤出有效的IPv4地址
             const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
-            return ipv4Regex.test(addr) && 
-                   !addr.includes('[') && 
-                   !addr.includes('relay://') &&
-                   !addr.includes('quic://');
+            return ipv4Regex.test(addr) &&
+              !addr.includes('[') &&
+              !addr.includes('relay://') &&
+              !addr.includes('quic://');
           });
-          
+
           if (ipAddresses.length > 0) {
             // 直接使用第一个IP地址
             const remoteIp = ipAddresses[0];
@@ -237,7 +237,7 @@ function FolderDetail() {
       setLoading(true);
       setError(null);
       const path = currentPath.join('/');
-      
+
       // 构建 API URL
       let apiUrl: string;
       if (deviceId === 'local') {
@@ -248,12 +248,12 @@ function FolderDetail() {
         const ipAddresses = device.addresses.filter(addr => {
           // 过滤出有效的IPv4地址
           const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
-          return ipv4Regex.test(addr) && 
-                 !addr.includes('[') && 
-                 !addr.includes('relay://') &&
-                 !addr.includes('quic://');
+          return ipv4Regex.test(addr) &&
+            !addr.includes('[') &&
+            !addr.includes('relay://') &&
+            !addr.includes('quic://');
         });
-        
+
         if (ipAddresses.length > 0) {
           // 直接使用第一个IP地址
           const remoteIp = ipAddresses[0];
@@ -330,7 +330,7 @@ function FolderDetail() {
   return (
     <Box>
       {/* 远程设备提示 */}
-      {device && !device.isLocal && device.addresses && device.addresses.length > 0 && (
+      {device && !device.isLocalNetwork && device.addresses && device.addresses.length > 0 && (
         <Alert severity="info" sx={{ mb: 2 }}>
           正在从远程设备获取数据: {device.addresses[0]}
         </Alert>

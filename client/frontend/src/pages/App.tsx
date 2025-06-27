@@ -104,7 +104,7 @@ const EventTypes = {
 interface Device {
   deviceID: string;
   name: string;
-  addresses?: string[] | null;
+  addresses: string[];
   compression: string;
   certName: string;
   introducer: boolean;
@@ -113,7 +113,7 @@ interface Device {
   clientVersion: string;
   inBytesTotal: number;
   outBytesTotal: number;
-  isLocal: boolean;
+  isLocalNetwork: boolean;
   crypto: string;
 }
 
@@ -302,7 +302,7 @@ function DeviceList({ devices, onDeviceClick, onAddDeviceClick }: {
   // 获取连接类型显示文本
   const getConnectionTypeText = (device: Device) => {
     if (!device.connected) return '离线';
-    if (device.isLocal) return '本地连接';
+    if (device.isLocalNetwork) return '本地连接';
     switch (device.connectionType) {
       case 'tcp-server': return 'TCP 服务器';
       case 'tcp-client': return 'TCP 客户端';
@@ -325,7 +325,7 @@ function DeviceList({ devices, onDeviceClick, onAddDeviceClick }: {
         clientVersion: '',
         inBytesTotal: 0,
         outBytesTotal: 0,
-        isLocal: true,
+        isLocalNetwork: true,
         crypto: ''
       } as Device)}>
         <ListItemIcon>

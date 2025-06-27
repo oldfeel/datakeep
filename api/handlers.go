@@ -18,16 +18,16 @@ import (
 )
 
 type ConnectionInfo struct {
-	Addresses     []string `json:"addresses"`
-	Connected     bool     `json:"connected"`
-	InBytesTotal  int64    `json:"inBytesTotal"`
-	OutBytesTotal int64    `json:"outBytesTotal"`
-	Type          string   `json:"type"`
-	Address       string   `json:"address"`
-	ClientVersion string   `json:"clientVersion"`
-	IsLocal       bool     `json:"isLocal"`
-	Crypto        string   `json:"crypto"`
-	Primary       struct {
+	Addresses      []string `json:"addresses"`
+	Connected      bool     `json:"connected"`
+	InBytesTotal   int64    `json:"inBytesTotal"`
+	OutBytesTotal  int64    `json:"outBytesTotal"`
+	Type           string   `json:"type"`
+	Address        string   `json:"address"`
+	ClientVersion  string   `json:"clientVersion"`
+	IsLocalNetwork bool     `json:"isLocalNetwork"`
+	Crypto         string   `json:"crypto"`
+	Primary        struct {
 		Address string `json:"address"`
 		Type    string `json:"type"`
 	} `json:"primary"`
@@ -275,6 +275,8 @@ func deviceFoldersHandler(c *fiber.Ctx) error {
 		return success(c, folders)
 	case "POST":
 		return addFolderHandler(c)
+	case "PUT":
+		return updateFolderHandler(c)
 	case "DELETE":
 		return deleteFolderHandler(c)
 	default:
@@ -383,6 +385,123 @@ func createSyncthingFolder(folder FolderEntry) error {
 	}
 
 	fmt.Printf("成功调用 syncthing API 创建文件夹: %s\n", folder.ID)
+	return nil
+}
+
+// 更新文件夹处理器
+func updateFolderHandler(c *fiber.Ctx) error {
+	folderID := c.Params("folderId")
+
+	// 解析请求体
+	var updatedFolder FolderEntry
+	if err := c.BodyParser(&updatedFolder); err != nil {
+		return fail(c, 1001, "Invalid request body: "+err.Error())
+	}
+
+	// 验证必填字段
+	if updatedFolder.ID == "" {
+		return fail(c, 1002, "Folder ID is required")
+	}
+	if updatedFolder.Path == "" {
+		return fail(c, 1002, "Folder path is required")
+	}
+
+	// 查找并更新文件夹
+	var found bool
+	mu.Lock()
+	for i := range folders {
+		if folders[i].ID == folderID {
+			// 更新文件夹信息
+			folders[i].Label = updatedFolder.Label
+			folders[i].Path = updatedFolder.Path
+			folders[i].SharedDevices = updatedFolder.SharedDevices
+			found = true
+			break
+		}
+	}
+	mu.Unlock()
+
+	if !found {
+		return fail(c, 1002, "Folder not found")
+	}
+
+	// 调用 syncthing API 更新文件夹配置
+	if err := updateSyncthingFolder(folderID, updatedFolder); err != nil {
+		return fail(c, 1004, "Failed to update folder in syncthing: "+err.Error())
+	}
+
+	fmt.Printf("成功更新文件夹: ID=%s, Label=%s, Path=%s\n", updatedFolder.ID, updatedFolder.Label, updatedFolder.Path)
+
+	return success(c, map[string]interface{}{
+		"message": "Folder updated successfully",
+		"folder":  updatedFolder,
+	})
+}
+
+// 调用 syncthing API 更新文件夹
+func updateSyncthingFolder(folderID string, folder FolderEntry) error {
+	// 1. 获取当前文件夹完整配置
+	syncthingURL := fmt.Sprintf("http://127.0.0.1:8384/rest/config/folders/%s", folderID)
+	req, err := http.NewRequest("GET", syncthingURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create GET request: %v", err)
+	}
+	apiKey := getApiKeyFromConfig()
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to GET folder config: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("GET syncthing folder config failed: %s", string(body))
+	}
+	var folderConfig map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&folderConfig); err != nil {
+		return fmt.Errorf("failed to decode folder config: %v", err)
+	}
+
+	// 2. 更新配置字段
+	folderConfig["label"] = folder.Label
+	folderConfig["path"] = folder.Path
+
+	// 更新设备共享
+	if len(folder.SharedDevices) > 0 {
+		devices := make([]map[string]interface{}, 0, len(folder.SharedDevices))
+		for _, deviceID := range folder.SharedDevices {
+			devices = append(devices, map[string]interface{}{
+				"deviceID": deviceID,
+			})
+		}
+		folderConfig["devices"] = devices
+	}
+
+	// 3. PUT 回去
+	jsonData, err := json.Marshal(folderConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal updated config: %v", err)
+	}
+	putReq, err := http.NewRequest("PUT", syncthingURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create PUT request: %v", err)
+	}
+	putReq.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		putReq.Header.Set("X-API-Key", apiKey)
+	}
+	putResp, err := client.Do(putReq)
+	if err != nil {
+		return fmt.Errorf("failed to PUT updated config: %v", err)
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(putResp.Body)
+		return fmt.Errorf("PUT syncthing folder config failed: %s", string(body))
+	}
 	return nil
 }
 
@@ -838,7 +957,7 @@ func getDevicesFromSyncthing() ([]Device, error) {
 			devices[i].ClientVersion = conn.ClientVersion
 			devices[i].InBytesTotal = conn.InBytesTotal
 			devices[i].OutBytesTotal = conn.OutBytesTotal
-			devices[i].IsLocal = conn.IsLocal
+			devices[i].IsLocalNetwork = conn.IsLocalNetwork
 			devices[i].Crypto = conn.Crypto
 
 			if conn.Connected && conn.Address != "" {
@@ -882,8 +1001,8 @@ func getDevicesFromSyncthing() ([]Device, error) {
 			filteredAddresses = []string{}
 		}
 		devices[i].Addresses = filteredAddresses
-		fmt.Printf("  设备 %s 更新地址: %v, 连接状态: %t, 类型: %s\n",
-			device.Name, filteredAddresses, devices[i].Connected, devices[i].ConnectionType)
+		fmt.Printf("  设备 %s 更新地址: %v, 连接状态: %t, 类型: %s, 本地连接: %t\n",
+			device.Name, filteredAddresses, devices[i].Connected, devices[i].ConnectionType, devices[i].IsLocalNetwork)
 	}
 
 	fmt.Printf("=== getDevicesFromSyncthing 结束 ===\n")
@@ -1178,4 +1297,58 @@ func reloadFoldersFromSyncthing() error {
 	fmt.Printf("✅ 成功从 Syncthing 重新加载文件夹列表，旧数量: %d, 新数量: %d\n", oldCount, len(syncthingFolders))
 	fmt.Printf("=== 重新加载文件夹列表完成 ===\n")
 	return nil
+}
+
+// 获取本机设备ID
+func getLocalDeviceIDHandler(c *fiber.Ctx) error {
+	fmt.Printf("=== 获取本机设备ID ===\n")
+
+	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/system/status", nil)
+	if err != nil {
+		fmt.Printf("创建状态请求失败: %v\n", err)
+		return fail(c, 1001, "Failed to create request: "+err.Error())
+	}
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+
+	// 创建跳过证书验证的 HTTP 客户端
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("状态 HTTP 请求失败: %v\n", err)
+		return fail(c, 1002, "Failed to request syncthing: "+err.Error())
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("状态 HTTP 响应状态码: %d\n", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		fmt.Printf("Syncthing 状态 API 错误: %s\n", resp.Status)
+		return fail(c, 1003, "syncthing status api error: "+resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("读取状态响应体失败: %v\n", err)
+		return fail(c, 1004, "Failed to read response: "+err.Error())
+	}
+
+	var status map[string]interface{}
+	if err := json.Unmarshal(body, &status); err != nil {
+		fmt.Printf("状态 JSON 解析失败: %v\n", err)
+		return fail(c, 1005, "Failed to parse response: "+err.Error())
+	}
+
+	if myID, ok := status["myID"].(string); ok {
+		fmt.Printf("成功获取本机设备ID: %s\n", myID)
+		return success(c, map[string]interface{}{
+			"deviceID": myID,
+		})
+	}
+
+	fmt.Printf("状态响应中未找到myID字段\n")
+	fmt.Printf("状态响应内容: %s\n", string(body))
+	return fail(c, 1006, "myID not found in status response")
 }
