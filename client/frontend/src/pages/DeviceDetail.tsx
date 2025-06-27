@@ -249,20 +249,20 @@ function FolderEditDialog({
     }
   }, [open, activeTab]);
 
-  // 更新共享设备状态
+  // 初始化共享设备状态（只在组件首次加载时）
   useEffect(() => {
-    if (editedFolder?.sharedDevices) {
-      // 优先使用 sharedDevices 数组
-      const sharedSet = new Set(editedFolder.sharedDevices);
-      setSharedDevices(sharedSet);
-    } else if (editedFolder?.devices) {
-      // 回退到 devices 数组
-      const sharedSet = new Set(editedFolder.devices.map(d => d.deviceID));
-      setSharedDevices(sharedSet);
-    } else {
-      setSharedDevices(new Set());
+    if (editedFolder && sharedDevices.size === 0) {
+      if (editedFolder.sharedDevices) {
+        // 优先使用 sharedDevices 数组
+        const sharedSet = new Set(editedFolder.sharedDevices);
+        setSharedDevices(sharedSet);
+      } else if (editedFolder.devices) {
+        // 回退到 devices 数组
+        const sharedSet = new Set(editedFolder.devices.map(d => d.deviceID));
+        setSharedDevices(sharedSet);
+      }
     }
-  }, [editedFolder?.sharedDevices, editedFolder?.devices]);
+  }, [editedFolder?.id]); // 只在文件夹ID变化时执行，避免在用户操作期间重置
 
   // 处理设备共享状态变化
   const handleDeviceShareChange = async (deviceId: string, isShared: boolean) => {
@@ -318,10 +318,8 @@ function FolderEditDialog({
           severity: 'success'
         });
 
-        // 调用刷新回调
-        if (onSave) {
-          onSave(editedFolder);
-        }
+        // 注意：共享设置更新是独立操作，不需要调用 onSave 回调
+        // 因为 onSave 是用来保存整个文件夹配置的，而这里只是更新共享设置
       } catch (error) {
         console.error('更新文件夹共享配置失败:', error);
         setSnackbar({
@@ -744,6 +742,44 @@ function FolderList({ folders, deviceName, deviceId, onRefresh }: {
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
+  const [allDevices, setAllDevices] = useState<Device[]>([]);
+
+  // 获取所有设备列表
+  const loadAllDevices = async () => {
+    try {
+      const response = await fetch('http://localhost:8080/api/devices');
+      if (!response.ok) {
+        throw new Error(`API 请求失败: ${response.status}`);
+      }
+      const result = await response.json();
+      if (result.code !== 0) {
+        throw new Error(result.data || 'API 返回错误');
+      }
+      setAllDevices(result.data || []);
+    } catch (error) {
+      console.error('获取设备列表失败:', error);
+      // 如果获取失败，不影响其他功能
+    }
+  };
+
+  // 组件加载时获取设备列表
+  useEffect(() => {
+    loadAllDevices();
+  }, []);
+
+  // 根据设备ID获取设备名称
+  const getDeviceName = (deviceId: string) => {
+    const device = allDevices.find(d => d.deviceID === deviceId);
+    return device ? device.name || deviceId : deviceId;
+  };
+
+  // 获取文件夹的共享设备名称列表
+  const getSharedDeviceNames = (folder: Folder) => {
+    if (folder.sharedDevices && folder.sharedDevices.length > 0) {
+      return folder.sharedDevices.map(deviceId => getDeviceName(deviceId));
+    }
+    return [];
+  };
 
   const handleEditFolder = (folder: Folder, event: React.MouseEvent) => {
     event.preventDefault();
@@ -955,11 +991,54 @@ function FolderList({ folders, deviceName, deviceId, onRefresh }: {
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       display: '-webkit-box',
-                      WebkitLineClamp: 3,
+                      WebkitLineClamp: 2,
                       WebkitBoxOrient: 'vertical',
+                      mb: 1
                     }}>
                       {folder.path}
                     </Typography>
+
+                    {/* 共享设备信息 */}
+                    {(() => {
+                      const sharedDeviceNames = getSharedDeviceNames(folder);
+                      if (sharedDeviceNames.length > 0) {
+                        return (
+                          <Box sx={{ mt: 'auto' }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                              已共享给:
+                            </Typography>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                              {sharedDeviceNames.slice(0, 3).map((deviceName, index) => (
+                                <Chip
+                                  key={index}
+                                  label={deviceName}
+                                  size="small"
+                                  variant="outlined"
+                                  color="primary"
+                                  sx={{ fontSize: '0.7rem', height: '20px' }}
+                                />
+                              ))}
+                              {sharedDeviceNames.length > 3 && (
+                                <Chip
+                                  label={`+${sharedDeviceNames.length - 3}`}
+                                  size="small"
+                                  variant="outlined"
+                                  color="default"
+                                  sx={{ fontSize: '0.7rem', height: '20px' }}
+                                />
+                              )}
+                            </Box>
+                          </Box>
+                        );
+                      }
+                      return (
+                        <Box sx={{ mt: 'auto' }}>
+                          <Typography variant="caption" color="text.secondary">
+                            未共享给其他设备
+                          </Typography>
+                        </Box>
+                      );
+                    })()}
                   </CardContent>
                 </CardActionArea>
               </Card>

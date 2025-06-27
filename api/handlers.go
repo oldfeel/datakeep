@@ -532,13 +532,15 @@ func updateFolderSharingHandler(c *fiber.Ctx) error {
 		return fail(c, 1002, "Folder not found")
 	}
 
-	// 更新共享设备列表
-	targetFolder.SharedDevices = request.SharedDevices
-
 	// 调用 syncthing API 更新文件夹配置
 	if err := updateSyncthingFolderSharing(folderID, request.SharedDevices); err != nil {
 		return fail(c, 1004, "Failed to update folder sharing in syncthing: "+err.Error())
 	}
+
+	// 更新本地配置
+	mu.Lock()
+	targetFolder.SharedDevices = request.SharedDevices
+	mu.Unlock()
 
 	fmt.Printf("成功更新文件夹共享配置: ID=%s, 共享设备=%v\n", folderID, request.SharedDevices)
 
@@ -575,16 +577,41 @@ func updateSyncthingFolderSharing(folderID string, sharedDevices []string) error
 		return fmt.Errorf("failed to decode folder config: %v", err)
 	}
 
-	// 2. 替换 devices 字段
-	devices := make([]map[string]interface{}, 0, len(sharedDevices))
-	for _, deviceID := range sharedDevices {
-		devices = append(devices, map[string]interface{}{
-			"deviceID": deviceID,
-		})
+	// 2. 获取本机设备ID
+	localDeviceID, err := getLocalDeviceID()
+	if err != nil {
+		return fmt.Errorf("failed to get local device ID: %v", err)
 	}
+
+	// 3. 构建新的 devices 数组
+	// 首先保留本机设备（如果存在）
+	var devices []map[string]interface{}
+
+	// 检查当前配置中是否有本机设备
+	if currentDevices, ok := folderConfig["devices"].([]interface{}); ok {
+		for _, device := range currentDevices {
+			if deviceMap, ok := device.(map[string]interface{}); ok {
+				if deviceID, ok := deviceMap["deviceID"].(string); ok && deviceID == localDeviceID {
+					// 保留本机设备
+					devices = append(devices, deviceMap)
+					break
+				}
+			}
+		}
+	}
+
+	// 添加要共享的设备
+	for _, deviceID := range sharedDevices {
+		if deviceID != localDeviceID { // 避免重复添加本机设备
+			devices = append(devices, map[string]interface{}{
+				"deviceID": deviceID,
+			})
+		}
+	}
+
 	folderConfig["devices"] = devices
 
-	// 3. PUT 回去
+	// 4. PUT 回去
 	jsonData, err := json.Marshal(folderConfig)
 	if err != nil {
 		return fmt.Errorf("failed to marshal updated config: %v", err)
