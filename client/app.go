@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"runtime"
+	goruntime "runtime"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
@@ -145,14 +147,14 @@ func (a *App) GetFolders() ([]Folder, error) {
 }
 
 func getConfigPath() string {
-	if runtime.GOOS == "android" {
+	if goruntime.GOOS == "android" {
 		return "/data/data/com.nutomic.syncthingandroid/files/config.xml"
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "~" // fallback
 	}
-	switch runtime.GOOS {
+	switch goruntime.GOOS {
 	case "windows":
 		return home + `\\AppData\\Local\\Syncthing\\config.xml`
 	case "darwin":
@@ -292,4 +294,15 @@ func (a *App) GetFolderContents(folderId string, path string) ([]File, error) {
 	}
 
 	return contents, nil
+}
+
+// SelectFolder 打开文件夹选择对话框并返回选择的文件夹路径
+func (a *App) SelectFolder() (string, error) {
+	selectedPath, err := wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title: "选择要同步的文件夹",
+	})
+	if err != nil {
+		return "", fmt.Errorf("选择文件夹失败: %v", err)
+	}
+	return selectedPath, nil
 }

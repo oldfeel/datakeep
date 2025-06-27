@@ -11,3 +11,5 @@ export function GetFolderContents(arg1:string,arg2:string):Promise<Array<main.Fi
 export function GetFolders():Promise<Array<main.Folder>>;
 
 export function Greet(arg1:string):Promise<string>;
+
+export function SelectFolder():Promise<string>;

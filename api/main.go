@@ -235,6 +235,7 @@ func main() {
 	app.Get("/api/folder/:folderId", folderFilesHandler)
 	app.Get("/api/devices", devicesHandler)
 	app.Get("/api/device/:deviceId/folders", deviceFoldersHandler)
+	app.Post("/api/device/:deviceId/folders", deviceFoldersHandler)
 	// 添加 syncthing 事件代理接口
 	app.Get("/api/syncthing/events", syncthingEventsProxyHandler)
 	// 添加 syncthing 设备发现代理接口

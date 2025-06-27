@@ -269,7 +269,108 @@ func devicesHandler(c *fiber.Ctx) error {
 }
 
 func deviceFoldersHandler(c *fiber.Ctx) error {
-	return success(c, folders)
+	// 根据 HTTP 方法处理不同的操作
+	switch c.Method() {
+	case "GET":
+		return success(c, folders)
+	case "POST":
+		return addFolderHandler(c)
+	default:
+		return fail(c, 405, "Method not allowed")
+	}
+}
+
+// 添加文件夹处理器
+func addFolderHandler(c *fiber.Ctx) error {
+	// 解析请求体
+	var newFolder FolderEntry
+	if err := c.BodyParser(&newFolder); err != nil {
+		return fail(c, 1001, "Invalid request body: "+err.Error())
+	}
+
+	// 验证必填字段
+	if newFolder.ID == "" {
+		return fail(c, 1002, "Folder ID is required")
+	}
+	if newFolder.Path == "" {
+		return fail(c, 1002, "Folder path is required")
+	}
+
+	// 检查文件夹 ID 是否已存在
+	for _, folder := range folders {
+		if folder.ID == newFolder.ID {
+			return fail(c, 1003, "Folder ID already exists")
+		}
+	}
+
+	// 调用 syncthing API 创建文件夹
+	if err := createSyncthingFolder(newFolder); err != nil {
+		return fail(c, 1004, "Failed to create folder in syncthing: "+err.Error())
+	}
+
+	// 添加新文件夹到内存中的列表
+	mu.Lock()
+	folders = append(folders, newFolder)
+	mu.Unlock()
+
+	fmt.Printf("成功创建新文件夹: ID=%s, Label=%s, Path=%s\n", newFolder.ID, newFolder.Label, newFolder.Path)
+
+	return success(c, map[string]interface{}{
+		"message": "Folder created successfully",
+		"folder":  newFolder,
+	})
+}
+
+// 调用 syncthing API 创建文件夹
+func createSyncthingFolder(folder FolderEntry) error {
+	// 构建简化的 syncthing 文件夹配置，只包含必要字段
+	folderConfig := map[string]interface{}{
+		"id":    folder.ID,
+		"label": folder.Label,
+		"path":  folder.Path,
+		"type":  "sendreceive",
+	}
+
+	// 序列化为 JSON
+	jsonData, err := json.Marshal(folderConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal folder config: %v", err)
+	}
+
+	// 构建 syncthing API URL
+	syncthingURL := "http://127.0.0.1:8384/rest/config/folders"
+
+	// 创建请求
+	req, err := http.NewRequest("POST", syncthingURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// 设置请求头
+	req.Header.Set("Content-Type", "application/json")
+
+	// 添加 API Key 认证（如果需要）
+	apiKey := getApiKeyFromConfig()
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request to syncthing: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("syncthing API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	fmt.Printf("成功调用 syncthing API 创建文件夹: %s\n", folder.ID)
+	return nil
 }
 
 func folderFilesHandler(c *fiber.Ctx) error {
