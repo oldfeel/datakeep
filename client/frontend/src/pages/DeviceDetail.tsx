@@ -116,6 +116,8 @@ function FolderEditDialog({
     severity: 'success'
   });
 
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
   useEffect(() => {
     if (folder) {
       setEditedFolder({ ...folder });
@@ -152,8 +154,19 @@ function FolderEditDialog({
 
   const handleDelete = () => {
     if (editedFolder) {
-      onDelete(editedFolder.id);
+      setDeleteConfirmOpen(true);
     }
+  };
+
+  const handleConfirmDelete = () => {
+    if (editedFolder) {
+      onDelete(editedFolder.id);
+      setDeleteConfirmOpen(false);
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setDeleteConfirmOpen(false);
   };
 
   const handleSelectFolder = async () => {
@@ -419,6 +432,58 @@ function FolderEditDialog({
           {snackbar.message}
         </Alert>
       </Snackbar>
+
+      {/* 删除确认对话框 */}
+      <Dialog
+        open={deleteConfirmOpen}
+        onClose={handleCancelDelete}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ pb: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <DeleteIcon color="error" />
+            <Typography variant="h6">确认删除文件夹</Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            确定要删除以下文件夹吗？此操作无法撤销。
+          </Typography>
+          <Box sx={{ bgcolor: 'grey.50', p: 2, borderRadius: 1, mb: 2 }}>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+              文件夹名称
+            </Typography>
+            <Typography variant="body1" sx={{ mb: 1 }}>
+              {editedFolder?.label || editedFolder?.id}
+            </Typography>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+              文件夹路径
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {editedFolder?.path}
+            </Typography>
+          </Box>
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            <Typography variant="body2">
+              ⚠️ 删除后，该文件夹将从所有同步设备中移除，且无法恢复。
+            </Typography>
+          </Alert>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, pt: 1 }}>
+          <Button onClick={handleCancelDelete} color="inherit">
+            取消
+          </Button>
+          <Button
+            onClick={handleConfirmDelete}
+            variant="contained"
+            color="error"
+            startIcon={<DeleteIcon />}
+          >
+            确认删除
+          </Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 }
@@ -538,13 +603,25 @@ function FolderList({ folders, deviceName, deviceId, onRefresh }: {
       setSnackbarMessage('文件夹删除成功！');
       setSnackbarSeverity('success');
 
-      // 重新加载文件夹列表
-      onRefresh?.();
+      // 立即从本地状态中移除文件夹，避免重复删除
+      if (folders) {
+        const updatedFolders = folders.filter(folder => folder.id !== folderId);
+        // 这里需要更新父组件的状态，但由于这是一个子组件，我们需要通过回调来通知父组件
+        // 暂时先重新加载，确保状态同步
+        onRefresh?.();
+      }
     } catch (error) {
       console.error('删除文件夹失败:', error);
       setSnackbarOpen(true);
       setSnackbarMessage('删除文件夹失败: ' + (error instanceof Error ? error.message : String(error)));
       setSnackbarSeverity('error');
+
+      // 如果是"Folder not found"错误，自动刷新页面
+      if (error instanceof Error && error.message.includes('Folder not found')) {
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      }
     }
   };
 

@@ -275,6 +275,8 @@ func deviceFoldersHandler(c *fiber.Ctx) error {
 		return success(c, folders)
 	case "POST":
 		return addFolderHandler(c)
+	case "DELETE":
+		return deleteFolderHandler(c)
 	default:
 		return fail(c, 405, "Method not allowed")
 	}
@@ -891,4 +893,174 @@ func getDeviceDiscovery() (map[string]interface{}, error) {
 	}
 
 	return discovery, nil
+}
+
+// 删除文件夹处理器
+func deleteFolderHandler(c *fiber.Ctx) error {
+	// 从 URL 路径中获取文件夹 ID
+	folderID := c.Params("folderId")
+	if folderID == "" {
+		return fail(c, 1001, "Folder ID is required")
+	}
+
+	fmt.Printf("=== 开始删除文件夹 ===\n")
+	fmt.Printf("请求删除的文件夹ID: %s\n", folderID)
+	fmt.Printf("当前内存中的文件夹数量: %d\n", len(folders))
+	for i, folder := range folders {
+		fmt.Printf("  [%d] ID: %s, Label: %s, Path: %s\n", i, folder.ID, folder.Label, folder.Path)
+	}
+
+	// 检查文件夹是否存在
+	var targetFolder *FolderEntry
+	for _, folder := range folders {
+		if folder.ID == folderID {
+			targetFolder = &folder
+			break
+		}
+	}
+
+	if targetFolder == nil {
+		fmt.Printf("❌ 文件夹不存在: %s\n", folderID)
+		return fail(c, 1002, "Folder not found")
+	}
+
+	fmt.Printf("✅ 找到要删除的文件夹: ID=%s, Label=%s, Path=%s\n", targetFolder.ID, targetFolder.Label, targetFolder.Path)
+
+	// 调用 syncthing API 删除文件夹
+	if err := deleteSyncthingFolder(folderID); err != nil {
+		fmt.Printf("❌ 调用 Syncthing API 删除失败: %v\n", err)
+		return fail(c, 1003, "Failed to delete folder from syncthing: "+err.Error())
+	}
+
+	fmt.Printf("✅ Syncthing API 删除成功\n")
+
+	// 重新从 Syncthing 加载文件夹列表
+	if err := reloadFoldersFromSyncthing(); err != nil {
+		fmt.Printf("❌ 重新加载文件夹列表失败: %v\n", err)
+		// 即使重新加载失败，也从内存中删除该文件夹
+		mu.Lock()
+		var newFolders []FolderEntry
+		for _, folder := range folders {
+			if folder.ID != folderID {
+				newFolders = append(newFolders, folder)
+			}
+		}
+		folders = newFolders
+		mu.Unlock()
+		fmt.Printf("✅ 从内存中删除文件夹\n")
+	} else {
+		fmt.Printf("✅ 重新加载文件夹列表成功\n")
+	}
+
+	fmt.Printf("=== 删除文件夹完成 ===\n")
+
+	return success(c, map[string]interface{}{
+		"message": "Folder deleted successfully",
+		"folder":  targetFolder,
+	})
+}
+
+// 调用 syncthing API 删除文件夹
+func deleteSyncthingFolder(folderID string) error {
+	// 构建 syncthing API URL
+	syncthingURL := fmt.Sprintf("http://127.0.0.1:8384/rest/config/folders/%s", folderID)
+
+	// 创建请求
+	req, err := http.NewRequest("DELETE", syncthingURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// 添加 API Key 认证（如果需要）
+	apiKey := getApiKeyFromConfig()
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request to syncthing: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("syncthing API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	fmt.Printf("成功调用 syncthing API 删除文件夹: %s\n", folderID)
+	return nil
+}
+
+// 从 Syncthing 重新加载文件夹列表
+func reloadFoldersFromSyncthing() error {
+	fmt.Printf("=== 开始重新加载文件夹列表 ===\n")
+
+	// 构建 syncthing API URL
+	syncthingURL := "http://127.0.0.1:8384/rest/config/folders"
+	fmt.Printf("Syncthing API URL: %s\n", syncthingURL)
+
+	// 创建请求
+	req, err := http.NewRequest("GET", syncthingURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// 添加 API Key 认证（如果需要）
+	apiKey := getApiKeyFromConfig()
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+		fmt.Printf("使用 API Key 认证\n")
+	} else {
+		fmt.Printf("未使用 API Key 认证\n")
+	}
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request to syncthing: %v", err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("Syncthing API 响应状态: %d\n", resp.StatusCode)
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("syncthing API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// 读取响应体
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	fmt.Printf("响应体长度: %d 字节\n", len(body))
+	fmt.Printf("响应体内容: %s\n", string(body))
+
+	// 解析响应
+	var syncthingFolders []FolderEntry
+	if err := json.Unmarshal(body, &syncthingFolders); err != nil {
+		return fmt.Errorf("failed to unmarshal response: %v", err)
+	}
+
+	fmt.Printf("解析到 %d 个文件夹:\n", len(syncthingFolders))
+	for i, folder := range syncthingFolders {
+		fmt.Printf("  [%d] ID: %s, Label: %s, Path: %s\n", i, folder.ID, folder.Label, folder.Path)
+	}
+
+	// 更新内存中的文件夹列表
+	mu.Lock()
+	oldCount := len(folders)
+	folders = syncthingFolders
+	mu.Unlock()
+
+	fmt.Printf("✅ 成功从 Syncthing 重新加载文件夹列表，旧数量: %d, 新数量: %d\n", oldCount, len(syncthingFolders))
+	fmt.Printf("=== 重新加载文件夹列表完成 ===\n")
+	return nil
 }
