@@ -29,6 +29,7 @@ import {
   Divider,
   Chip,
   Snackbar,
+  CircularProgress,
 } from '@mui/material';
 import {
   Folder as FolderIcon,
@@ -41,6 +42,8 @@ import {
   Share as ShareIcon,
   FilterList as FilterListIcon,
   Add as AddIcon,
+  CheckCircle as CheckCircleIcon,
+  Cancel as CancelIcon,
 } from '@mui/icons-material';
 import { GetDeviceFolders, GetFolders, SelectFolder } from '../../wailsjs/go/main/App';
 
@@ -117,6 +120,9 @@ function FolderEditDialog({
   });
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [allDevices, setAllDevices] = useState<Device[]>([]);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [sharedDevices, setSharedDevices] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (folder) {
@@ -187,6 +193,122 @@ function FolderEditDialog({
         message: '文件夹选择失败，请手动输入路径',
         severity: 'error'
       });
+    }
+  };
+
+  // 获取所有设备列表
+  const loadAllDevices = async () => {
+    try {
+      setLoadingDevices(true);
+      const response = await fetch('http://localhost:8080/api/devices');
+      if (!response.ok) {
+        throw new Error(`API 请求失败: ${response.status}`);
+      }
+      const result = await response.json();
+      if (result.code !== 0) {
+        throw new Error(result.data || 'API 返回错误');
+      }
+      setAllDevices(result.data || []);
+    } catch (error) {
+      console.error('获取设备列表失败:', error);
+      setSnackbar({
+        open: true,
+        message: '获取设备列表失败: ' + (error instanceof Error ? error.message : String(error)),
+        severity: 'error'
+      });
+    } finally {
+      setLoadingDevices(false);
+    }
+  };
+
+  // 当切换到共享设置Tab时加载设备列表
+  useEffect(() => {
+    if (open && activeTab === 1) {
+      loadAllDevices();
+    }
+  }, [open, activeTab]);
+
+  // 更新共享设备状态
+  useEffect(() => {
+    if (editedFolder?.devices) {
+      const sharedSet = new Set(editedFolder.devices.map(d => d.deviceID));
+      setSharedDevices(sharedSet);
+    } else {
+      setSharedDevices(new Set());
+    }
+  }, [editedFolder?.devices]);
+
+  // 处理设备共享状态变化
+  const handleDeviceShareChange = async (deviceId: string, isShared: boolean) => {
+    const newSharedDevices = new Set(sharedDevices);
+
+    if (isShared) {
+      newSharedDevices.add(deviceId);
+    } else {
+      newSharedDevices.delete(deviceId);
+    }
+
+    setSharedDevices(newSharedDevices);
+
+    // 更新 editedFolder.devices
+    const newDevices = Array.from(newSharedDevices).map(deviceId => ({
+      deviceID: deviceId,
+      introducer: false,
+      encryptionPassword: ''
+    }));
+
+    setEditedFolder(prev => prev ? { ...prev, devices: newDevices } : null);
+
+    // 如果不是添加模式，立即调用后端 API 更新共享配置
+    if (!isAddMode && editedFolder) {
+      try {
+        const response = await fetch(`http://localhost:8080/api/folder/${editedFolder.id}/sharing`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            sharedDevices: Array.from(newSharedDevices)
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`API 请求失败: ${response.status}`);
+        }
+
+        const result = await response.json();
+        if (result.code !== 0) {
+          throw new Error(result.data || 'API 返回错误');
+        }
+
+        // 显示成功消息
+        setSnackbar({
+          open: true,
+          message: `文件夹共享配置已更新`,
+          severity: 'success'
+        });
+
+        // 调用刷新回调
+        if (onSave) {
+          onSave(editedFolder);
+        }
+      } catch (error) {
+        console.error('更新文件夹共享配置失败:', error);
+        setSnackbar({
+          open: true,
+          message: '更新文件夹共享配置失败: ' + (error instanceof Error ? error.message : String(error)),
+          severity: 'error'
+        });
+
+        // 恢复之前的状态
+        setSharedDevices(sharedDevices);
+        const oldDevices = Array.from(sharedDevices).map(deviceId => ({
+          deviceID: deviceId,
+          introducer: false,
+          encryptionPassword: ''
+        }));
+        setEditedFolder(prev => prev ? { ...prev, devices: oldDevices } : null);
+      }
     }
   };
 
@@ -305,18 +427,105 @@ function FolderEditDialog({
                 选择要与哪些设备共享此文件夹
               </Typography>
 
-              {editedFolder.devices?.map((device) => (
-                <Chip
-                  key={device.deviceID}
-                  label={device.deviceID}
-                  variant="outlined"
-                  sx={{ m: 0.5 }}
-                />
-              )) || (
-                  <Typography variant="body2" color="text.secondary">
-                    未配置共享设备
-                  </Typography>
-                )}
+              {loadingDevices ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                  <CircularProgress size={24} />
+                </Box>
+              ) : (
+                <>
+                  {/* 已共享设备 */}
+                  <Box sx={{ mb: 3 }}>
+                    <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CheckCircleIcon color="success" fontSize="small" />
+                      已共享设备
+                    </Typography>
+                    {allDevices.filter(device => sharedDevices.has(device.deviceID) && device.deviceID !== 'local').length === 0 ? (
+                      <Typography variant="body2" color="text.secondary" sx={{ pl: 2 }}>
+                        暂无共享设备
+                      </Typography>
+                    ) : (
+                      <Box sx={{ pl: 2 }}>
+                        {allDevices
+                          .filter(device => sharedDevices.has(device.deviceID) && device.deviceID !== 'local')
+                          .map((device) => (
+                            <FormControlLabel
+                              key={device.deviceID}
+                              control={
+                                <Checkbox
+                                  checked={true}
+                                  onChange={(e) => handleDeviceShareChange(device.deviceID, false)}
+                                  color="success"
+                                />
+                              }
+                              label={
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Typography variant="body2">
+                                    {device.name || device.deviceID}
+                                  </Typography>
+                                  {device.connected && (
+                                    <Chip label="已连接" size="small" color="success" variant="outlined" />
+                                  )}
+                                </Box>
+                              }
+                              sx={{ mb: 1 }}
+                            />
+                          ))}
+                      </Box>
+                    )}
+                  </Box>
+
+                  {/* 未共享设备 */}
+                  <Box>
+                    <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CancelIcon color="action" fontSize="small" />
+                      未共享设备
+                    </Typography>
+                    {allDevices.filter(device => !sharedDevices.has(device.deviceID) && device.deviceID !== 'local').length === 0 ? (
+                      <Typography variant="body2" color="text.secondary" sx={{ pl: 2 }}>
+                        所有设备都已共享
+                      </Typography>
+                    ) : (
+                      <Box sx={{ pl: 2 }}>
+                        {allDevices
+                          .filter(device => !sharedDevices.has(device.deviceID) && device.deviceID !== 'local')
+                          .map((device) => (
+                            <FormControlLabel
+                              key={device.deviceID}
+                              control={
+                                <Checkbox
+                                  checked={false}
+                                  onChange={(e) => handleDeviceShareChange(device.deviceID, true)}
+                                  color="primary"
+                                />
+                              }
+                              label={
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Typography variant="body2">
+                                    {device.name || device.deviceID}
+                                  </Typography>
+                                  {device.connected && (
+                                    <Chip label="已连接" size="small" color="success" variant="outlined" />
+                                  )}
+                                  {!device.connected && (
+                                    <Chip label="未连接" size="small" color="warning" variant="outlined" />
+                                  )}
+                                </Box>
+                              }
+                              sx={{ mb: 1 }}
+                            />
+                          ))}
+                      </Box>
+                    )}
+                  </Box>
+
+                  {/* 提示信息 */}
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    <Typography variant="body2">
+                      💡 提示：勾选设备以共享文件夹，取消勾选以停止共享。本机设备不会显示在列表中。
+                    </Typography>
+                  </Alert>
+                </>
+              )}
             </Box>
           )}
 

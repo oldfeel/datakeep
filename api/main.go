@@ -37,9 +37,10 @@ type SyncthingConfig struct {
 }
 
 type FolderEntry struct {
-	ID    string `xml:"id,attr" json:"id"`
-	Label string `xml:"label,attr" json:"label"`
-	Path  string `xml:"path,attr" json:"path"`
+	ID            string   `xml:"id,attr" json:"id"`
+	Label         string   `xml:"label,attr" json:"label"`
+	Path          string   `xml:"path,attr" json:"path"`
+	SharedDevices []string `json:"sharedDevices,omitempty"`
 }
 
 type Device struct {
@@ -230,13 +231,15 @@ func main() {
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowHeaders: "*",
-		AllowMethods: "GET,POST,DELETE,OPTIONS",
+		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
 	}))
 	app.Get("/api/folder/:folderId", folderFilesHandler)
 	app.Get("/api/devices", devicesHandler)
 	app.Get("/api/device/:deviceId/folders", deviceFoldersHandler)
 	app.Post("/api/device/:deviceId/folders", deviceFoldersHandler)
 	app.Delete("/api/device/:deviceId/folders/:folderId", deviceFoldersHandler)
+	// 添加文件夹共享更新接口
+	app.Put("/api/folder/:folderId/sharing", updateFolderSharingHandler)
 	// 添加 syncthing 事件代理接口
 	app.Get("/api/syncthing/events", syncthingEventsProxyHandler)
 	// 添加 syncthing 设备发现代理接口

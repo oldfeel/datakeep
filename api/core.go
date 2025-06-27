@@ -38,9 +38,10 @@ type SyncthingConfig struct {
 }
 
 type FolderEntry struct {
-	ID    string `xml:"id,attr" json:"id"`
-	Label string `xml:"label,attr" json:"label"`
-	Path  string `xml:"path,attr" json:"path"`
+	ID            string   `xml:"id,attr" json:"id"`
+	Label         string   `xml:"label,attr" json:"label"`
+	Path          string   `xml:"path,attr" json:"path"`
+	SharedDevices []string `json:"sharedDevices,omitempty"`
 }
 
 type Device struct {

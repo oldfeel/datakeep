@@ -325,12 +325,23 @@ func addFolderHandler(c *fiber.Ctx) error {
 
 // 调用 syncthing API 创建文件夹
 func createSyncthingFolder(folder FolderEntry) error {
-	// 构建简化的 syncthing 文件夹配置，只包含必要字段
+	// 构建 syncthing 文件夹配置，包含设备共享信息
 	folderConfig := map[string]interface{}{
 		"id":    folder.ID,
 		"label": folder.Label,
 		"path":  folder.Path,
 		"type":  "sendreceive",
+	}
+
+	// 如果有共享设备，添加到配置中
+	if len(folder.SharedDevices) > 0 {
+		devices := make([]map[string]interface{}, 0, len(folder.SharedDevices))
+		for _, deviceID := range folder.SharedDevices {
+			devices = append(devices, map[string]interface{}{
+				"deviceID": deviceID,
+			})
+		}
+		folderConfig["devices"] = devices
 	}
 
 	// 序列化为 JSON
@@ -372,6 +383,110 @@ func createSyncthingFolder(folder FolderEntry) error {
 	}
 
 	fmt.Printf("成功调用 syncthing API 创建文件夹: %s\n", folder.ID)
+	return nil
+}
+
+// 更新文件夹共享配置的处理函数
+func updateFolderSharingHandler(c *fiber.Ctx) error {
+	folderID := c.Params("folderId")
+
+	// 解析请求体
+	var request struct {
+		SharedDevices []string `json:"sharedDevices"`
+	}
+	if err := c.BodyParser(&request); err != nil {
+		return fail(c, 1001, "Invalid request body: "+err.Error())
+	}
+
+	// 查找文件夹
+	var targetFolder *FolderEntry
+	mu.Lock()
+	for i := range folders {
+		if folders[i].ID == folderID {
+			targetFolder = &folders[i]
+			break
+		}
+	}
+	mu.Unlock()
+
+	if targetFolder == nil {
+		return fail(c, 1002, "Folder not found")
+	}
+
+	// 更新共享设备列表
+	targetFolder.SharedDevices = request.SharedDevices
+
+	// 调用 syncthing API 更新文件夹配置
+	if err := updateSyncthingFolderSharing(folderID, request.SharedDevices); err != nil {
+		return fail(c, 1004, "Failed to update folder sharing in syncthing: "+err.Error())
+	}
+
+	fmt.Printf("成功更新文件夹共享配置: ID=%s, 共享设备=%v\n", folderID, request.SharedDevices)
+
+	return success(c, map[string]interface{}{
+		"message": "Folder sharing updated successfully",
+		"folder":  targetFolder,
+	})
+}
+
+// 调用 syncthing API 更新文件夹共享配置
+func updateSyncthingFolderSharing(folderID string, sharedDevices []string) error {
+	// 1. 获取当前文件夹完整配置
+	syncthingURL := fmt.Sprintf("http://127.0.0.1:8384/rest/config/folders/%s", folderID)
+	req, err := http.NewRequest("GET", syncthingURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create GET request: %v", err)
+	}
+	apiKey := getApiKeyFromConfig()
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to GET folder config: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("GET syncthing folder config failed: %s", string(body))
+	}
+	var folderConfig map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&folderConfig); err != nil {
+		return fmt.Errorf("failed to decode folder config: %v", err)
+	}
+
+	// 2. 替换 devices 字段
+	devices := make([]map[string]interface{}, 0, len(sharedDevices))
+	for _, deviceID := range sharedDevices {
+		devices = append(devices, map[string]interface{}{
+			"deviceID": deviceID,
+		})
+	}
+	folderConfig["devices"] = devices
+
+	// 3. PUT 回去
+	jsonData, err := json.Marshal(folderConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal updated config: %v", err)
+	}
+	putReq, err := http.NewRequest("PUT", syncthingURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create PUT request: %v", err)
+	}
+	putReq.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		putReq.Header.Set("X-API-Key", apiKey)
+	}
+	putResp, err := client.Do(putReq)
+	if err != nil {
+		return fmt.Errorf("failed to PUT updated config: %v", err)
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(putResp.Body)
+		return fmt.Errorf("PUT syncthing folder config failed: %s", string(body))
+	}
 	return nil
 }
 

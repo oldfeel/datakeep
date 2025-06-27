@@ -1,0 +1,49 @@
+# Cursor Rules for MyData Project
+
+## Project Context
+This is a Syncthing-like file synchronization application built with:
+- Frontend: React + TypeScript + Material-UI
+- Desktop App: Wails (Go + Web)
+- Backend API: Go + Fiber (RESTful API)
+- Database: SQLite + GORM
+
+## Architecture Rules
+
+### 1. Interface Usage
+- Use Wails interfaces for desktop-specific features (file picker, system operations)
+- Use REST API (localhost:8080) for network access and device management
+- Always prefer REST API for device/folder lists and management
+
+### 2. Code Style
+- Use Chinese comments and user-facing text
+- Follow Material-UI design patterns
+- Use TypeScript interfaces for type safety
+- Implement proper error handling with Snackbar notifications
+
+### 3. State Management
+- Use React useState + useEffect for frontend state
+- Implement proper loading states and error handling
+- Auto-refresh data after operations (especially delete)
+- Keep frontend and backend state synchronized
+
+### 4. File Organization
+- Frontend components in `client/frontend/src/pages/`
+- Backend API in `api/` directory
+- Wails bindings auto-generated in `client/frontend/wailsjs/`
+
+### 5. Development Workflow
+- Backend changes require recompilation
+- Frontend changes auto-reload with Wails
+- New Wails functions need `wails generate module`
+
+## Key Features
+- Folder management (add, edit, delete, share)
+- Device management and sharing
+- File browsing and synchronization
+- Cross-platform desktop application
+
+## Important Notes
+- Always check if device is 'local' when filtering
+- Implement confirmation dialogs for destructive operations
+- Use proper loading indicators and error messages
+- Reference syncthing/gui/ for UI patterns and functionality 
