@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -393,6 +395,141 @@ func syncthingEventsProxyHandler(c *fiber.Ctx) error {
 
 	// 返回响应
 	return c.Send(body)
+}
+
+// 代理 syncthing 设备发现接口，解决跨域问题
+func syncthingDiscoveryProxyHandler(c *fiber.Ctx) error {
+	// 构建 syncthing API URL
+	syncthingURL := "http://127.0.0.1:8384/rest/system/discovery"
+
+	// 创建请求
+	req, err := http.NewRequest("GET", syncthingURL, nil)
+	if err != nil {
+		return fail(c, 1005, "Failed to create request: "+err.Error())
+	}
+
+	// 添加 API Key 认证（如果需要）
+	apiKey := getApiKeyFromConfig()
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fail(c, 1006, "Failed to request syncthing: "+err.Error())
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fail(c, 1007, "Failed to read response: "+err.Error())
+	}
+
+	// 设置响应头
+	c.Set("Content-Type", "application/json")
+	c.Status(resp.StatusCode)
+
+	// 返回响应
+	return c.Send(body)
+}
+
+// 代理 syncthing 设备 ID 验证接口，解决跨域问题
+func syncthingDeviceIdProxyHandler(c *fiber.Ctx) error {
+	// 获取查询参数
+	id := c.Query("id")
+	if id == "" {
+		return fail(c, 1002, "Missing id parameter")
+	}
+
+	// 构建 syncthing API URL
+	syncthingURL := fmt.Sprintf("http://127.0.0.1:8384/rest/svc/deviceid?id=%s", url.QueryEscape(id))
+
+	// 创建请求
+	req, err := http.NewRequest("GET", syncthingURL, nil)
+	if err != nil {
+		return fail(c, 1005, "Failed to create request: "+err.Error())
+	}
+
+	// 添加 API Key 认证（如果需要）
+	apiKey := getApiKeyFromConfig()
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fail(c, 1006, "Failed to request syncthing: "+err.Error())
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fail(c, 1007, "Failed to read response: "+err.Error())
+	}
+
+	// 设置响应头
+	c.Set("Content-Type", "application/json")
+	c.Status(resp.StatusCode)
+
+	// 返回响应
+	return c.Send(body)
+}
+
+// 代理 syncthing 设备配置接口（支持 GET 和 POST），解决跨域问题
+func syncthingConfigDevicesProxyHandler(c *fiber.Ctx) error {
+	// 构建 syncthing API URL
+	syncthingURL := "http://127.0.0.1:8384/rest/config/devices"
+
+	// 获取请求方法和请求体
+	method := c.Method()
+	var body io.Reader
+	if method == "POST" {
+		body = bytes.NewReader(c.Body())
+	}
+
+	// 创建请求
+	req, err := http.NewRequest(method, syncthingURL, body)
+	if err != nil {
+		return fail(c, 1005, "Failed to create request: "+err.Error())
+	}
+
+	// 添加 API Key 认证（如果需要）
+	apiKey := getApiKeyFromConfig()
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+
+	// 复制请求头
+	if method == "POST" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fail(c, 1006, "Failed to request syncthing: "+err.Error())
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fail(c, 1007, "Failed to read response: "+err.Error())
+	}
+
+	// 设置响应头
+	c.Set("Content-Type", "application/json")
+	c.Status(resp.StatusCode)
+
+	// 返回响应
+	return c.Send(respBody)
 }
 
 // Syncthing 相关 API 调用

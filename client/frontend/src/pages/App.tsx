@@ -29,6 +29,12 @@ import {
   DialogActions,
   ListItemAvatar,
   Avatar,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -270,7 +276,11 @@ const StyledInputBase = styled(InputBase)(({ theme }) => ({
 }));
 
 // 设备列表组件
-function DeviceList({ devices, onDeviceClick }: { devices: Device[], onDeviceClick: (device: Device) => void }) {
+function DeviceList({ devices, onDeviceClick, onAddDeviceClick }: {
+  devices: Device[],
+  onDeviceClick: (device: Device) => void,
+  onAddDeviceClick: () => void
+}) {
   // 格式化字节数为可读格式
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -401,10 +411,7 @@ function DeviceList({ devices, onDeviceClick }: { devices: Device[], onDeviceCli
           fullWidth
           variant="outlined"
           startIcon={<AddIcon />}
-          onClick={() => {
-            // TODO: 实现添加设备的功能
-            console.log('添加设备');
-          }}
+          onClick={onAddDeviceClick}
           sx={{
             justifyContent: 'flex-start',
             pl: 2,
@@ -426,6 +433,18 @@ function App() {
   const [eventNotifications, setEventNotifications] = useState<Array<{ id: string, message: string, severity: 'success' | 'info' | 'warning' | 'error' }>>([]);
   const [messageList, setMessageList] = useState<Array<{ id: string, message: string, severity: 'success' | 'info' | 'warning' | 'error', timestamp: Date }>>([]);
   const [messageDialogOpen, setMessageDialogOpen] = useState(false);
+  const [addDeviceDialogOpen, setAddDeviceDialogOpen] = useState(false);
+  const [newDevice, setNewDevice] = useState({
+    deviceID: '',
+    name: ''
+  });
+  const [deviceValidation, setDeviceValidation] = useState({
+    isValid: false,
+    isUnique: true,
+    error: ''
+  });
+  const [discoveryUnknown, setDiscoveryUnknown] = useState<string[]>([]);
+  const [nearbyDevices, setNearbyDevices] = useState<Array<{ id: string, name?: string }>>([]);
   const navigate = useNavigate();
 
   // 事件处理函数
@@ -672,6 +691,281 @@ function App() {
     device.deviceID.toLowerCase().includes(searchText.toLowerCase())
   );
 
+  // 修正的设备添加相关函数
+  const handleAddDeviceClick = async () => {
+    setAddDeviceDialogOpen(true);
+    // 重置表单
+    setNewDevice({
+      deviceID: '',
+      name: ''
+    });
+    setDeviceValidation({
+      isValid: false,
+      isUnique: true,
+      error: ''
+    });
+
+    // 获取附近发现的设备 - 使用代理接口避免跨域问题
+    try {
+      const response = await fetch('http://localhost:8080/api/syncthing/discovery');
+      if (response.ok) {
+        const data = await response.json();
+        // 过滤掉已添加的设备，只保留未添加的设备
+        const unknownDevices = Object.keys(data).filter(id =>
+          !devices.some(device => device.deviceID === id)
+        ).slice(0, 5); // 只显示前5个
+        setDiscoveryUnknown(unknownDevices);
+      }
+    } catch (error) {
+      console.log('无法获取附近设备:', error);
+      setDiscoveryUnknown([]);
+    }
+  };
+
+  const handleAddDeviceClose = () => {
+    setAddDeviceDialogOpen(false);
+  };
+
+  const handleSelectNearbyDevice = (deviceID: string) => {
+    setNewDevice(prev => ({ ...prev, deviceID }));
+    validateDeviceID(deviceID);
+  };
+
+  const validateDeviceID = async (deviceID: string) => {
+    const cleanID = deviceID.replace(/[\s-]/g, '');
+
+    // Syncthing 设备 ID 格式：8组，每组7个字符，总共56个字符
+    if (cleanID.length !== 56) {
+      setDeviceValidation({
+        isValid: false,
+        isUnique: true,
+        error: '设备 ID 长度必须为 56 位（8组，每组7个字符）'
+      });
+      return;
+    }
+
+    if (!/^[A-Z0-9]+$/.test(cleanID)) {
+      setDeviceValidation({
+        isValid: false,
+        isUnique: true,
+        error: '设备 ID 只能包含大写字母和数字'
+      });
+      return;
+    }
+
+    // 验证设备 ID 有效性（通过代理接口）
+    try {
+      const response = await fetch(`http://localhost:8080/api/syncthing/deviceid?id=${encodeURIComponent(cleanID)}`);
+      const result = await response.json();
+
+      if (result.error) {
+        setDeviceValidation({
+          isValid: false,
+          isUnique: true,
+          error: '设备 ID 格式无效'
+        });
+      } else {
+        setDeviceValidation({
+          isValid: true,
+          isUnique: true,
+          error: ''
+        });
+      }
+    } catch (error) {
+      // 如果 API 调用失败，使用基本验证
+      setDeviceValidation({
+        isValid: true,
+        isUnique: true,
+        error: ''
+      });
+    }
+  };
+
+  const handleDeviceIDChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setNewDevice(prev => ({ ...prev, deviceID: value }));
+    validateDeviceID(value);
+  };
+
+  const handleSaveDevice = async () => {
+    if (!deviceValidation.isValid) {
+      return;
+    }
+
+    try {
+      // 构建设备配置（使用默认值）
+      const deviceConfig = {
+        deviceID: newDevice.deviceID.replace(/[\s-]/g, ''),
+        name: newDevice.name,
+        addresses: ['dynamic'], // 默认使用动态发现
+        compression: 'metadata', // 默认元数据压缩
+        introducer: false,
+        autoAcceptFolders: false,
+        untrusted: false,
+        numConnections: 0,
+        maxRecvKbps: 0,
+        maxSendKbps: 0
+      };
+
+      // 调用代理接口添加设备
+      const response = await fetch('http://localhost:8080/api/syncthing/config/devices', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(deviceConfig)
+      });
+
+      if (!response.ok) {
+        throw new Error('添加设备失败');
+      }
+
+      // 添加成功
+      setEventNotifications(prev => [...prev, {
+        id: `${Date.now()}-${Math.random()}`,
+        message: `设备 ${deviceConfig.name || deviceConfig.deviceID} 添加成功`,
+        severity: 'success'
+      }]);
+
+      setMessageList(prev => [...prev, {
+        id: `${Date.now()}-${Math.random()}`,
+        message: `设备 ${deviceConfig.name || deviceConfig.deviceID} 添加成功`,
+        severity: 'success',
+        timestamp: new Date()
+      }]);
+
+      // 刷新设备列表
+      loadDevices();
+
+      // 关闭弹框
+      setAddDeviceDialogOpen(false);
+    } catch (error) {
+      console.error('添加设备失败:', error);
+      setEventNotifications(prev => [...prev, {
+        id: `${Date.now()}-${Math.random()}`,
+        message: `添加设备失败: ${error instanceof Error ? error.message : '未知错误'}`,
+        severity: 'error'
+      }]);
+
+      setMessageList(prev => [...prev, {
+        id: `${Date.now()}-${Math.random()}`,
+        message: `添加设备失败: ${error instanceof Error ? error.message : '未知错误'}`,
+        severity: 'error',
+        timestamp: new Date()
+      }]);
+    }
+  };
+
+  // 获取附近设备列表
+  const loadNearbyDevices = async () => {
+    try {
+      const response = await fetch('http://localhost:8080/api/syncthing/discovery');
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+
+      // 处理发现的数据，提取未知设备
+      const unknownDevices: Array<{ id: string, name?: string }> = [];
+      if (data && typeof data === 'object') {
+        Object.keys(data).forEach(deviceId => {
+          // 检查是否已存在该设备
+          const existingDevice = devices.find(d => d.deviceID === deviceId);
+          if (!existingDevice) {
+            unknownDevices.push({ id: deviceId });
+          }
+        });
+      }
+
+      setNearbyDevices(unknownDevices);
+    } catch (error) {
+      console.error('获取附近设备失败:', error);
+      setNearbyDevices([]);
+    }
+  };
+
+  // 验证设备 ID 格式
+  const validateDeviceId = async (deviceId: string) => {
+    const cleanID = deviceId.replace(/[^A-Z0-9]/g, '');
+    if (cleanID.length !== 63) {
+      return false;
+    }
+
+    try {
+      // 使用代理接口验证设备 ID
+      const response = await fetch(`http://localhost:8080/api/syncthing/deviceid?id=${encodeURIComponent(cleanID)}`);
+      return response.ok;
+    } catch (error) {
+      console.error('设备 ID 验证失败:', error);
+      return false;
+    }
+  };
+
+  // 添加设备
+  const handleAddDevice = async () => {
+    if (!newDevice.deviceID.trim()) {
+      setDeviceValidation({
+        isValid: false,
+        isUnique: true,
+        error: '请输入设备 ID'
+      });
+      return;
+    }
+
+    try {
+      // 使用代理接口获取设备列表
+      const response = await fetch('http://localhost:8080/api/syncthing/config/devices', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const devices = await response.json();
+
+      // 检查设备是否已存在
+      const deviceExists = devices.some((device: any) => device.deviceID === newDevice.deviceID);
+      if (deviceExists) {
+        setDeviceValidation({
+          isValid: false,
+          isUnique: false,
+          error: '设备已存在'
+        });
+        return;
+      }
+
+      // 这里可以添加实际的设备添加逻辑
+      console.log('添加设备:', { id: newDevice.deviceID, name: newDevice.name });
+
+      // 清空表单并关闭弹框
+      setNewDevice({
+        deviceID: '',
+        name: ''
+      });
+      setDeviceValidation({
+        isValid: true,
+        isUnique: true,
+        error: ''
+      });
+      setAddDeviceDialogOpen(false);
+
+      // 刷新设备列表
+      loadDevices();
+
+    } catch (error) {
+      console.error('添加设备失败:', error);
+      setDeviceValidation({
+        isValid: false,
+        isUnique: true,
+        error: '添加设备失败: ' + (error as Error).message
+      });
+    }
+  };
+
   return (
     <Box sx={{ display: 'flex', height: '100vh' }}>
       {/* 顶部 AppBar */}
@@ -767,7 +1061,11 @@ function App() {
           },
         }}
       >
-        <DeviceList devices={filteredDevices} onDeviceClick={handleDeviceClick} />
+        <DeviceList
+          devices={filteredDevices}
+          onDeviceClick={handleDeviceClick}
+          onAddDeviceClick={handleAddDeviceClick}
+        />
       </Drawer>
 
       {/* 主内容区域 */}
@@ -915,6 +1213,103 @@ function App() {
         <DialogActions>
           <Button onClick={handleMessageDialogClose}>
             关闭
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 完整的设备添加弹框 */}
+      <Dialog
+        open={addDeviceDialogOpen}
+        onClose={handleAddDeviceClose}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <AddIcon />
+            <Typography variant="h6">添加设备</Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 2 }}>
+            {/* 设备 ID 部分 */}
+            <Typography variant="h6" sx={{ mb: 2 }}>设备 ID</Typography>
+
+            <TextField
+              fullWidth
+              label="设备 ID"
+              value={newDevice.deviceID}
+              onChange={handleDeviceIDChange}
+              error={!deviceValidation.isValid && newDevice.deviceID !== ''}
+              helperText={
+                deviceValidation.error ||
+                '在此处输入的设备 ID 可以在另一台设备的"操作 > 显示 ID"对话框中找到。空格和破折号是可选的（忽略）。'
+              }
+              sx={{ mb: 2 }}
+              placeholder="例如: ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            />
+
+            {/* 附近设备选择 */}
+            {discoveryUnknown.length > 0 && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  您还可以选择以下附近的设备之一：
+                </Typography>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {discoveryUnknown.map((deviceID) => (
+                    <Button
+                      key={deviceID}
+                      variant="outlined"
+                      size="small"
+                      onClick={() => handleSelectNearbyDevice(deviceID)}
+                      sx={{
+                        justifyContent: 'flex-start',
+                        textTransform: 'none',
+                        fontFamily: 'monospace',
+                        fontSize: '0.8rem',
+                        py: 1,
+                        px: 2
+                      }}
+                    >
+                      {deviceID}
+                    </Button>
+                  ))}
+                </Box>
+              </Box>
+            )}
+
+            {/* 设备名称部分 */}
+            <Typography variant="h6" sx={{ mb: 2 }}>设备名称</Typography>
+
+            <TextField
+              fullWidth
+              label="设备名称"
+              value={newDevice.name}
+              onChange={(e) => setNewDevice(prev => ({ ...prev, name: e.target.value }))}
+              helperText="在集群状态中显示该名称，而不是设备 ID。如果留空，将更新为设备通告的名称。"
+              sx={{ mb: 2 }}
+              placeholder="例如: 我的手机"
+            />
+
+            {/* 提示信息 */}
+            <Alert severity="info" sx={{ mt: 2 }}>
+              <Typography variant="body2">
+                若您在本机添加新设备，记住您也必须在这个新设备上添加本机。
+              </Typography>
+            </Alert>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleAddDeviceClose}>
+            取消
+          </Button>
+          <Button
+            onClick={handleSaveDevice}
+            disabled={!deviceValidation.isValid}
+            variant="contained"
+            color="primary"
+          >
+            添加设备
           </Button>
         </DialogActions>
       </Dialog>

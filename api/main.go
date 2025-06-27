@@ -237,6 +237,13 @@ func main() {
 	app.Get("/api/device/:deviceId/folders", deviceFoldersHandler)
 	// 添加 syncthing 事件代理接口
 	app.Get("/api/syncthing/events", syncthingEventsProxyHandler)
+	// 添加 syncthing 设备发现代理接口
+	app.Get("/api/syncthing/discovery", syncthingDiscoveryProxyHandler)
+	// 添加 syncthing 设备 ID 验证代理接口
+	app.Get("/api/syncthing/deviceid", syncthingDeviceIdProxyHandler)
+	// 添加 syncthing 设备配置代理接口（支持 GET 和 POST）
+	app.Get("/api/syncthing/config/devices", syncthingConfigDevicesProxyHandler)
+	app.Post("/api/syncthing/config/devices", syncthingConfigDevicesProxyHandler)
 	// 添加索引状态查询接口
 	app.Get("/api/index/status", indexStatusHandler)
 
