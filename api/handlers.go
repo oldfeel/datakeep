@@ -337,6 +337,64 @@ func folderFilesHandler(c *fiber.Ctx) error {
 	return success(c, files)
 }
 
+// 代理 syncthing 事件接口，解决跨域问题
+func syncthingEventsProxyHandler(c *fiber.Ctx) error {
+	// 获取查询参数
+	since := c.Query("since", "0")
+	timeout := c.Query("timeout", "60")
+	limit := c.Query("limit", "")
+	events := c.Query("events", "")
+
+	// 构建 syncthing API URL
+	syncthingURL := "http://127.0.0.1:8384/rest/events"
+	params := url.Values{}
+	params.Set("since", since)
+	params.Set("timeout", timeout)
+	if limit != "" {
+		params.Set("limit", limit)
+	}
+	if events != "" {
+		params.Set("events", events)
+	}
+
+	if len(params) > 0 {
+		syncthingURL += "?" + params.Encode()
+	}
+
+	// 创建请求
+	req, err := http.NewRequest("GET", syncthingURL, nil)
+	if err != nil {
+		return fail(c, 1005, "Failed to create request: "+err.Error())
+	}
+
+	// 添加 API Key 认证（如果需要）
+	apiKey := getApiKeyFromConfig()
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fail(c, 1006, "Failed to request syncthing: "+err.Error())
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fail(c, 1007, "Failed to read response: "+err.Error())
+	}
+
+	// 设置响应头
+	c.Set("Content-Type", "application/json")
+	c.Status(resp.StatusCode)
+
+	// 返回响应
+	return c.Send(body)
+}
+
 // Syncthing 相关 API 调用
 func getDevicesFromSyncthing() ([]Device, error) {
 	fmt.Printf("=== getDevicesFromSyncthing 开始 ===\n")
