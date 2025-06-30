@@ -1327,6 +1327,47 @@ func reloadFoldersFromSyncthing() error {
 }
 
 // 获取本机设备ID
+func getLocalDeviceID() (string, error) {
+	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/system/status", nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+
+	// 创建跳过证书验证的 HTTP 客户端
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to request syncthing: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("syncthing status api error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %v", err)
+	}
+
+	var status map[string]interface{}
+	if err := json.Unmarshal(body, &status); err != nil {
+		return "", fmt.Errorf("failed to parse response: %v", err)
+	}
+
+	if myID, ok := status["myID"].(string); ok {
+		return myID, nil
+	}
+
+	return "", fmt.Errorf("myID not found in status response")
+}
+
+// 获取本机设备ID
 func getLocalDeviceIDHandler(c *fiber.Ctx) error {
 	fmt.Printf("=== 获取本机设备ID ===\n")
 

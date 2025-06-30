@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -440,7 +441,7 @@ func asyncLoadAndIndex() {
 
 // 异步增量索引主函数
 func asyncIncrementalIndex(folder FolderEntry) {
-	root := folder.Path
+	root := expandPath(folder.Path)
 	fmt.Printf("开始增量索引文件夹: [%s] %s\n", folder.ID, root)
 
 	// 1. 获取数据库中现有的文件映射
@@ -558,7 +559,7 @@ func asyncForceReindexAll() {
 
 // 异步文件系统遍历和索引
 func asyncWalkAndIndex(folder FolderEntry) {
-	root := folder.Path
+	root := expandPath(folder.Path)
 	fmt.Printf("开始索引文件夹: [%s] %s\n", folder.ID, root)
 
 	fileCount := 0
@@ -700,7 +701,7 @@ func calculateFileHash(filePath string) (string, error) {
 // 扫描文件系统获取当前文件（优化版本）
 func scanFileSystem(folder FolderEntry) (FileMap, error) {
 	fileMap := make(FileMap)
-	root := folder.Path
+	root := expandPath(folder.Path)
 	fileCount := 0
 	hashCount := 0
 
@@ -896,4 +897,21 @@ func processChanges(changes []FileChange, folderID string) error {
 	}
 
 	return tx.Commit().Error
+}
+
+// 展开路径中的 ~ 符号
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		usr, err := user.Current()
+		if err != nil {
+			// 如果获取用户失败，尝试使用环境变量
+			home := os.Getenv("HOME")
+			if home == "" {
+				return path // 返回原路径
+			}
+			return filepath.Join(home, path[2:])
+		}
+		return filepath.Join(usr.HomeDir, path[2:])
+	}
+	return path
 }
