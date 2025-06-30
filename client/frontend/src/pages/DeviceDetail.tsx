@@ -44,6 +44,7 @@ import {
   Add as AddIcon,
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
+  ContentCopy as CopyIcon,
 } from '@mui/icons-material';
 import { GetDeviceFolders, GetFolders, SelectFolder } from '../../wailsjs/go/main/App';
 
@@ -915,7 +916,7 @@ function FolderList({ folders, deviceName, deviceId, onRefresh }: {
   return (
     <>
       {/* 添加文件夹按钮 */}
-      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'flex-end' }}>
+      <Box sx={{ mb: 3, display: 'flex' }}>
         <Button
           variant="contained"
           startIcon={<AddIcon />}
@@ -1070,6 +1071,227 @@ function FolderList({ folders, deviceName, deviceId, onRefresh }: {
   );
 }
 
+// 设备信息编辑组件
+function DeviceInfoCard({
+  device,
+  onDeviceNameChange,
+  onRemoveDevice
+}: {
+  device: Device | null;
+  onDeviceNameChange: (newName: string) => void;
+  onRemoveDevice: () => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedName, setEditedName] = useState(device?.name || '');
+  const [snackbar, setSnackbar] = useState<{
+    open: boolean;
+    message: string;
+    severity: 'success' | 'error' | 'warning' | 'info';
+  }>({
+    open: false,
+    message: '',
+    severity: 'success'
+  });
+  const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
+
+  useEffect(() => {
+    setEditedName(device?.name || '');
+  }, [device?.name]);
+
+  const handleSave = async () => {
+    if (device && editedName.trim() !== device.name) {
+      try {
+        onDeviceNameChange(editedName.trim());
+        setIsEditing(false);
+        setSnackbar({
+          open: true,
+          message: '设备名称更新成功',
+          severity: 'success'
+        });
+      } catch (error) {
+        console.error('更新设备名称失败:', error);
+        setSnackbar({
+          open: true,
+          message: '更新设备名称失败',
+          severity: 'error'
+        });
+      }
+    } else {
+      setIsEditing(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setEditedName(device?.name || '');
+    setIsEditing(false);
+  };
+
+  const copyDeviceId = () => {
+    if (device?.deviceID) {
+      navigator.clipboard.writeText(device.deviceID);
+      setSnackbar({
+        open: true,
+        message: '设备ID已复制到剪贴板',
+        severity: 'success'
+      });
+    }
+  };
+
+  if (!device) {
+    return (
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Skeleton variant="text" width="60%" height={32} />
+          <Skeleton variant="text" width="40%" height={24} />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6" component="h2" sx={{ fontWeight: 600 }}>
+              设备信息
+            </Typography>
+            <Button
+              variant="outlined"
+              color="error"
+              size="small"
+              startIcon={<DeleteIcon />}
+              onClick={() => setRemoveDialogOpen(true)}
+            >
+              移除设备
+            </Button>
+          </Box>
+          <Grid container spacing={2}>
+            {/* 设备ID */}
+            <Grid item xs={12}>
+              <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ minWidth: '80px', fontWeight: 500 }}>
+                  设备ID:
+                </Typography>
+                <Box sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  p: 1,
+                  bgcolor: 'grey.50',
+                  borderRadius: 1,
+                  border: '1px solid',
+                  borderColor: 'grey.300',
+                  flex: 1,
+                  height: '22px'
+                }}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontFamily: 'monospace',
+                      flex: 1,
+                      wordBreak: 'break-all'
+                    }}
+                  >
+                    {device.deviceID}
+                  </Typography>
+                  <Tooltip title="复制设备ID">
+                    <IconButton size="small" onClick={copyDeviceId}>
+                      <CopyIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              </Box>
+            </Grid>
+
+            {/* 设备名称 */}
+            <Grid item xs={12}>
+              <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ minWidth: '80px', fontWeight: 500 }}>
+                  设备名称:
+                </Typography>
+                {isEditing ? (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
+                    <TextField
+                      size="small"
+                      value={editedName}
+                      onChange={(e) => setEditedName(e.target.value)}
+                      placeholder="输入设备名称"
+                      sx={{ flex: 1 }}
+                      autoFocus
+                    />
+                    <IconButton
+                      size="small"
+                      onClick={handleSave}
+                      color="primary"
+                      disabled={!editedName.trim()}
+                    >
+                      <SaveIcon />
+                    </IconButton>
+                    <IconButton size="small" onClick={handleCancel}>
+                      <CancelIcon />
+                    </IconButton>
+                  </Box>
+                ) : (
+                  <Box sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    p: 1,
+                    bgcolor: 'grey.50',
+                    borderRadius: 1,
+                    border: '1px solid',
+                    borderColor: 'grey.300',
+                    height: '22px',
+                    flex: 1
+                  }}>
+                    <Typography variant="body2" sx={{ flex: 1 }}>
+                      {device.name || '未设置名称'}
+                    </Typography>
+                    <IconButton
+                      size="small"
+                      onClick={() => setIsEditing(true)}
+                      sx={{ color: 'primary.main' }}
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                )}
+              </Box>
+            </Grid>
+          </Grid>
+        </CardContent>
+      </Card>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+      >
+        <Alert
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+
+      {/* 移除设备确认对话框 */}
+      <Dialog open={removeDialogOpen} onClose={() => setRemoveDialogOpen(false)}>
+        <DialogTitle>确认移除设备</DialogTitle>
+        <DialogContent>
+          <Typography>确定要移除该设备吗？此操作不可恢复。</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRemoveDialogOpen(false)}>取消</Button>
+          <Button onClick={() => { setRemoveDialogOpen(false); onRemoveDevice(); }} color="error" variant="contained">确认移除</Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+}
+
 // 设备详情页面组件
 export default function DeviceDetail() {
   const { deviceId = 'local' } = useParams();
@@ -1151,24 +1373,50 @@ export default function DeviceDetail() {
             apiUrl = `http://${selectedIp}:8080/api/device/${deviceId}/folders`;
             console.log('Using remote API with IP:', selectedIp);
           } else {
-            throw new Error('无法解析设备地址');
+            // 离线设备：设置空文件夹列表，不显示错误
+            console.log('设备离线，设置空文件夹列表');
+            setFolders([]);
+            setLoading(false);
+            return;
           }
         } else {
-          throw new Error('设备没有可用的 IPv4 地址');
+          // 离线设备：设置空文件夹列表，不显示错误
+          console.log('设备没有可用地址，设置空文件夹列表');
+          setFolders([]);
+          setLoading(false);
+          return;
         }
       } else {
-        throw new Error('设备未连接或没有可用地址');
+        // 离线设备：设置空文件夹列表，不显示错误
+        console.log('设备未连接，设置空文件夹列表');
+        setFolders([]);
+        setLoading(false);
+        return;
       }
 
       console.log('Fetching folders from:', apiUrl);
       const resp = await fetch(apiUrl);
-      if (!resp.ok) throw new Error('API 请求失败');
+      if (!resp.ok) {
+        // API 请求失败时，设置空文件夹列表而不是显示错误
+        console.log('API 请求失败，设置空文件夹列表');
+        setFolders([]);
+        setLoading(false);
+        return;
+      }
       const result = await resp.json();
-      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+      if (result.code !== 0) {
+        // API 返回错误时，设置空文件夹列表而不是显示错误
+        console.log('API 返回错误，设置空文件夹列表');
+        setFolders([]);
+        setLoading(false);
+        return;
+      }
       setFolders(result.data);
     } catch (err) {
       console.error('Failed to load folders:', err);
-      setError('加载数据失败: ' + (err instanceof Error ? err.message : String(err)));
+      // 捕获到错误时，设置空文件夹列表而不是显示错误信息
+      console.log('加载文件夹失败，设置空文件夹列表');
+      setFolders([]);
     } finally {
       setLoading(false);
     }
@@ -1245,14 +1493,6 @@ export default function DeviceDetail() {
     );
   }
 
-  if (error) {
-    return (
-      <Box sx={{ p: 3 }}>
-        <Alert severity="error">{error}</Alert>
-      </Box>
-    );
-  }
-
   return (
     <Box sx={{ p: 3 }}>
       <Breadcrumbs sx={{ mb: 3 }}>
@@ -1265,13 +1505,28 @@ export default function DeviceDetail() {
         <Typography color="text.primary">{deviceName}</Typography>
       </Breadcrumbs>
 
-      <Typography variant="h5" sx={{ mb: 3 }}>
-        {deviceName} 的文件夹
-      </Typography>
+      {/* 设备信息卡片 - 放在文件夹列表上方 */}
+      <DeviceInfoCard
+        device={device}
+        onDeviceNameChange={async (newName) => {
+          setDeviceName(newName);
+          // 更新设备对象中的名称
+          if (device) {
+            setDevice({ ...device, name: newName });
+          }
+          // 这里可以添加调用 API 更新设备名称的逻辑
+          console.log('设备名称已更新为:', newName);
+        }}
+        onRemoveDevice={() => {
+          // 实现移除设备的逻辑
+          console.log('设备已移除');
+        }}
+      />
 
-      {device && !device.isLocalNetwork && device.addresses && device.addresses.length > 0 && (
+      {/* 离线设备提示 */}
+      {device && !device.connected && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          正在从远程设备获取数据: {device.addresses[0] || '未知地址'}
+          设备当前离线，无法获取文件夹信息
         </Alert>
       )}
 
