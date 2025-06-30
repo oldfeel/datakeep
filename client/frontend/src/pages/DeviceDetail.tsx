@@ -45,6 +45,8 @@ import {
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
   ContentCopy as CopyIcon,
+  ExpandLess as ExpandLessIcon,
+  ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
 import { GetDeviceFolders, GetFolders, SelectFolder } from '../../wailsjs/go/main/App';
 
@@ -1083,6 +1085,8 @@ function DeviceInfoCard({
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState(device?.name || '');
+  const [isExpanded, setIsExpanded] = useState(true);
+  const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -1092,7 +1096,6 @@ function DeviceInfoCard({
     message: '',
     severity: 'success'
   });
-  const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
 
   useEffect(() => {
     setEditedName(device?.name || '');
@@ -1139,7 +1142,7 @@ function DeviceInfoCard({
 
   if (!device) {
     return (
-      <Card sx={{ mb: 2 }}>
+      <Card sx={{ mb: 2, maxWidth: 800 }}>
         <CardContent>
           <Skeleton variant="text" width="60%" height={32} />
           <Skeleton variant="text" width="40%" height={24} />
@@ -1150,89 +1153,40 @@ function DeviceInfoCard({
 
   return (
     <>
-      <Card sx={{ mb: 2 }}>
+      <Card sx={{ mb: 2, maxWidth: 800 }}>
         <CardContent>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6" component="h2" sx={{ fontWeight: 600 }}>
-              设备信息
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="h6" component="h2" sx={{ fontWeight: 600 }}>
+                设备信息
+              </Typography>
+              <IconButton
+                size="small"
+                onClick={() => setIsExpanded(!isExpanded)}
+                sx={{ color: 'primary.main' }}
+              >
+                {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+              </IconButton>
+            </Box>
             <Button
+              size="small"
               variant="outlined"
               color="error"
-              size="small"
               startIcon={<DeleteIcon />}
               onClick={() => setRemoveDialogOpen(true)}
             >
               移除设备
             </Button>
           </Box>
-          <Grid container spacing={2}>
-            {/* 设备ID */}
-            <Grid item xs={12}>
-              <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Typography variant="body2" color="text.secondary" sx={{ minWidth: '80px', fontWeight: 500 }}>
-                  设备ID:
-                </Typography>
-                <Box sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1,
-                  p: 1,
-                  bgcolor: 'grey.50',
-                  borderRadius: 1,
-                  border: '1px solid',
-                  borderColor: 'grey.300',
-                  flex: 1,
-                  height: '22px'
-                }}>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontFamily: 'monospace',
-                      flex: 1,
-                      wordBreak: 'break-all'
-                    }}
-                  >
-                    {device.deviceID}
-                  </Typography>
-                  <Tooltip title="复制设备ID">
-                    <IconButton size="small" onClick={copyDeviceId}>
-                      <CopyIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
-              </Box>
-            </Grid>
 
-            {/* 设备名称 */}
-            <Grid item xs={12}>
-              <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Typography variant="body2" color="text.secondary" sx={{ minWidth: '80px', fontWeight: 500 }}>
-                  设备名称:
-                </Typography>
-                {isEditing ? (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
-                    <TextField
-                      size="small"
-                      value={editedName}
-                      onChange={(e) => setEditedName(e.target.value)}
-                      placeholder="输入设备名称"
-                      sx={{ flex: 1 }}
-                      autoFocus
-                    />
-                    <IconButton
-                      size="small"
-                      onClick={handleSave}
-                      color="primary"
-                      disabled={!editedName.trim()}
-                    >
-                      <SaveIcon />
-                    </IconButton>
-                    <IconButton size="small" onClick={handleCancel}>
-                      <CancelIcon />
-                    </IconButton>
-                  </Box>
-                ) : (
+          {isExpanded && (
+            <Grid container spacing={2}>
+              {/* 设备ID */}
+              <Grid item xs={12}>
+                <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ minWidth: '80px', fontWeight: 500 }}>
+                    设备ID:
+                  </Typography>
                   <Box sx={{
                     display: 'flex',
                     alignItems: 'center',
@@ -1242,24 +1196,85 @@ function DeviceInfoCard({
                     borderRadius: 1,
                     border: '1px solid',
                     borderColor: 'grey.300',
-                    height: '22px',
-                    flex: 1
+                    flex: 1,
+                    height: '40px'
                   }}>
-                    <Typography variant="body2" sx={{ flex: 1 }}>
-                      {device.name || '未设置名称'}
-                    </Typography>
-                    <IconButton
-                      size="small"
-                      onClick={() => setIsEditing(true)}
-                      sx={{ color: 'primary.main' }}
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontFamily: 'monospace',
+                        flex: 1,
+                        wordBreak: 'break-all'
+                      }}
                     >
-                      <EditIcon fontSize="small" />
-                    </IconButton>
+                      {device.deviceID}
+                    </Typography>
+                    <Tooltip title="复制设备ID">
+                      <IconButton size="small" onClick={copyDeviceId}>
+                        <CopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </Box>
-                )}
-              </Box>
+                </Box>
+              </Grid>
+
+              {/* 设备名称 */}
+              <Grid item xs={12}>
+                <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ minWidth: '80px', fontWeight: 500 }}>
+                    设备名称:
+                  </Typography>
+                  {isEditing ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
+                      <TextField
+                        size="small"
+                        value={editedName}
+                        onChange={(e) => setEditedName(e.target.value)}
+                        placeholder="输入设备名称"
+                        sx={{ flex: 1 }}
+                        autoFocus
+                      />
+                      <IconButton
+                        size="small"
+                        onClick={handleSave}
+                        color="primary"
+                        disabled={!editedName.trim()}
+                      >
+                        <SaveIcon />
+                      </IconButton>
+                      <IconButton size="small" onClick={handleCancel}>
+                        <CancelIcon />
+                      </IconButton>
+                    </Box>
+                  ) : (
+                    <Box sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1,
+                      p: 1,
+                      bgcolor: 'grey.50',
+                      borderRadius: 1,
+                      border: '1px solid',
+                      borderColor: 'grey.300',
+                      height: '40px',
+                      flex: 1
+                    }}>
+                      <Typography variant="body2" sx={{ flex: 1 }}>
+                        {device.name || '未设置名称'}
+                      </Typography>
+                      <IconButton
+                        size="small"
+                        onClick={() => setIsEditing(true)}
+                        sx={{ color: 'primary.main' }}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  )}
+                </Box>
+              </Grid>
             </Grid>
-          </Grid>
+          )}
         </CardContent>
       </Card>
 
