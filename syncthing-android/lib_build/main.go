@@ -168,6 +168,7 @@ func main() {
 			"-goarch", target.GoArch,
 			"-cc", cc,
 			"-pkgdir", filepath.Join(goBuildDir, target.GoArch),
+			"-version", "v1.28.1-mydata",
 			"-no-upgrade", "build")
 		cmd.Dir = syncthingDir
 		cmd.Env = env
