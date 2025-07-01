@@ -71,9 +71,14 @@ func getNDKHome() (string, error) {
 		}
 	}
 
-	// Windows 默认路径
+	// 系统默认路径
 	if runtime.GOOS == "windows" {
 		defaultPath := "C:/Users/hyt59/AppData/Local/Android/Sdk/ndk/29.0.13113456"
+		if _, err := os.Stat(defaultPath); err == nil {
+			return defaultPath, nil
+		}
+	} else if runtime.GOOS == "linux" {
+		defaultPath := "/home/oldfeel/Android/Sdk/ndk/29.0.13113456"
 		if _, err := os.Stat(defaultPath); err == nil {
 			return defaultPath, nil
 		}

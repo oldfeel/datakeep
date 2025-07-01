@@ -50,12 +50,41 @@ var (
 )
 
 func getNDKHome() (string, error) {
-	// 直接使用 NDK 路径
-	ndkHome := "C:/Users/hyt59/AppData/Local/Android/Sdk/ndk/29.0.13113456"
-	if _, err := os.Stat(ndkHome); err != nil {
-		return "", fmt.Errorf("NDK path not found: %v", err)
+	// 尝试从环境变量获取 NDK 路径
+	ndkHome := os.Getenv("ANDROID_NDK_HOME")
+	if ndkHome != "" {
+		if _, err := os.Stat(ndkHome); err == nil {
+			return ndkHome, nil
+		}
 	}
-	return ndkHome, nil
+
+	// 尝试从 Android SDK 获取 NDK 路径
+	androidHome := os.Getenv("ANDROID_HOME")
+	if androidHome != "" {
+		ndkVersion := os.Getenv("NDK_VERSION")
+		if ndkVersion == "" {
+			ndkVersion = "29.0.13113456" // 默认版本
+		}
+		ndkHome = filepath.Join(androidHome, "ndk", ndkVersion)
+		if _, err := os.Stat(ndkHome); err == nil {
+			return ndkHome, nil
+		}
+	}
+
+	// 系统默认路径
+	if runtime.GOOS == "windows" {
+		defaultPath := "C:/Users/hyt59/AppData/Local/Android/Sdk/ndk/29.0.13113456"
+		if _, err := os.Stat(defaultPath); err == nil {
+			return defaultPath, nil
+		}
+	} else if runtime.GOOS == "linux" {
+		defaultPath := "/home/oldfeel/Android/Sdk/ndk/29.0.13113456"
+		if _, err := os.Stat(defaultPath); err == nil {
+			return defaultPath, nil
+		}
+	}
+
+	return "", fmt.Errorf("NDK not found. Please set ANDROID_NDK_HOME or ANDROID_HOME+NDK_VERSION")
 }
 
 func getMinSDK(projectDir string) (int, error) {
