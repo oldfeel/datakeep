@@ -1420,3 +1420,60 @@ func getLocalDeviceIDHandler(c *fiber.Ctx) error {
 	fmt.Printf("状态响应内容: %s\n", string(body))
 	return fail(c, 1006, "myID not found in status response")
 }
+
+// 移除设备处理器
+func removeDeviceHandler(c *fiber.Ctx) error {
+	// 从 URL 路径中获取设备 ID
+	deviceID := c.Params("deviceId")
+	if deviceID == "" {
+		return fail(c, 1001, "Device ID is required")
+	}
+
+	fmt.Printf("=== 开始移除设备 ===\n")
+	fmt.Printf("请求移除的设备ID: %s\n", deviceID)
+
+	// 调用 syncthing API 移除设备
+	if err := removeSyncthingDevice(deviceID); err != nil {
+		fmt.Printf("❌ 调用 Syncthing API 移除设备失败: %v\n", err)
+		return fail(c, 1003, "Failed to remove device from syncthing: "+err.Error())
+	}
+
+	fmt.Printf("✅ Syncthing API 移除设备成功\n")
+
+	return success(c, map[string]interface{}{
+		"message":  "设备移除成功",
+		"deviceID": deviceID,
+	})
+}
+
+// 调用 Syncthing API 移除设备
+func removeSyncthingDevice(deviceID string) error {
+	// 构建 syncthing API URL
+	syncthingURL := fmt.Sprintf("http://127.0.0.1:8384/rest/config/devices/%s", deviceID)
+
+	// 创建 DELETE 请求
+	req, err := http.NewRequest("DELETE", syncthingURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// 添加 API Key 认证
+	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode != 200 {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("syncthing api error: %s, response: %s", resp.Status, string(body))
+	}
+
+	fmt.Printf("✅ Syncthing API 移除设备成功: %s\n", deviceID)
+	return nil
+}

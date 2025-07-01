@@ -237,8 +237,47 @@ export default function DeviceDetail() {
           setDevice(prev => prev ? { ...prev, name: newName } : null);
           console.log('设备名称已更新为:', newName);
         }}
-        onRemoveDevice={() => {
-          console.log('设备已移除');
+        onRemoveDevice={async () => {
+          if (!deviceId || deviceId === 'local') {
+            setSnackbar({
+              open: true,
+              message: '无法移除本机设备',
+              severity: 'warning'
+            });
+            return;
+          }
+
+          try {
+            console.log('开始移除设备:', deviceId);
+
+            const response = await fetch(`http://localhost:8080/api/device/${deviceId}`, {
+              method: 'DELETE',
+            });
+
+            if (response.ok) {
+              const result = await response.json();
+              if (result.code === 0) {
+                setSnackbar({
+                  open: true,
+                  message: '设备移除成功',
+                  severity: 'success'
+                });
+                // 移除成功后跳转到首页
+                navigate('/');
+              } else {
+                throw new Error(result.data || '移除设备失败');
+              }
+            } else {
+              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+          } catch (error) {
+            console.error('移除设备失败:', error);
+            setSnackbar({
+              open: true,
+              message: '移除设备失败: ' + (error instanceof Error ? error.message : String(error)),
+              severity: 'error'
+            });
+          }
         }}
       />
 

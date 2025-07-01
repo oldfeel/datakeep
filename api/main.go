@@ -351,6 +351,8 @@ func main() {
 	// 添加 syncthing 设备配置代理接口（支持 GET 和 POST）
 	app.Get("/api/syncthing/config/devices", syncthingConfigDevicesProxyHandler)
 	app.Post("/api/syncthing/config/devices", syncthingConfigDevicesProxyHandler)
+	// 添加移除设备接口
+	app.Delete("/api/device/:deviceId", removeDeviceHandler)
 	// 添加索引状态查询接口
 	app.Get("/api/index/status", indexStatusHandler)
 

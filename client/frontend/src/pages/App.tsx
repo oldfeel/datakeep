@@ -459,8 +459,27 @@ function App() {
     }, delay);
   }, []);
 
+  // 加载设备列表 - 使用原有的 API 服务 (8080 端口)
+  const loadDevices = useCallback(async () => {
+    try {
+      console.log('开始加载设备列表...');
+      const resp = await fetch('http://localhost:8080/api/devices');
+      if (!resp.ok) throw new Error('API 请求失败');
+      const result = await resp.json();
+      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+      const devicesData = result.data || [];
+      console.log('设备列表加载成功，设备数量:', devicesData.length);
+      setDevices(devicesData);
+      return devicesData;
+    } catch (err) {
+      console.error('Failed to load devices:', err);
+      setDevices([]);
+      throw err;
+    }
+  }, []);
+
   // 修改事件处理函数，添加自动移除
-  const handleDeviceConnected = useCallback((event: SyncthingEvent) => {
+  const handleDeviceConnected = useCallback(async (event: SyncthingEvent) => {
     console.log('设备已连接:', event.data);
     const messageId = `${event.id}-${event.globalID}-${Date.now()}-${Math.random()}`;
     const message = `设备 ${event.data.id} 已连接`;
@@ -484,10 +503,10 @@ function App() {
     removeNotificationAfterDelay(messageId, 3000);
 
     // 刷新设备列表
-    loadDevices();
-  }, [removeNotificationAfterDelay]);
+    await loadDevices();
+  }, [removeNotificationAfterDelay, loadDevices]);
 
-  const handleDeviceDisconnected = useCallback((event: SyncthingEvent) => {
+  const handleDeviceDisconnected = useCallback(async (event: SyncthingEvent) => {
     console.log('设备已断开:', event.data);
     const messageId = `${event.id}-${event.globalID}-${Date.now()}-${Math.random()}`;
     const message = `设备 ${event.data.id} 已断开连接`;
@@ -506,8 +525,8 @@ function App() {
     }]);
 
     removeNotificationAfterDelay(messageId, 3000);
-    loadDevices();
-  }, [removeNotificationAfterDelay]);
+    await loadDevices();
+  }, [removeNotificationAfterDelay, loadDevices]);
 
   const handleStateChanged = useCallback((event: SyncthingEvent) => {
     console.log('文件夹状态改变:', event.data);
@@ -593,6 +612,31 @@ function App() {
     removeNotificationAfterDelay(messageId, 3000);
   }, [removeNotificationAfterDelay]);
 
+  // 处理配置保存事件 - 当设备被移除时会触发此事件
+  const handleConfigSaved = useCallback(async (event: SyncthingEvent) => {
+    console.log('配置已保存:', event.data);
+    const messageId = `${event.id}-${event.globalID}-${Date.now()}-${Math.random()}`;
+    const message = `配置已保存`;
+
+    setEventNotifications(prev => [...prev, {
+      id: messageId,
+      message,
+      severity: 'success'
+    }]);
+
+    setMessageList(prev => [...prev, {
+      id: messageId,
+      message,
+      severity: 'success',
+      timestamp: new Date()
+    }]);
+
+    removeNotificationAfterDelay(messageId, 3000);
+
+    // 配置保存后刷新设备列表
+    await loadDevices();
+  }, [removeNotificationAfterDelay, loadDevices]);
+
   // 设置事件监听器
   useEffect(() => {
     eventService.addEventListener(EventTypes.DeviceConnected, handleDeviceConnected);
@@ -601,6 +645,7 @@ function App() {
     eventService.addEventListener(EventTypes.ItemFinished, handleItemFinished);
     eventService.addEventListener(EventTypes.FolderErrors, handleFolderErrors);
     eventService.addEventListener(EventTypes.Failure, handleFailure);
+    eventService.addEventListener(EventTypes.ConfigSaved, handleConfigSaved);
 
     // 启动事件监听
     eventService.start();
@@ -617,10 +662,11 @@ function App() {
       eventService.removeEventListener(EventTypes.ItemFinished, handleItemFinished);
       eventService.removeEventListener(EventTypes.FolderErrors, handleFolderErrors);
       eventService.removeEventListener(EventTypes.Failure, handleFailure);
+      eventService.removeEventListener(EventTypes.ConfigSaved, handleConfigSaved);
       eventService.stop();
       clearInterval(statusCheckInterval);
     };
-  }, [eventService, handleDeviceConnected, handleDeviceDisconnected, handleStateChanged, handleItemFinished, handleFolderErrors, handleFailure]);
+  }, [eventService, handleDeviceConnected, handleDeviceDisconnected, handleStateChanged, handleItemFinished, handleFolderErrors, handleFailure, handleConfigSaved]);
 
   useEffect(() => {
     loadDevices();
@@ -631,21 +677,7 @@ function App() {
     }, 30000);
 
     return () => clearInterval(interval);
-  }, []);
-
-  // 加载设备列表 - 使用原有的 API 服务 (8080 端口)
-  const loadDevices = async () => {
-    try {
-      const resp = await fetch('http://localhost:8080/api/devices');
-      if (!resp.ok) throw new Error('API 请求失败');
-      const result = await resp.json();
-      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
-      setDevices(result.data || []);
-    } catch (err) {
-      console.error('Failed to load devices:', err);
-      setDevices([]);
-    }
-  };
+  }, [loadDevices]);
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearchText(event.target.value);
