@@ -336,6 +336,7 @@ func main() {
 	app.Get("/api/folder/:folderId", folderFilesHandler)
 	app.Get("/api/devices", devicesHandler)
 	app.Get("/api/local-device-id", getLocalDeviceIDHandler)
+	app.Get("/api/wifi-info", getWifiInfoHandler)
 	app.Get("/api/device/:deviceId/folders", deviceFoldersHandler)
 	app.Post("/api/device/:deviceId/folders", deviceFoldersHandler)
 	app.Put("/api/device/:deviceId/folders/:folderId", deviceFoldersHandler)

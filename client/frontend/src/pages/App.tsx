@@ -39,7 +39,6 @@ import {
 import {
   Menu as MenuIcon,
   Search as SearchIcon,
-  Computer as ComputerIcon,
   Devices as DevicesIcon,
   Add as AddIcon,
   Wifi as WifiIcon,
@@ -313,27 +312,6 @@ function DeviceList({ devices, onDeviceClick, onAddDeviceClick }: {
 
   return (
     <List>
-      <ListItemButton onClick={() => onDeviceClick({
-        deviceID: 'local',
-        name: '本机',
-        addresses: [],
-        compression: '',
-        certName: '',
-        introducer: false,
-        connected: true,
-        connectionType: 'local',
-        clientVersion: '',
-        inBytesTotal: 0,
-        outBytesTotal: 0,
-        isLocalNetwork: true,
-        crypto: ''
-      } as Device)}>
-        <ListItemIcon>
-          <ComputerIcon />
-        </ListItemIcon>
-        <ListItemText primary="本机" />
-      </ListItemButton>
-      <Divider />
       {devices.map((device) => (
         <ListItemButton
           key={device.deviceID}
@@ -445,6 +423,7 @@ function App() {
   });
   const [discoveryUnknown, setDiscoveryUnknown] = useState<string[]>([]);
   const [nearbyDevices, setNearbyDevices] = useState<Array<{ id: string, name?: string }>>([]);
+  const [wifiName, setWifiName] = useState<string>('');
   const navigate = useNavigate();
 
   // 事件处理函数
@@ -459,6 +438,24 @@ function App() {
     }, delay);
   }, []);
 
+
+
+  // 获取WiFi信息
+  const getWifiInfo = useCallback(async () => {
+    try {
+      const response = await fetch('http://localhost:8080/api/wifi-info');
+      if (response.ok) {
+        const result = await response.json();
+        if (result.code === 0) {
+          setWifiName(result.data.wifiName);
+        }
+      }
+    } catch (error) {
+      console.error('获取WiFi信息失败:', error);
+      setWifiName('获取失败');
+    }
+  }, []);
+
   // 加载设备列表 - 使用原有的 API 服务 (8080 端口)
   const loadDevices = useCallback(async () => {
     try {
@@ -469,6 +466,7 @@ function App() {
       if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
       const devicesData = result.data || [];
       console.log('设备列表加载成功，设备数量:', devicesData.length);
+      
       setDevices(devicesData);
       return devicesData;
     } catch (err) {
@@ -668,16 +666,26 @@ function App() {
     };
   }, [eventService, handleDeviceConnected, handleDeviceDisconnected, handleStateChanged, handleItemFinished, handleFolderErrors, handleFailure, handleConfigSaved]);
 
+  // 加载设备列表和WiFi信息
   useEffect(() => {
     loadDevices();
+    getWifiInfo();
 
     // 每30秒自动刷新设备列表以更新连接状态
     const interval = setInterval(() => {
       loadDevices();
     }, 30000);
 
-    return () => clearInterval(interval);
-  }, [loadDevices]);
+    // 每60秒刷新WiFi信息
+    const wifiInterval = setInterval(() => {
+      getWifiInfo();
+    }, 60000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(wifiInterval);
+    };
+  }, [loadDevices, getWifiInfo]);
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearchText(event.target.value);
@@ -1003,15 +1011,31 @@ function App() {
       {/* 顶部 AppBar */}
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
         <Toolbar>
-          <Typography
-            variant="h6"
-            noWrap
-            component="div"
-            sx={{ flexGrow: 0, mr: 2, cursor: 'pointer' }}
-            onClick={() => navigate('/')}
-          >
-            MyData
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', flexGrow: 0, mr: 2 }}>
+            <Typography
+              variant="h6"
+              noWrap
+              component="div"
+              sx={{ cursor: 'pointer' }}
+              onClick={() => navigate('/')}
+            >
+              我的数据
+            </Typography>
+            {wifiName && (
+              <Typography
+                variant="caption"
+                sx={{ 
+                  ml: 1, 
+                  color: 'rgba(255, 255, 255, 0.7)',
+                  fontSize: '0.75rem',
+                  fontWeight: 400,
+                  marginTop: 1
+                }}
+              >
+                当前wifi: {wifiName}
+              </Typography>
+            )}
+          </Box>
           <TextField
             size="small"
             placeholder="搜索设备..."

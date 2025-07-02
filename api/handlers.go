@@ -10,8 +10,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -972,10 +974,22 @@ func getDevicesFromSyncthing() ([]Device, error) {
 		fmt.Printf("设备发现信息: %+v\n", discoveryInfo)
 	}
 
+	// 获取本机设备ID
+	localDeviceID, err := getLocalDeviceID()
+	if err != nil {
+		fmt.Printf("获取本机设备ID失败: %v\n", err)
+		localDeviceID = ""
+	} else {
+		fmt.Printf("本机设备ID: %s\n", localDeviceID)
+	}
+
 	// 将连接信息和发现信息合并到设备信息中
 	fmt.Printf("\n正在合并连接信息到设备列表...\n")
 	for i, device := range devices {
 		var addresses []string
+
+		// 检查是否为本机设备
+		isLocalDevice := localDeviceID != "" && device.DeviceID == localDeviceID
 
 		// 1. 从连接状态获取地址和连接信息
 		if conn, exists := connections[device.DeviceID]; exists {
@@ -993,6 +1007,16 @@ func getDevicesFromSyncthing() ([]Device, error) {
 			if conn.Connected && conn.Primary.Address != "" && conn.Primary.Address != conn.Address {
 				addresses = append(addresses, conn.Primary.Address)
 			}
+		} else if isLocalDevice {
+			// 本机设备特殊处理：设置为在线状态
+			devices[i].Connected = true
+			devices[i].ConnectionType = "local"
+			devices[i].ClientVersion = "local"
+			devices[i].InBytesTotal = 0
+			devices[i].OutBytesTotal = 0
+			devices[i].IsLocalNetwork = true
+			devices[i].Crypto = "local"
+			fmt.Printf("  本机设备 %s 设置为在线状态\n", device.Name)
 		}
 
 		// 2. 从设备发现信息获取地址
@@ -1009,6 +1033,15 @@ func getDevicesFromSyncthing() ([]Device, error) {
 						}
 					}
 				}
+			}
+		}
+
+		// 为本机设备添加本地地址
+		if isLocalDevice {
+			localIPs, err := getLocalNetworkIPs()
+			if err == nil && len(localIPs) > 0 {
+				addresses = append(addresses, localIPs...)
+				fmt.Printf("  为本机设备添加本地地址: %v\n", localIPs)
 			}
 		}
 
@@ -1476,4 +1509,120 @@ func removeSyncthingDevice(deviceID string) error {
 
 	fmt.Printf("✅ Syncthing API 移除设备成功: %s\n", deviceID)
 	return nil
+}
+
+// 获取当前WiFi信息
+func getWifiInfoHandler(c *fiber.Ctx) error {
+	fmt.Printf("=== 获取WiFi信息 ===\n")
+
+	var wifiName string
+	var err error
+
+	// 根据操作系统获取WiFi信息
+	switch runtime.GOOS {
+	case "linux":
+		wifiName, err = getWifiInfoLinux()
+	case "darwin":
+		wifiName, err = getWifiInfoDarwin()
+	case "windows":
+		wifiName, err = getWifiInfoWindows()
+	default:
+		wifiName = "未知系统"
+	}
+
+	if err != nil {
+		fmt.Printf("获取WiFi信息失败: %v\n", err)
+		return success(c, map[string]interface{}{
+			"wifiName": "获取失败",
+			"error":    err.Error(),
+		})
+	}
+
+	fmt.Printf("成功获取WiFi名称: %s\n", wifiName)
+	return success(c, map[string]interface{}{
+		"wifiName": wifiName,
+	})
+}
+
+// Linux系统获取WiFi信息
+func getWifiInfoLinux() (string, error) {
+	// 尝试使用iwgetid命令获取当前WiFiSSID
+	cmd := exec.Command("iwgetid", "-r")
+	output, err := cmd.Output()
+	if err == nil {
+		wifiName := strings.TrimSpace(string(output))
+		if wifiName != "" {
+			return wifiName, nil
+		}
+	}
+
+	// 如果iwgetid失败，尝试使用nmcli命令
+	cmd = exec.Command("nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi")
+	output, err = cmd.Output()
+	if err == nil {
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "yes:") {
+				parts := strings.Split(line, ":")
+				if len(parts) >= 2 {
+					wifiName := strings.TrimSpace(parts[1])
+					if wifiName != "" {
+						return wifiName, nil
+					}
+				}
+			}
+		}
+	}
+
+	return "未连接", nil
+}
+
+// macOS系统获取WiFi信息
+func getWifiInfoDarwin() (string, error) {
+	cmd := exec.Command("/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport", "-I")
+	output, err := cmd.Output()
+	if err != nil {
+		return "未连接", err
+	}
+
+	// 解析输出查找SSID
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, " SSID:") {
+			parts := strings.Split(line, ":")
+			if len(parts) >= 2 {
+				wifiName := strings.TrimSpace(parts[1])
+				if wifiName != "" {
+					return wifiName, nil
+				}
+			}
+		}
+	}
+
+	return "未连接", nil
+}
+
+// Windows系统获取WiFi信息
+func getWifiInfoWindows() (string, error) {
+	cmd := exec.Command("netsh", "wlan", "show", "interfaces")
+	output, err := cmd.Output()
+	if err != nil {
+		return "未连接", err
+	}
+
+	// 解析输出查找SSID
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "SSID") && strings.Contains(line, ":") {
+			parts := strings.Split(line, ":")
+			if len(parts) >= 2 {
+				wifiName := strings.TrimSpace(parts[1])
+				if wifiName != "" && wifiName != "BSSID" {
+					return wifiName, nil
+				}
+			}
+		}
+	}
+
+	return "未连接", nil
 }
