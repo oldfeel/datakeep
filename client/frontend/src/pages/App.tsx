@@ -289,6 +289,13 @@ function DeviceList({ devices, onDeviceClick, onAddDeviceClick }: {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  // 判断是否为本机设备
+  const isLocalDevice = (device: Device) => {
+    return device.connectionType === 'local' || 
+           device.clientVersion === 'local' || 
+           device.crypto === 'local';
+  };
+
   // 获取连接状态图标
   const getConnectionIcon = (device: Device) => {
     if (device.connected) {
@@ -300,6 +307,7 @@ function DeviceList({ devices, onDeviceClick, onAddDeviceClick }: {
 
   // 获取连接类型显示文本
   const getConnectionTypeText = (device: Device) => {
+    if (isLocalDevice(device)) return '本机设备';
     if (!device.connected) return '离线';
     if (device.isLocalNetwork) return '本地连接';
     switch (device.connectionType) {
@@ -310,79 +318,119 @@ function DeviceList({ devices, onDeviceClick, onAddDeviceClick }: {
     }
   };
 
+  // 获取设备显示名称
+  const getDeviceDisplayName = (device: Device) => {
+    if (isLocalDevice(device)) {
+      return '本机设备';
+    }
+    return device.name || device.deviceID;
+  };
+
   return (
     <List>
-      {devices.map((device) => (
-        <ListItemButton
-          key={device.deviceID}
-          onClick={() => onDeviceClick(device)}
-          sx={{ flexDirection: 'column', alignItems: 'flex-start', py: 2 }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', mb: 1 }}>
-            <ListItemIcon sx={{ minWidth: 40 }}>
-              <Badge
-                badgeContent={device.connected ? '在线' : '离线'}
-                color={device.connected ? 'success' : 'error'}
-                sx={{
-                  '& .MuiBadge-badge': {
-                    fontSize: '0.6rem',
-                    height: '16px',
-                    minWidth: '16px',
-                  }
-                }}
-              >
-                {getConnectionIcon(device)}
-              </Badge>
-            </ListItemIcon>
-            <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography variant="body1" component="span">
-                {device.name || device.deviceID}
-              </Typography>
-              <Chip
-                size="small"
-                label={getConnectionTypeText(device)}
-                color={device.connected ? 'success' : 'default'}
-                variant={device.connected ? 'filled' : 'outlined'}
-                sx={{ fontSize: '0.7rem', height: '20px' }}
-              />
+      {devices.map((device) => {
+        const isLocal = isLocalDevice(device);
+        return (
+          <ListItemButton
+            key={device.deviceID}
+            onClick={() => onDeviceClick(device)}
+            sx={{ 
+              flexDirection: 'column', 
+              alignItems: 'flex-start', 
+              py: 2,
+              // 为本机设备添加特殊样式
+              ...(isLocal && {
+                backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                borderLeft: '4px solid #1976d2',
+                '&:hover': {
+                  backgroundColor: 'rgba(25, 118, 210, 0.12)',
+                }
+              })
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', mb: 1 }}>
+              <ListItemIcon sx={{ minWidth: 40 }}>
+                <Badge
+                  color={isLocal ? 'primary' : (device.connected ? 'success' : 'error')}
+                  sx={{
+                    '& .MuiBadge-badge': {
+                      fontSize: '0.6rem',
+                      height: '16px',
+                      minWidth: '16px',
+                    }
+                  }}
+                >
+                  {getConnectionIcon(device)}
+                </Badge>
+              </ListItemIcon>
+              <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography 
+                  variant="body1" 
+                  component="span"
+                  sx={{
+                    fontWeight: isLocal ? 'bold' : 'normal',
+                    color: isLocal ? 'primary.main' : 'inherit'
+                  }}
+                >
+                  {getDeviceDisplayName(device)}
+                </Typography>
+                <Chip
+                  size="small"
+                  label={getConnectionTypeText(device)}
+                  color={isLocal ? 'primary' : (device.connected ? 'success' : 'default')}
+                  variant={isLocal ? 'filled' : (device.connected ? 'filled' : 'outlined')}
+                  sx={{ 
+                    fontSize: '0.7rem', 
+                    height: '20px',
+                    fontWeight: isLocal ? 'bold' : 'normal'
+                  }}
+                />
+              </Box>
             </Box>
-          </Box>
 
-          <Box sx={{ pl: 6, width: '100%' }}>
-            {device.connected && (
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-                <Typography variant="caption" color="text.secondary" component="span">
-                  接收: {formatBytes(device.inBytesTotal)}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" component="span">
-                  发送: {formatBytes(device.outBytesTotal)}
-                </Typography>
-              </Box>
-            )}
-            {device.addresses && device.addresses.length > 0 && (
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                {device.addresses.slice(0, 2).map((addr, index) => (
-                  <Chip
-                    key={index}
-                    size="small"
-                    label={addr}
-                    variant="outlined"
-                    sx={{ fontSize: '0.7rem' }}
-                  />
-                ))}
-                {device.addresses.length > 2 && (
-                  <Chip
-                    size="small"
-                    label={`+${device.addresses.length - 2} 更多`}
-                    variant="outlined"
-                    sx={{ fontSize: '0.7rem' }}
-                  />
-                )}
-              </Box>
-            )}
-          </Box>
-        </ListItemButton>
-      ))}
+            <Box sx={{ pl: 6, width: '100%' }}>
+              {device.connected && !isLocal && (
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+                  <Typography variant="caption" color="text.secondary" component="span">
+                    接收: {formatBytes(device.inBytesTotal)}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" component="span">
+                    发送: {formatBytes(device.outBytesTotal)}
+                  </Typography>
+                </Box>
+              )}
+              {isLocal && (
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+                  <Typography variant="caption" color="primary.main" component="span">
+                    本地设备 - 无需网络连接
+                  </Typography>
+                </Box>
+              )}
+              {device.addresses && device.addresses.length > 0 && !isLocal && (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {device.addresses.slice(0, 2).map((addr, index) => (
+                    <Chip
+                      key={index}
+                      size="small"
+                      label={addr}
+                      variant="outlined"
+                      sx={{ fontSize: '0.7rem' }}
+                    />
+                  ))}
+                  {device.addresses.length > 2 && (
+                    <Chip
+                      size="small"
+                      label={`+${device.addresses.length - 2} 更多`}
+                      variant="outlined"
+                      sx={{ fontSize: '0.7rem' }}
+                    />
+                  )}
+                </Box>
+              )}
+            </Box>
+          </ListItemButton>
+        );
+      })}
       <Divider />
       <ListItem>
         <Button
