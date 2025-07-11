@@ -53,6 +53,7 @@ import {
 } from '@mui/icons-material';
 import DeviceDetail from './DeviceDetail';
 import FolderDetail from './FolderDetail';
+import FilePreview from './FilePreview';
 import './App.css';
 
 // Syncthing 事件类型定义
@@ -1178,6 +1179,7 @@ function App() {
           <Route path="/" element={<Navigate to="/device/local" replace />} />
           <Route path="/device/:deviceId" element={<DeviceDetail />} />
           <Route path="/folder/:deviceId/:folderId" element={<FolderDetail />} />
+        <Route path="/preview/:deviceId/:folderId/:filePath" element={<FilePreview />} />
         </Routes>
       </Box>
 

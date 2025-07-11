@@ -63,6 +63,7 @@ func AndroidMain() {
 
 	// API 路由
 	app.Get("/api/folder/:folderId", folderFilesHandler)
+	app.Get("/api/folder/:folderId/preview", filePreviewHandler)
 	app.Get("/api/devices", devicesHandler)
 	app.Get("/api/device/:deviceId/folders", deviceFoldersHandler)
 

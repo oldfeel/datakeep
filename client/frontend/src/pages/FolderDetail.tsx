@@ -119,6 +119,7 @@ const getFileIcon = (fileName: string) => {
 function FolderDetail() {
   const { deviceId, folderId } = useParams<{ deviceId: string; folderId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,10 +128,27 @@ function FolderDetail() {
   const [folderInfo, setFolderInfo] = useState<{ id: string; label: string; path: string } | null>(null);
   const [device, setDevice] = useState<Device | null>(null);
 
-  // 切换 deviceId 或 folderId 时重置路径
+  // 从 URL 参数中读取路径
   useEffect(() => {
-    setCurrentPath([]);
-  }, [deviceId, folderId]);
+    const pathParam = searchParams.get('path');
+    console.log('URL path parameter:', pathParam);
+    if (pathParam) {
+      const pathSegments = pathParam.split('/').filter(segment => segment.length > 0);
+      console.log('Parsed path segments:', pathSegments);
+      setCurrentPath(pathSegments);
+    } else {
+      console.log('No path parameter, setting empty path');
+      setCurrentPath([]);
+    }
+  }, [searchParams]);
+
+  // 切换 deviceId 或 folderId 时重置路径（但只在没有 path 参数时）
+  useEffect(() => {
+    const pathParam = searchParams.get('path');
+    if (!pathParam) {
+      setCurrentPath([]);
+    }
+  }, [deviceId, folderId, searchParams]);
 
   // 加载设备名称和文件夹信息
   useEffect(() => {
@@ -183,30 +201,8 @@ function FolderDetail() {
       // 加载文件夹信息
       try {
         let apiUrl: string;
-        if (deviceId === 'local') {
-          // 本地设备，使用本地 API
-          apiUrl = `http://localhost:8080/api/device/${deviceId}/folders`;
-        } else if (device && device.addresses && device.addresses.length > 0) {
-          // 远程设备，现在地址已经是纯IP地址
-          const ipAddresses = device.addresses.filter(addr => {
-            // 过滤出有效的IPv4地址
-            const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
-            return ipv4Regex.test(addr) &&
-              !addr.includes('[') &&
-              !addr.includes('relay://') &&
-              !addr.includes('quic://');
-          });
-
-          if (ipAddresses.length > 0) {
-            // 直接使用第一个IP地址
-            const remoteIp = ipAddresses[0];
-            apiUrl = `http://${remoteIp}:8080/api/device/${deviceId}/folders`;
-          } else {
-            throw new Error('设备没有可用的 IPv4 地址');
-          }
-        } else {
-          throw new Error('设备未连接或没有可用地址');
-        }
+        // 对于 Syncthing 文件夹，总是使用本地 API
+        apiUrl = `http://localhost:8080/api/device/${deviceId}/folders`;
 
         console.log('Fetching folders from:', apiUrl);
         const resp = await fetch(apiUrl);
@@ -226,6 +222,7 @@ function FolderDetail() {
 
   useEffect(() => {
     if (folderId && device) {
+      console.log('loadFiles triggered - currentPath:', currentPath);
       loadFiles();
     }
   }, [folderId, currentPath, device]);
@@ -240,32 +237,14 @@ function FolderDetail() {
 
       // 构建 API URL
       let apiUrl: string;
-      if (deviceId === 'local') {
-        // 本地设备，使用本地 API
+      // 对于 Syncthing 文件夹，总是使用本地 API
+      if (path) {
         apiUrl = `http://localhost:8080/api/folder/${encodeURIComponent(folderId)}?path=${encodeURIComponent(path)}`;
-      } else if (device && device.addresses && device.addresses.length > 0) {
-        // 远程设备，现在地址已经是纯IP地址
-        const ipAddresses = device.addresses.filter(addr => {
-          // 过滤出有效的IPv4地址
-          const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
-          return ipv4Regex.test(addr) &&
-            !addr.includes('[') &&
-            !addr.includes('relay://') &&
-            !addr.includes('quic://');
-        });
-
-        if (ipAddresses.length > 0) {
-          // 直接使用第一个IP地址
-          const remoteIp = ipAddresses[0];
-          apiUrl = `http://${remoteIp}:8080/api/folder/${encodeURIComponent(folderId)}?path=${encodeURIComponent(path)}`;
-        } else {
-          throw new Error('设备没有可用的 IPv4 地址');
-        }
       } else {
-        throw new Error('设备未连接或没有可用地址');
+        apiUrl = `http://localhost:8080/api/folder/${encodeURIComponent(folderId)}`;
       }
 
-      console.log('Fetching files from:', apiUrl);
+      console.log('Fetching files from:', apiUrl, 'currentPath:', currentPath, 'path:', path);
       const resp = await fetch(apiUrl);
       if (!resp.ok) throw new Error('API 请求失败');
       const result = await resp.json();
@@ -281,16 +260,18 @@ function FolderDetail() {
 
   const handleFileClick = (file: File) => {
     if (isDirectory(file)) {
-      setCurrentPath([...currentPath, file.name]);
+      const newPath = [...currentPath, file.name];
+      const pathString = newPath.join('/');
+      navigate(`/folder/${deviceId}/${folderId}?path=${encodeURIComponent(pathString)}`);
     } else {
-      // TODO: 处理文件点击，例如预览或下载
-      console.log('File clicked:', file);
+      // 跳转到文件预览页面
+      const fullPath = currentPath.length > 0 ? `${currentPath.join('/')}/${file.name}` : file.name;
+      const encodedPath = encodeURIComponent(fullPath);
+      navigate(`/preview/${deviceId}/${folderId}/${encodedPath}`);
     }
   };
 
-  const handleBreadcrumbClick = (index: number) => {
-    setCurrentPath(currentPath.slice(0, index + 1));
-  };
+
 
   const formatFileSize = (size: number) => {
     if (size === 0) return '0 B';
@@ -338,39 +319,49 @@ function FolderDetail() {
 
       {/* 面包屑导航 */}
       <Breadcrumbs sx={{ mb: 2 }}>
-        <MuiLink
-          component={Link}
-          to="/"
-          sx={{ textDecoration: 'none' }}
-        >
-          设备
+        <MuiLink component={Link} to="/" sx={{ textDecoration: 'none', color: 'inherit' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <HomeIcon fontSize="small" />
+            <Typography color="text.primary">首页</Typography>
+          </Box>
         </MuiLink>
-        <MuiLink
-          component={Link}
-          to={`/device/${deviceId}`}
-          sx={{ textDecoration: 'none' }}
-        >
+        <MuiLink component={Link} to={`/device/${deviceId}`} sx={{ textDecoration: 'none', color: 'inherit' }}>
           {deviceName}
         </MuiLink>
-        <MuiLink
-          component="button"
-          variant="body1"
-          onClick={() => setCurrentPath([])}
-          sx={{ textDecoration: 'none', display: 'flex', alignItems: 'center' }}
-        >
+        <MuiLink component={Link} to={`/folder/${deviceId}/${folderId}`} sx={{ textDecoration: 'none', color: 'inherit' }}>
           {folderInfo?.label || '根目录'}
         </MuiLink>
-        {currentPath.map((path, index) => (
-          <MuiLink
-            key={index}
-            component="button"
-            variant="body1"
-            onClick={() => handleBreadcrumbClick(index)}
-            sx={{ textDecoration: 'none' }}
-          >
-            {path}
-          </MuiLink>
-        ))}
+        
+        {/* 动态生成路径层级 */}
+        {currentPath.map((segment, index) => {
+          const isLast = index === currentPath.length - 1;
+          const currentPathString = currentPath.slice(0, index + 1).join('/');
+          
+          console.log(`Breadcrumb segment ${index}:`, segment, 'path:', currentPathString, 'isLast:', isLast);
+          
+          if (isLast) {
+            // 最后一个段是当前目录，不显示链接
+            return (
+              <Typography key={index} color="text.primary">
+                {segment}
+              </Typography>
+            );
+          } else {
+            // 中间的路径段，显示为可点击的链接
+            const linkUrl = `/folder/${deviceId}/${folderId}?path=${encodeURIComponent(currentPathString)}`;
+            console.log(`Breadcrumb link ${index}:`, linkUrl);
+            return (
+              <MuiLink
+                key={index}
+                component={Link}
+                to={linkUrl}
+                sx={{ textDecoration: 'none', color: 'inherit' }}
+              >
+                {segment}
+              </MuiLink>
+            );
+          }
+        })}
       </Breadcrumbs>
 
       {/* 文件列表 */}

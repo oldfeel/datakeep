@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -659,12 +660,16 @@ func folderFilesHandler(c *fiber.Ctx) error {
 
 	var files []File
 	if path == "" || path == "." {
+		// 查询根目录：只显示不包含路径分隔符的文件和目录
 		query := "%" + string(filepath.Separator) + "%"
 		fmt.Printf("查询根目录，SQL条件: folder_id = %s AND path NOT LIKE %s\n", decodedFolderId, query)
 		err = db.Where("folder_id = ? AND path NOT LIKE ?", decodedFolderId, query).Find(&files).Error
 	} else {
+		// 查询子目录：只显示指定路径下的直接子文件和子目录
+		// 例如：path="云面签"时，只显示"云面签/文件名"或"云面签/目录名"
 		prefix := path + string(filepath.Separator)
-		excludePattern := prefix + "%" + string(filepath.Separator) + "%" + string(filepath.Separator) + "%"
+		// 排除更深层的路径，如"云面签/子目录/文件"
+		excludePattern := prefix + "%" + string(filepath.Separator) + "%"
 		fmt.Printf("查询子目录，SQL条件: folder_id = %s AND path LIKE %s AND path NOT LIKE %s\n", decodedFolderId, prefix+"%", excludePattern)
 		err = db.Where("folder_id = ? AND path LIKE ? AND path NOT LIKE ?", decodedFolderId, prefix+"%", excludePattern).Find(&files).Error
 	}
@@ -1625,4 +1630,230 @@ func getWifiInfoWindows() (string, error) {
 	}
 
 	return "未连接", nil
+}
+
+// 文件预览处理器
+func filePreviewHandler(c *fiber.Ctx) error {
+	folderID := c.Params("folderId")
+	if folderID == "" {
+		return fail(c, 400, "文件夹ID不能为空")
+	}
+
+	filePath := c.Query("path")
+	if filePath == "" {
+		return fail(c, 400, "文件路径不能为空")
+	}
+
+	// 添加URL解码调试信息
+	fmt.Printf("原始URL路径参数: %s\n", filePath)
+	// 尝试URL解码
+	if decodedPath, err := url.QueryUnescape(filePath); err == nil {
+		fmt.Printf("URL解码后路径: %s\n", decodedPath)
+		filePath = decodedPath
+	} else {
+		fmt.Printf("URL解码失败: %v，使用原始路径\n", err)
+	}
+
+	// 获取文件夹信息
+	folders, err := loadFoldersFromSyncthing()
+	if err != nil {
+		fmt.Printf("从 Syncthing API 获取文件夹信息失败: %v，尝试从配置文件读取\n", err)
+		// 回退到从配置文件读取
+		loadFoldersFromConfig()
+		folders = folders // 使用全局变量
+	}
+
+	fmt.Printf("获取到 %d 个文件夹\n", len(folders))
+	for _, folder := range folders {
+		fmt.Printf("文件夹: ID=%s, 路径=%s\n", folder.ID, folder.Path)
+	}
+
+	var targetFolder *FolderEntry
+	for _, folder := range folders {
+		if folder.ID == folderID {
+			targetFolder = &folder
+			break
+		}
+	}
+
+	if targetFolder == nil {
+		fmt.Printf("未找到文件夹: %s\n", folderID)
+		return fail(c, 404, "文件夹不存在")
+	}
+
+	fmt.Printf("找到目标文件夹: ID=%s, 路径=%s\n", targetFolder.ID, targetFolder.Path)
+
+	// 构建完整的文件路径，展开 ~ 符号
+	expandedFolderPath := expandPath(targetFolder.Path)
+	fullPath := filepath.Join(expandedFolderPath, filePath)
+
+	fmt.Printf("原始文件夹路径: %s\n", targetFolder.Path)
+	fmt.Printf("展开后文件夹路径: %s\n", expandedFolderPath)
+	fmt.Printf("完整文件路径: %s\n", fullPath)
+
+	// 添加调试日志
+	fmt.Printf("文件预览请求 - 文件夹ID: %s, 文件路径: %s\n", folderID, filePath)
+	fmt.Printf("文件夹路径: %s\n", targetFolder.Path)
+	fmt.Printf("完整文件路径: %s\n", fullPath)
+
+	// 安全检查：确保文件路径在文件夹内
+	absFolderPath, err := filepath.Abs(expandPath(targetFolder.Path))
+	if err != nil {
+		fmt.Printf("获取文件夹绝对路径失败: %v\n", err)
+		return fail(c, 500, "获取文件夹绝对路径失败: "+err.Error())
+	}
+
+	absFilePath, err := filepath.Abs(fullPath)
+	if err != nil {
+		fmt.Printf("获取文件绝对路径失败: %v\n", err)
+		return fail(c, 500, "获取文件绝对路径失败: "+err.Error())
+	}
+
+	fmt.Printf("文件夹绝对路径: %s\n", absFolderPath)
+	fmt.Printf("文件绝对路径: %s\n", absFilePath)
+
+	// 检查文件路径是否在文件夹内
+	if !strings.HasPrefix(absFilePath, absFolderPath) {
+		fmt.Printf("路径安全检查失败: 文件路径不在文件夹内\n")
+		return fail(c, 403, "访问被拒绝：文件路径不在文件夹内")
+	}
+
+	// 检查文件是否存在
+	fmt.Printf("尝试访问文件: %s\n", fullPath)
+
+	// 先检查文件夹是否存在
+	if folderInfo, err := os.Stat(expandedFolderPath); err != nil {
+		fmt.Printf("文件夹不存在: %s, 错误: %v\n", expandedFolderPath, err)
+		return fail(c, 404, "文件夹不存在")
+	} else {
+		fmt.Printf("文件夹存在: %s, 权限: %v\n", expandedFolderPath, folderInfo.Mode())
+	}
+
+	fileInfo, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("文件不存在: %s\n", fullPath)
+			// 列出文件夹内容以帮助调试
+			if files, err := os.ReadDir(expandedFolderPath); err == nil {
+				fmt.Printf("文件夹内容:\n")
+				for _, file := range files {
+					fmt.Printf("  - %s (目录: %v)\n", file.Name(), file.IsDir())
+				}
+			}
+			return fail(c, 404, "文件不存在")
+		}
+		fmt.Printf("检查文件失败: %v\n", err)
+		return fail(c, 500, "检查文件失败: "+err.Error())
+	}
+
+	// 检查是否为目录
+	if fileInfo.IsDir() {
+		return fail(c, 400, "不能预览目录")
+	}
+
+	// 获取文件扩展名
+	ext := strings.ToLower(filepath.Ext(fullPath))
+
+	// 根据文件类型设置不同的 Content-Type
+	var contentType string
+	switch ext {
+	case ".jpg", ".jpeg":
+		contentType = "image/jpeg"
+	case ".png":
+		contentType = "image/png"
+	case ".gif":
+		contentType = "image/gif"
+	case ".bmp":
+		contentType = "image/bmp"
+	case ".svg":
+		contentType = "image/svg+xml"
+	case ".webp":
+		contentType = "image/webp"
+	case ".pdf":
+		contentType = "application/pdf"
+	case ".mp4":
+		contentType = "video/mp4"
+	case ".avi":
+		contentType = "video/x-msvideo"
+	case ".mov":
+		contentType = "video/quicktime"
+	case ".webm":
+		contentType = "video/webm"
+	case ".mp3":
+		contentType = "audio/mpeg"
+	case ".wav":
+		contentType = "audio/wav"
+	case ".ogg":
+		contentType = "audio/ogg"
+	case ".txt", ".md":
+		contentType = "text/plain; charset=utf-8"
+	case ".json":
+		contentType = "application/json"
+	case ".xml":
+		contentType = "application/xml"
+	case ".html", ".htm":
+		contentType = "text/html; charset=utf-8"
+	case ".css":
+		contentType = "text/css"
+	case ".js":
+		contentType = "application/javascript"
+	case ".py":
+		contentType = "text/plain; charset=utf-8"
+	case ".java":
+		contentType = "text/plain; charset=utf-8"
+	case ".cpp", ".c":
+		contentType = "text/plain; charset=utf-8"
+	case ".go":
+		contentType = "text/plain; charset=utf-8"
+	case ".rs":
+		contentType = "text/plain; charset=utf-8"
+	case ".php":
+		contentType = "text/plain; charset=utf-8"
+	case ".rb":
+		contentType = "text/plain; charset=utf-8"
+	case ".swift":
+		contentType = "text/plain; charset=utf-8"
+	case ".kt":
+		contentType = "text/plain; charset=utf-8"
+	case ".dart":
+		contentType = "text/plain; charset=utf-8"
+	default:
+		// 对于未知类型，尝试读取文件头来判断
+		file, err := os.Open(fullPath)
+		if err != nil {
+			return fail(c, 500, "打开文件失败: "+err.Error())
+		}
+		defer file.Close()
+
+		// 读取文件头
+		buffer := make([]byte, 512)
+		n, err := file.Read(buffer)
+		if err != nil && err != io.EOF {
+			return fail(c, 500, "读取文件失败: "+err.Error())
+		}
+
+		// 使用 http.DetectContentType 检测类型
+		contentType = http.DetectContentType(buffer[:n])
+	}
+
+	// 设置响应头
+	c.Set("Content-Type", contentType)
+	c.Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filepath.Base(fullPath)))
+
+	// 对于文本文件，读取内容并返回
+	if strings.HasPrefix(contentType, "text/") ||
+		contentType == "application/json" ||
+		contentType == "application/xml" ||
+		contentType == "application/javascript" {
+
+		content, err := ioutil.ReadFile(fullPath)
+		if err != nil {
+			return fail(c, 500, "读取文件内容失败: "+err.Error())
+		}
+
+		return c.Send(content)
+	}
+
+	// 对于二进制文件（图片、视频、音频等），直接发送文件
+	return c.SendFile(fullPath)
 }

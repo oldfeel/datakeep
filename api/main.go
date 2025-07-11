@@ -334,6 +334,7 @@ func main() {
 		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
 	}))
 	app.Get("/api/folder/:folderId", folderFilesHandler)
+	app.Get("/api/folder/:folderId/preview", filePreviewHandler)
 	app.Get("/api/devices", devicesHandler)
 	app.Get("/api/local-device-id", getLocalDeviceIDHandler)
 	app.Get("/api/wifi-info", getWifiInfoHandler)
