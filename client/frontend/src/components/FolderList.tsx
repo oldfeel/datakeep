@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     Box,
     Button,
@@ -36,6 +37,7 @@ export default function FolderList({
     deviceId,
     onRefresh
 }: FolderListProps) {
+    const navigate = useNavigate();
     const [editDialogOpen, setEditDialogOpen] = useState(false);
     const [selectedFolder, setSelectedFolder] = useState<Folder | null>(null);
     const [isAddMode, setIsAddMode] = useState(false);
@@ -79,6 +81,13 @@ export default function FolderList({
             return folder.sharedDevices.map(deviceId => getDeviceName(deviceId));
         }
         return [];
+    };
+
+    // 处理文件夹卡片点击
+    const handleFolderClick = (folder: Folder) => {
+        console.log('点击文件夹:', folder);
+        // 跳转到文件夹详情页面
+        navigate(`/folder/${deviceId}/${folder.id}`);
     };
 
     const handleEditFolder = (folder: Folder, event: React.MouseEvent) => {
@@ -242,12 +251,14 @@ export default function FolderList({
                                     height: '100%',
                                     display: 'flex',
                                     flexDirection: 'column',
+                                    cursor: 'pointer',
                                     '&:hover': {
                                         boxShadow: 3,
                                         transform: 'translateY(-2px)',
                                         transition: 'all 0.2s ease-in-out'
                                     }
                                 }}
+                                onClick={() => handleFolderClick(folder)}
                             >
                                 <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                                     {/* 文件夹标题和操作按钮 */}
