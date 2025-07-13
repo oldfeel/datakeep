@@ -129,7 +129,6 @@
         </activity>
         <activity android:name=".activities.FileListActivity" />
         <service android:name=".service.SyncthingService" />
-        <service android:name=".service.MyDataApiService" />
         <receiver android:name=".receiver.BootReceiver"
             android:exported="false">
             <intent-filter>
