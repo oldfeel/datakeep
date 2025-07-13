@@ -25,6 +25,8 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.nutomic.syncthingandroid.util.NetworkUtils;
+
 import javax.inject.Inject;
 
 /**
@@ -153,6 +155,11 @@ public class SyncthingService extends Service {
     private StartupTask mStartupTask = null;
     private Thread mSyncthingRunnableThread = null;
     private Handler mHandler;
+    
+    // AndServer HTTP 服务器
+    private @Nullable ApiController mHttpServer = null;
+    private @Nullable ApiController mApiController = null;
+    private static final int HTTP_SERVER_PORT = 8080;
 
     private final HashSet<OnServiceStateChangeListener> mOnServiceStateChangeListeners = new HashSet<>();
     private final HashSet<OnRunConditionCheckResultListener> mOnRunConditionCheckResultListeners = new HashSet<>();
@@ -459,6 +466,9 @@ public class SyncthingService extends Service {
             mEventProcessor = new EventProcessor(SyncthingService.this, mApi);
             mEventProcessor.start();
         }
+        
+        // 启动 HTTP 服务器
+        startHttpServer();
     }
 
     @Override
@@ -527,6 +537,9 @@ public class SyncthingService extends Service {
             mApi.shutdown();
             mApi = null;
         }
+        
+        // 停止 HTTP 服务器
+        stopHttpServer();
 
         if (mSyncthingRunnable != null) {
             mSyncthingRunnable.killSyncthing();
@@ -551,6 +564,53 @@ public class SyncthingService extends Service {
             mStartupTask = null;
         }
         onKilledListener.onKilled();
+    }
+    
+    /**
+     * 启动 HTTP 服务器
+     */
+    private void startHttpServer() {
+        try {
+            if (mHttpServer != null) {
+                Log.w(TAG, "HTTP 服务器已经在运行");
+                return;
+            }
+            
+            // 创建并启动 HTTP 服务器
+            mHttpServer = new ApiController(this, mApi);
+            mHttpServer.start();
+            
+            // 获取本机IP地址
+            String localIp = NetworkUtils.getLocalIPAddress(true);
+            Log.i(TAG, "HTTP 服务器已启动: http://" + localIp + ":" + HTTP_SERVER_PORT);
+            Log.i(TAG, "可用的API端点:");
+            Log.i(TAG, "  - GET  /health");
+            Log.i(TAG, "  - GET  /api/devices");
+            Log.i(TAG, "  - GET  /api/device/{deviceId}/folders");
+            Log.i(TAG, "  - GET  /api/deviceid");
+            Log.i(TAG, "  - GET  /api/wifi");
+            Log.i(TAG, "  - GET  /api/wifi-info");
+            Log.i(TAG, "  - POST /api/folder/{folderId}/sharing");
+            Log.i(TAG, "  - GET  /api/syncthing/events");
+            
+        } catch (Exception e) {
+            Log.e(TAG, "启动 HTTP 服务器失败", e);
+        }
+    }
+    
+    /**
+     * 停止 HTTP 服务器
+     */
+    private void stopHttpServer() {
+        try {
+            if (mHttpServer != null) {
+                mHttpServer.stop();
+                mHttpServer = null;
+                Log.i(TAG, "HTTP 服务器已停止");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "停止 HTTP 服务器失败", e);
+        }
     }
 
     public @Nullable RestApi getApi() {
