@@ -909,7 +909,7 @@ func getDevicesFromSyncthing() ([]Device, error) {
 
 	// 获取设备配置
 	fmt.Printf("正在调用 Syncthing API: GET /rest/config/devices\n")
-	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/config/devices", nil)
+	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/config/devices", nil)
 	if err != nil {
 		fmt.Printf("创建请求失败: %v\n", err)
 		return nil, err

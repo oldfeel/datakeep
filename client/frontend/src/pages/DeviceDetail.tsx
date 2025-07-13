@@ -199,7 +199,7 @@ export default function DeviceDetail() {
 
   if (error) {
     return (
-      <Box sx={{ p: 3 }}>
+      <Box>
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
@@ -209,7 +209,7 @@ export default function DeviceDetail() {
 
   if (!deviceId) {
     return (
-      <Box sx={{ p: 3 }}>
+      <Box>
         <Alert severity="error">
           设备ID不能为空
         </Alert>
@@ -218,7 +218,7 @@ export default function DeviceDetail() {
   }
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box>
       {/* 面包屑导航 */}
       <Breadcrumbs sx={{ mb: 3 }}>
         <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }}>

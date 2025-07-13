@@ -155,18 +155,24 @@ function FolderDetail() {
     const loadDeviceAndFolderInfo = async () => {
       if (!deviceId || !folderId) return;
 
+      console.log('Loading device and folder info for:', deviceId, folderId);
+
       // 加载设备信息
       if (deviceId === 'local') {
+        console.log('Setting local device info');
         setDeviceName('本机');
-        setDevice({
+        const localDevice = {
           deviceID: 'local',
           name: '本机',
           addresses: [],
           connected: true,
           isLocalNetwork: true
-        });
+        };
+        setDevice(localDevice);
+        console.log('Local device set:', localDevice);
       } else {
         try {
+          console.log('Loading remote device info');
           const resp = await fetch('http://localhost:8080/api/devices');
           if (!resp.ok) throw new Error('API 请求失败');
           const result = await resp.json();
@@ -175,26 +181,31 @@ function FolderDetail() {
           if (foundDevice) {
             setDeviceName(foundDevice.name || foundDevice.deviceID);
             setDevice(foundDevice);
+            console.log('Remote device set:', foundDevice);
           } else {
             setDeviceName(deviceId);
-            setDevice({
+            const fallbackDevice = {
               deviceID: deviceId,
               name: deviceId,
               addresses: [],
               connected: false,
               isLocalNetwork: false
-            });
+            };
+            setDevice(fallbackDevice);
+            console.log('Fallback device set:', fallbackDevice);
           }
         } catch (err) {
           console.error('Failed to load device name:', err);
           setDeviceName(deviceId);
-          setDevice({
+          const errorDevice = {
             deviceID: deviceId,
             name: deviceId,
             addresses: [],
             connected: false,
             isLocalNetwork: false
-          });
+          };
+          setDevice(errorDevice);
+          console.log('Error device set:', errorDevice);
         }
       }
 
@@ -212,6 +223,7 @@ function FolderDetail() {
         const folder = result.data.find((f: any) => f.id === folderId);
         if (folder) {
           setFolderInfo(folder);
+          console.log('Folder info set:', folder);
         }
       } catch (err) {
         console.error('Failed to load folder info:', err);
@@ -221,14 +233,25 @@ function FolderDetail() {
   }, [deviceId, folderId]);
 
   useEffect(() => {
+    console.log('loadFiles useEffect triggered - folderId:', folderId, 'device:', device, 'currentPath:', currentPath);
     if (folderId && device) {
-      console.log('loadFiles triggered - currentPath:', currentPath);
+      console.log('loadFiles useEffect - calling loadFiles');
       loadFiles();
+    } else {
+      console.log('loadFiles useEffect - skipping loadFiles, missing:', {
+        folderId: !!folderId,
+        device: !!device
+      });
     }
   }, [folderId, currentPath, device]);
 
   const loadFiles = async () => {
-    if (!device || !folderId) return; // 等待设备信息加载完成，确保folderId存在
+    console.log('loadFiles called - device:', device, 'folderId:', folderId, 'currentPath:', currentPath);
+    
+    if (!device || !folderId) {
+      console.log('loadFiles early return - device or folderId missing');
+      return; // 等待设备信息加载完成，确保folderId存在
+    }
 
     try {
       setLoading(true);
@@ -246,9 +269,13 @@ function FolderDetail() {
 
       console.log('Fetching files from:', apiUrl, 'currentPath:', currentPath, 'path:', path);
       const resp = await fetch(apiUrl);
+      console.log('Response status:', resp.status, 'ok:', resp.ok);
       if (!resp.ok) throw new Error('API 请求失败');
       const result = await resp.json();
+      console.log('API response:', result);
       if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+      console.log('Files data:', result.data);
+      console.log('Files count:', result.data ? result.data.length : 0);
       setFiles(result.data);
     } catch (err) {
       console.error('Failed to load files:', err);
@@ -377,13 +404,22 @@ function FolderDetail() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {files.map((file) => (
-              <TableRow
-                key={file.id}
-                hover
-                onClick={() => handleFileClick(file)}
-                sx={{ cursor: 'pointer' }}
-              >
+            {files.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} align="center">
+                  <Typography variant="body2" color="text.secondary">
+                    该目录为空
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            ) : (
+              files.map((file) => (
+                <TableRow
+                  key={file.id}
+                  hover
+                  onClick={() => handleFileClick(file)}
+                  sx={{ cursor: 'pointer' }}
+                >
                 <TableCell>
                   <Box sx={{ display: 'flex', alignItems: 'center' }}>
                     {isDirectory(file) ? (
@@ -401,7 +437,8 @@ function FolderDetail() {
                 <TableCell>{formatDate(new Date(file.modTime * 1000).toISOString())}</TableCell>
                 <TableCell>-</TableCell>
               </TableRow>
-            ))}
+            ))
+            )}
           </TableBody>
         </Table>
       </TableContainer>

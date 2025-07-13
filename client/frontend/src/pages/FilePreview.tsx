@@ -327,7 +327,7 @@ function FilePreview() {
 
   if (error) {
     return (
-      <Box sx={{ p: 3 }}>
+      <Box>
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
@@ -342,7 +342,7 @@ function FilePreview() {
   }
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box>
       {/* 面包屑导航 */}
       <Breadcrumbs sx={{ mb: 3 }}>
         <MuiLink component={Link} to="/" sx={{ textDecoration: 'none', color: 'inherit' }}>

@@ -1,6 +1,3 @@
-//go:build android
-// +build android
-
 package main
 
 import (
@@ -13,6 +10,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
@@ -69,7 +67,7 @@ type DevicesConfig struct {
 
 type File struct {
 	ID       uint   `gorm:"primaryKey" json:"id"`
-	FolderID string `json:"folderId"`
+	FolderID string `gorm:"column:folder_id" json:"folderId"`
 	Path     string `json:"path"`
 	Name     string `json:"name"`
 	Size     int64  `json:"size"`
@@ -85,16 +83,15 @@ func getConfigPath() string {
 		home = os.Getenv("HOME")
 	}
 	paths := []string{
-		"/data/data/com.nutomic.syncthingandroid.debug/files/config.xml",                 // Android debug (优先)
-		"/data/data/com.nutomic.syncthingandroid.debug/files/syncthing/config.xml",       // Android debug alternative
-		"/data/data/com.nutomic.syncthingandroid/files/config.xml",                       // Android release
-		"/data/data/com.nutomic.syncthingandroid/files/syncthing/config.xml",             // Android alternative
-		filepath.Join(home, "AppData", "Local", "Syncthing", "config.xml"),               // Windows
-		filepath.Join(home, "Library", "Application Support", "Syncthing", "config.xml"), // macOS
-		filepath.Join(home, ".config", "syncthing", "config.xml"),                        // Linux/通用
+		filepath.Join(home, ".local", "state", "syncthing", "config.xml"),                        // Linux 新版优先
+		filepath.Join(home, ".config", "syncthing", "config.xml"),                                // Linux 旧版
+		filepath.Join(home, "snap", "syncthing", "common", ".config", "syncthing", "config.xml"), // snap 安装
+		filepath.Join(home, "AppData", "Local", "Syncthing", "config.xml"),                       // Windows
+		filepath.Join(home, "Library", "Application Support", "Syncthing", "config.xml"),         // macOS
 		"config.xml", // fallback
 	}
 	for _, p := range paths {
+		fmt.Println("尝试路径:", p)
 		if _, err := os.Stat(p); err == nil {
 			fmt.Printf("找到配置文件: %s\n", p)
 			return p
@@ -159,6 +156,49 @@ func loadAndIndex() {
 	}
 
 	fmt.Printf("=== 加载和索引完成 ===\n")
+}
+
+// 展开路径中的 ~ 符号
+func expandPath(path string) string {
+	fmt.Printf("展开路径: %s\n", path)
+
+	// 处理 ~ 开头的路径
+	if strings.HasPrefix(path, "~/") {
+		usr, err := user.Current()
+		if err != nil {
+			// 如果获取用户失败，尝试使用环境变量
+			home := os.Getenv("HOME")
+			if home == "" {
+				fmt.Printf("无法获取用户主目录，返回原路径: %s\n", path)
+				return path // 返回原路径
+			}
+			expanded := filepath.Join(home, path[2:])
+			fmt.Printf("使用环境变量展开路径: %s -> %s\n", path, expanded)
+			return expanded
+		}
+		expanded := filepath.Join(usr.HomeDir, path[2:])
+		fmt.Printf("使用用户主目录展开路径: %s -> %s\n", path, expanded)
+		return expanded
+	}
+
+	// 处理单独的 ~ 路径
+	if path == "~" {
+		usr, err := user.Current()
+		if err != nil {
+			home := os.Getenv("HOME")
+			if home == "" {
+				fmt.Printf("无法获取用户主目录，返回原路径: %s\n", path)
+				return path
+			}
+			fmt.Printf("使用环境变量展开路径: %s -> %s\n", path, home)
+			return home
+		}
+		fmt.Printf("使用用户主目录展开路径: %s -> %s\n", path, usr.HomeDir)
+		return usr.HomeDir
+	}
+
+	fmt.Printf("路径无需展开: %s\n", path)
+	return path
 }
 
 // 从 Syncthing API 加载文件夹配置
@@ -258,8 +298,14 @@ func getString(m map[string]interface{}, key string) string {
 }
 
 func walkAndIndex(folder FolderEntry) {
-	root := folder.Path
-	fmt.Printf("开始索引文件夹: [%s] %s\n", folder.ID, root)
+	root := expandPath(folder.Path)
+	fmt.Printf("开始索引文件夹: [%s] %s (展开后: %s)\n", folder.ID, folder.Path, root)
+
+	// 检查路径是否存在
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		fmt.Printf("警告: 文件夹路径不存在: %s\n", root)
+		return
+	}
 
 	fileCount := 0
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
