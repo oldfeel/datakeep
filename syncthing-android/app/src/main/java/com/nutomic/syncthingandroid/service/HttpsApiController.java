@@ -475,81 +475,17 @@ public class HttpsApiController {
     
     private String handleDevices() {
         try {
-            Log.i(TAG, "开始获取设备列表");
+            Log.i(TAG, "=== handleDevices 开始 ===");
             
-            // 尝试从 Syncthing API 获取设备列表
-            String jsonResponse = executeGetRequest("/rest/system/config");
-            JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
-             
-             List<Map<String, Object>> devices = new ArrayList<>();
-             if (jsonObject.has("devices")) {
-                 JsonElement devicesElement = jsonObject.get("devices");
-                 
-                 if (devicesElement.isJsonObject()) {
-                     // devices 是对象格式
-                     JsonObject devicesObject = devicesElement.getAsJsonObject();
-                     for (Map.Entry<String, JsonElement> entry : devicesObject.entrySet()) {
-                         JsonObject deviceJson = entry.getValue().getAsJsonObject();
-                         Map<String, Object> device = new HashMap<>();
-                         device.put("deviceID", entry.getKey());
-                         device.put("name", deviceJson.has("name") ? deviceJson.get("name").getAsString() : "未知设备");
-                         device.put("compression", deviceJson.has("compression") ? deviceJson.get("compression").getAsString() : "");
-                         device.put("certName", deviceJson.has("certName") ? deviceJson.get("certName").getAsString() : "");
-                         device.put("introducer", deviceJson.has("introducer") ? deviceJson.get("introducer").getAsBoolean() : false);
-                         device.put("paused", deviceJson.has("paused") ? deviceJson.get("paused").getAsBoolean() : false);
-                         
-                         // 处理地址列表
-                         List<String> addresses = new ArrayList<>();
-                         if (deviceJson.has("addresses")) {
-                             for (JsonElement addrElement : deviceJson.getAsJsonArray("addresses")) {
-                                 addresses.add(addrElement.getAsString());
-                             }
-                         }
-                         device.put("addresses", addresses);
-                         
-                         Log.i(TAG, "设备: " + device.get("name") + " (ID: " + device.get("deviceID") + ", 地址: " + addresses + ")");
-                         devices.add(device);
-                     }
-                 } else if (devicesElement.isJsonArray()) {
-                     // devices 是数组格式
-                     JsonArray devicesArray = devicesElement.getAsJsonArray();
-                     for (JsonElement deviceElement : devicesArray) {
-                         JsonObject deviceJson = deviceElement.getAsJsonObject();
-                         Map<String, Object> device = new HashMap<>();
-                         device.put("deviceID", deviceJson.has("deviceID") ? deviceJson.get("deviceID").getAsString() : "未知ID");
-                         device.put("name", deviceJson.has("name") ? deviceJson.get("name").getAsString() : "未知设备");
-                         device.put("compression", deviceJson.has("compression") ? deviceJson.get("compression").getAsString() : "");
-                         device.put("certName", deviceJson.has("certName") ? deviceJson.get("certName").getAsString() : "");
-                         device.put("introducer", deviceJson.has("introducer") ? deviceJson.get("introducer").getAsBoolean() : false);
-                         device.put("paused", deviceJson.has("paused") ? deviceJson.get("paused").getAsBoolean() : false);
-                         
-                         // 处理地址列表
-                         List<String> addresses = new ArrayList<>();
-                         if (deviceJson.has("addresses")) {
-                             for (JsonElement addrElement : deviceJson.getAsJsonArray("addresses")) {
-                                 addresses.add(addrElement.getAsString());
-                             }
-                         }
-                         device.put("addresses", addresses);
-                         
-                         Log.i(TAG, "设备: " + device.get("name") + " (ID: " + device.get("deviceID") + ", 地址: " + addresses + ")");
-                         devices.add(device);
-                     }
-                 } else {
-                     Log.w(TAG, "devices 字段格式未知: " + devicesElement.getClass().getSimpleName());
-                 }
-             }
+            // 使用与桌面版相同的逻辑获取设备列表
+            List<Map<String, Object>> devices = getDevicesFromSyncthing();
             
-            Log.i(TAG, "成功获取到 " + devices.size() + " 个设备");
+            Log.i(TAG, "=== handleDevices 结束，返回 " + devices.size() + " 个设备 ===");
             return success(devices);
             
-        } catch (IOException e) {
-            Log.e(TAG, "从 Syncthing API 获取设备列表失败，尝试返回模拟数据", e);
-            // 返回模拟设备数据
-            return getMockDevices();
         } catch (Exception e) {
-            Log.e(TAG, "获取设备列表时发生未知错误", e);
-            return fail(1005, "Failed to get devices: " + e.getMessage());
+            Log.e(TAG, "获取设备列表失败", e);
+            return fail(1004, "Failed to get devices: " + e.getMessage());
         }
     }
     
@@ -557,44 +493,76 @@ public class HttpsApiController {
      * 从 Syncthing API 获取设备列表
      */
     private List<Map<String, Object>> getDevicesFromSyncthing() throws Exception {
-        List<Map<String, Object>> devices = new ArrayList<>();
+        Log.i(TAG, "=== getDevicesFromSyncthing 开始 ===");
+        
+        // 获取设备配置
+        Log.i(TAG, "正在调用 Syncthing API: GET /rest/config/devices");
+        List<Map<String, Object>> devices = getConfigDevices();
+        Log.i(TAG, "成功解析到 " + devices.size() + " 个设备:");
+        for (int i = 0; i < devices.size(); i++) {
+            Map<String, Object> device = devices.get(i);
+            String deviceID = (String) device.get("deviceID");
+            String name = (String) device.get("name");
+            @SuppressWarnings("unchecked")
+            List<String> addresses = (List<String>) device.get("addresses");
+            Log.i(TAG, "  [" + (i + 1) + "] DeviceID: " + deviceID + ", Name: " + name + ", Addresses: " + addresses);
+        }
+        
+        // 获取设备连接状态
+        Log.i(TAG, "\n正在获取设备连接状态...");
+        Map<String, Map<String, Object>> connections = getDeviceConnections();
+        if (connections != null) {
+            Log.i(TAG, "成功获取到 " + connections.size() + " 个设备的连接信息:");
+            for (Map.Entry<String, Map<String, Object>> entry : connections.entrySet()) {
+                String deviceID = entry.getKey();
+                Map<String, Object> conn = entry.getValue();
+                Log.i(TAG, "  DeviceID: " + deviceID + 
+                          ", Connected: " + conn.get("connected") + 
+                          ", Type: " + conn.get("type") + 
+                          ", Address: " + conn.get("address") + 
+                          ", Primary Address: " + (conn.containsKey("primary") ? 
+                              ((Map<String, Object>) conn.get("primary")).get("address") : ""));
+            }
+        } else {
+            Log.w(TAG, "获取设备连接状态失败，继续返回设备列表（不包含连接信息）");
+            Log.i(TAG, "=== getDevicesFromSyncthing 结束 ===");
+            return devices;
+        }
+        
+        // 获取设备发现信息
+        Log.i(TAG, "\n正在获取设备发现信息...");
+        Map<String, Object> discoveryInfo = getDeviceDiscovery();
+        if (discoveryInfo != null) {
+            Log.i(TAG, "设备发现信息: " + discoveryInfo);
+        } else {
+            Log.w(TAG, "获取设备发现信息失败");
+        }
         
         // 获取本机设备ID
         String localDeviceID = getLocalDeviceID();
-        Log.i(TAG, "本机设备ID: " + localDeviceID);
+        if (localDeviceID != null && !localDeviceID.isEmpty()) {
+            Log.i(TAG, "本机设备ID: " + localDeviceID);
+        } else {
+            Log.w(TAG, "获取本机设备ID失败");
+            localDeviceID = "";
+        }
         
         // 获取本机局域网IP地址
         List<String> localIPs = getLocalNetworkIPs();
         Log.i(TAG, "本机局域网IP: " + localIPs);
         
-        // 获取设备配置
-        List<Map<String, Object>> configDevices = getConfigDevices();
-        Log.i(TAG, "从配置获取到 " + configDevices.size() + " 个设备");
-        
-        // 获取设备连接状态
-        Map<String, Map<String, Object>> connections = getDeviceConnections();
-        Log.i(TAG, "从连接状态获取到 " + connections.size() + " 个设备连接信息");
-        
-        // 获取设备发现信息
-        Map<String, Object> discoveryInfo = getDeviceDiscovery();
-        Log.i(TAG, "设备发现信息: " + discoveryInfo);
-        
-        // 构建设备列表
-        for (Map<String, Object> configDevice : configDevices) {
-            String deviceID = (String) configDevice.get("deviceID");
-            String name = (String) configDevice.get("name");
-            
-            Map<String, Object> device = new HashMap<>();
-            device.put("deviceID", deviceID);
-            device.put("name", name != null ? name : "未知设备");
-            device.put("compression", configDevice.get("compression"));
-            device.put("certName", configDevice.get("certName"));
-            device.put("introducer", configDevice.get("introducer"));
+        // 将连接信息和发现信息合并到设备信息中
+        Log.i(TAG, "\n正在合并连接信息到设备列表...");
+        for (int i = 0; i < devices.size(); i++) {
+            Map<String, Object> device = devices.get(i);
+            String deviceID = (String) device.get("deviceID");
+            String name = (String) device.get("name");
+            List<String> addresses = new ArrayList<>();
             
             // 检查是否为本机设备
-            boolean isLocalDevice = localDeviceID != null && localDeviceID.equals(deviceID);
+            boolean isLocalDevice = localDeviceID != null && !localDeviceID.isEmpty() && localDeviceID.equals(deviceID);
             
-            // 设置连接状态
+            // 1. 从连接状态获取地址和连接信息
             if (connections.containsKey(deviceID)) {
                 Map<String, Object> conn = connections.get(deviceID);
                 device.put("connected", conn.get("connected"));
@@ -604,33 +572,8 @@ public class HttpsApiController {
                 device.put("outBytesTotal", conn.get("outBytesTotal"));
                 device.put("isLocalNetwork", conn.get("isLocalNetwork"));
                 device.put("crypto", conn.get("crypto"));
-            } else if (isLocalDevice) {
-                // 本机设备特殊处理
-                device.put("connected", true);
-                device.put("connectionType", "local");
-                device.put("clientVersion", "local");
-                device.put("inBytesTotal", 0L);
-                device.put("outBytesTotal", 0L);
-                device.put("isLocalNetwork", true);
-                device.put("crypto", "local");
-                Log.i(TAG, "本机设备 " + name + " 设置为在线状态");
-            } else {
-                // 其他设备默认离线
-                device.put("connected", false);
-                device.put("connectionType", "unknown");
-                device.put("clientVersion", "");
-                device.put("inBytesTotal", 0L);
-                device.put("outBytesTotal", 0L);
-                device.put("isLocalNetwork", false);
-                device.put("crypto", "");
-            }
-            
-            // 处理地址列表
-            List<String> addresses = new ArrayList<>();
-            
-            // 从连接状态获取地址
-            if (connections.containsKey(deviceID)) {
-                Map<String, Object> conn = connections.get(deviceID);
+                
+                // 从连接状态获取地址（与桌面版保持一致）
                 if (Boolean.TRUE.equals(conn.get("connected"))) {
                     String address = (String) conn.get("address");
                     if (address != null && !address.isEmpty()) {
@@ -646,9 +589,30 @@ public class HttpsApiController {
                         }
                     }
                 }
+                
+                // 从 addresses 字段获取地址列表（与桌面版保持一致）
+                @SuppressWarnings("unchecked")
+                List<String> connAddresses = (List<String>) conn.get("addresses");
+                if (connAddresses != null) {
+                    for (String addr : connAddresses) {
+                        if (!addresses.contains(addr)) {
+                            addresses.add(addr);
+                        }
+                    }
+                }
+            } else if (isLocalDevice) {
+                // 本机设备特殊处理：设置为在线状态
+                device.put("connected", true);
+                device.put("connectionType", "local");
+                device.put("clientVersion", "local");
+                device.put("inBytesTotal", 0L);
+                device.put("outBytesTotal", 0L);
+                device.put("isLocalNetwork", true);
+                device.put("crypto", "local");
+                Log.i(TAG, "  本机设备 " + name + " 设置为在线状态");
             }
             
-            // 从发现信息获取地址
+            // 2. 从设备发现信息获取地址（完善：提取 IPv4，过滤 relay/IPv6，只保留同网段IP，去重）
             if (discoveryInfo != null && discoveryInfo.containsKey(deviceID)) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> deviceDiscovery = (Map<String, Object>) discoveryInfo.get(deviceID);
@@ -657,8 +621,14 @@ public class HttpsApiController {
                     List<String> discoveryAddresses = (List<String>) deviceDiscovery.get("addresses");
                     if (discoveryAddresses != null) {
                         for (String addr : discoveryAddresses) {
-                            if (!addr.contains("relay://")) {
-                                addresses.add(addr);
+                            // 跳过 relay 地址
+                            if (addr.contains("relay://")) continue;
+                            // 跳过 IPv6
+                            if (addr.contains("[") && addr.contains("]")) continue;
+                            // 提取 IPv4
+                            String ip = extractIPFromAddress(addr);
+                            if (ip != null && !ip.isEmpty() && isInSameNetwork(ip, localIPs) && !addresses.contains(ip)) {
+                                addresses.add(ip);
                             }
                         }
                     }
@@ -668,10 +638,10 @@ public class HttpsApiController {
             // 为本机设备添加本地地址
             if (isLocalDevice && localIPs != null) {
                 addresses.addAll(localIPs);
-                Log.i(TAG, "为本机设备添加本地地址: " + localIPs);
+                Log.i(TAG, "  为本机设备添加本地地址: " + localIPs);
             }
             
-            // 去重并过滤地址
+            // 去重地址
             List<String> uniqueAddresses = new ArrayList<>();
             for (String addr : addresses) {
                 if (!uniqueAddresses.contains(addr)) {
@@ -679,18 +649,21 @@ public class HttpsApiController {
                 }
             }
             
-            // 过滤局域网地址
+            // 应用局域网地址过滤
             List<String> filteredAddresses = filterAndExtractIPAddresses(uniqueAddresses, localIPs);
+            // 确保 addresses 始终是一个数组而不是 null
+            if (filteredAddresses == null) {
+                filteredAddresses = new ArrayList<>();
+            }
             device.put("addresses", filteredAddresses);
             
-            Log.i(TAG, "设备 " + name + " 地址: " + filteredAddresses + 
+            Log.i(TAG, "  设备 " + name + " 更新地址: " + filteredAddresses + 
                       ", 连接状态: " + device.get("connected") + 
                       ", 类型: " + device.get("connectionType") + 
                       ", 本地连接: " + device.get("isLocalNetwork"));
-            
-            devices.add(device);
         }
         
+        Log.i(TAG, "=== getDevicesFromSyncthing 结束 ===");
         return devices;
     }
     
@@ -780,38 +753,35 @@ public class HttpsApiController {
         
         try {
             // 从 Syncthing API 获取设备配置
-            String jsonResponse = executeGetRequest("/rest/system/config");
-            JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
+            String jsonResponse = executeGetRequest("/rest/config/devices");
+            JsonArray devicesArray = JsonParser.parseString(jsonResponse).getAsJsonArray();
             
-                         if (jsonObject.has("devices")) {
-                 for (Map.Entry<String, JsonElement> entry : jsonObject.getAsJsonObject("devices").entrySet()) {
-                     JsonObject deviceJson = entry.getValue().getAsJsonObject();
-                     String deviceID = entry.getKey();
-                     
-                     Map<String, Object> device = new HashMap<>();
-                     device.put("deviceID", deviceID);
-                     device.put("name", deviceJson.has("name") ? deviceJson.get("name").getAsString() : "未知设备");
-                     device.put("compression", deviceJson.has("compression") ? deviceJson.get("compression").getAsString() : "");
-                     device.put("certName", deviceJson.has("certName") ? deviceJson.get("certName").getAsString() : "");
-                     device.put("introducer", deviceJson.has("introducer") ? deviceJson.get("introducer").getAsBoolean() : false);
-                     device.put("paused", deviceJson.has("paused") ? deviceJson.get("paused").getAsBoolean() : false);
-                     
-                     // 处理地址列表
-                     List<String> addresses = new ArrayList<>();
-                     if (deviceJson.has("addresses")) {
-                         for (JsonElement addrElement : deviceJson.getAsJsonArray("addresses")) {
-                             addresses.add(addrElement.getAsString());
-                         }
-                     }
-                     device.put("addresses", addresses);
-                     
-                     Log.i(TAG, "设备: " + device.get("name") + 
-                               " (ID: " + deviceID + 
-                               ", 地址: " + addresses + ")");
-                     
-                     devices.add(device);
-                 }
-             }
+            for (JsonElement deviceElement : devicesArray) {
+                JsonObject deviceJson = deviceElement.getAsJsonObject();
+                String deviceID = deviceJson.has("deviceID") ? deviceJson.get("deviceID").getAsString() : "未知ID";
+                
+                Map<String, Object> device = new HashMap<>();
+                device.put("deviceID", deviceID);
+                device.put("name", deviceJson.has("name") ? deviceJson.get("name").getAsString() : "未知设备");
+                device.put("compression", deviceJson.has("compression") ? deviceJson.get("compression").getAsString() : "");
+                device.put("certName", deviceJson.has("certName") ? deviceJson.get("certName").getAsString() : "");
+                device.put("introducer", deviceJson.has("introducer") ? deviceJson.get("introducer").getAsBoolean() : false);
+                
+                // 处理地址列表
+                List<String> addresses = new ArrayList<>();
+                if (deviceJson.has("addresses")) {
+                    for (JsonElement addrElement : deviceJson.getAsJsonArray("addresses")) {
+                        addresses.add(addrElement.getAsString());
+                    }
+                }
+                device.put("addresses", addresses);
+                
+                Log.i(TAG, "设备: " + device.get("name") + 
+                          " (ID: " + deviceID + 
+                          ", 地址: " + addresses + ")");
+                
+                devices.add(device);
+            }
             
             Log.i(TAG, "从 Syncthing API 获取到 " + devices.size() + " 个设备");
         } catch (Exception e) {
@@ -836,12 +806,25 @@ public class HttpsApiController {
                 Log.i(TAG, "开始异步获取设备连接信息");
                 // 从 Syncthing API 获取连接状态
                 String jsonResponse = executeGetRequest("/rest/system/connections");
+                Log.i(TAG, "=== getDeviceConnections 完整 API 响应 ===");
+                Log.i(TAG, jsonResponse);
+                Log.i(TAG, "=== getDeviceConnections API 响应结束 ===");
+                
                 JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
                 
+                // 打印 JSON 结构
+                Log.i(TAG, "JSON 根级别字段: " + jsonObject.keySet());
+                
                 if (jsonObject.has("connections")) {
-                    for (Map.Entry<String, JsonElement> entry : jsonObject.getAsJsonObject("connections").entrySet()) {
-                        JsonObject connJson = entry.getValue().getAsJsonObject();
+                    JsonObject connectionsObj = jsonObject.getAsJsonObject("connections");
+                    Log.i(TAG, "connections 对象字段: " + connectionsObj.keySet());
+                    
+                    for (Map.Entry<String, JsonElement> entry : connectionsObj.entrySet()) {
                         String deviceID = entry.getKey();
+                        JsonObject connJson = entry.getValue().getAsJsonObject();
+                        
+                        Log.i(TAG, "处理设备 " + deviceID + " 的连接信息:");
+                        Log.i(TAG, "  连接信息 JSON: " + connJson.toString());
                         
                         Map<String, Object> connectionInfo = new HashMap<>();
                         connectionInfo.put("connected", connJson.has("connected") ? connJson.get("connected").getAsBoolean() : false);
@@ -853,6 +836,15 @@ public class HttpsApiController {
                         connectionInfo.put("isLocalNetwork", connJson.has("isLocalNetwork") ? connJson.get("isLocalNetwork").getAsBoolean() : false);
                         connectionInfo.put("crypto", connJson.has("crypto") ? connJson.get("crypto").getAsString() : "");
                         
+                        // 处理 addresses 字段（与桌面版保持一致）
+                        List<String> addresses = new ArrayList<>();
+                        if (connJson.has("addresses")) {
+                            for (JsonElement addrElement : connJson.getAsJsonArray("addresses")) {
+                                addresses.add(addrElement.getAsString());
+                            }
+                        }
+                        connectionInfo.put("addresses", addresses);
+                        
                         // 处理 primary 地址
                         if (connJson.has("primary")) {
                             JsonObject primaryJson = connJson.getAsJsonObject("primary");
@@ -860,6 +852,7 @@ public class HttpsApiController {
                             primary.put("address", primaryJson.get("address").getAsString());
                             primary.put("type", primaryJson.get("type").getAsString());
                             connectionInfo.put("primary", primary);
+                            Log.i(TAG, "  primary 地址: " + primaryJson.get("address").getAsString());
                         }
                         
                         connections.put(deviceID, connectionInfo);
@@ -871,8 +864,19 @@ public class HttpsApiController {
                                   ", isLocalNetwork=" + connectionInfo.get("isLocalNetwork"));
                     }
                 } else {
-                    Log.w(TAG, "连接数据为空");
+                    Log.w(TAG, "连接数据为空，JSON 结构: " + jsonObject.keySet());
                 }
+                
+                // 打印最终结果
+                Log.i(TAG, "=== getDeviceConnections 最终结果 ===");
+                for (Map.Entry<String, Map<String, Object>> entry : connections.entrySet()) {
+                    String deviceID = entry.getKey();
+                    Map<String, Object> conn = entry.getValue();
+                    Log.i(TAG, "设备ID: " + deviceID);
+                    Log.i(TAG, "  连接信息: " + conn);
+                }
+                Log.i(TAG, "=== getDeviceConnections 结果结束 ===");
+                
             } catch (IOException e) {
                 Log.e(TAG, "从 Syncthing API 获取设备连接状态失败", e);
             }
@@ -908,10 +912,13 @@ public class HttpsApiController {
                 String jsonResponse = executeGetRequest("/rest/system/discovery");
                 JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
                 
-                if (jsonObject.has("devices")) {
-                    for (Map.Entry<String, JsonElement> entry : jsonObject.getAsJsonObject("devices").entrySet()) {
-                        JsonObject deviceJson = entry.getValue().getAsJsonObject();
-                        String deviceID = entry.getKey();
+                // 直接遍历根级别的设备ID
+                for (Map.Entry<String, JsonElement> entry : jsonObject.entrySet()) {
+                    String deviceID = entry.getKey();
+                    JsonElement deviceElement = entry.getValue();
+                    
+                    if (deviceElement.isJsonObject()) {
+                        JsonObject deviceJson = deviceElement.getAsJsonObject();
                         
                         Map<String, Object> deviceDiscoveryInfo = new HashMap<>();
                         List<String> addresses = new ArrayList<>();
@@ -926,7 +933,9 @@ public class HttpsApiController {
                         
                         Log.i(TAG, "设备 " + deviceID + " 发现信息: " + deviceDiscoveryInfo);
                     }
-                } else {
+                }
+                
+                if (discoveryInfo.isEmpty()) {
                     Log.w(TAG, "发现数据为空");
                 }
             } catch (IOException e) {
@@ -984,16 +993,14 @@ public class HttpsApiController {
     }
     
     /**
-     * 从地址字符串中提取IP地址
+     * 从地址字符串中提取IPv4地址（更强正则）
      */
     private String extractIPFromAddress(String addr) {
-        // 简单的IPv4地址提取
-        String[] parts = addr.split(":");
-        if (parts.length > 0) {
-            String ipPart = parts[0];
-            if (ipPart.matches("\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")) {
-                return ipPart;
-            }
+        // 用正则提取 IPv4
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})");
+        java.util.regex.Matcher matcher = pattern.matcher(addr);
+        if (matcher.find()) {
+            return matcher.group(1);
         }
         return null;
     }
