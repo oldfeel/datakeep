@@ -7,7 +7,8 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
-import android.widget.Button;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.util.Log;
 import com.nutomic.syncthingandroid.R;
 import com.nutomic.syncthingandroid.model.Device;
@@ -25,6 +26,11 @@ public class DeviceFragment extends Fragment {
     private String mDeviceId;
     private Device mDevice;
     private HttpClient mHttpClient;
+    private TextView mDeviceIdView;
+    private TextView mDeviceIpView;
+    private ImageView mToggleButton;
+    private LinearLayout mDeviceInfoContainer;
+    private boolean mIsExpanded = false;
 
     public static DeviceFragment newInstance(String deviceId) {
         DeviceFragment fragment = new DeviceFragment();
@@ -46,19 +52,41 @@ public class DeviceFragment extends Fragment {
     @Override
     public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_device, container, false);
-        TextView textView = view.findViewById(R.id.device_info);
-        Button refreshButton = view.findViewById(R.id.refresh_button);
         
-        // 设置刷新按钮点击事件
-        refreshButton.setOnClickListener(v -> updateDeviceInfo(textView));
+        // 绑定UI组件
+        mDeviceIdView = view.findViewById(R.id.device_id);
+        mDeviceIpView = view.findViewById(R.id.device_ip);
+        mToggleButton = view.findViewById(R.id.toggle_button);
+        mDeviceInfoContainer = view.findViewById(R.id.device_info_container);
+        
+        // 设置展开/收起按钮点击事件
+        mToggleButton.setOnClickListener(v -> toggleExpanded());
         
         // 初始加载设备信息
-        updateDeviceInfo(textView);
+        updateDeviceInfo();
         
         return view;
     }
     
-    private void updateDeviceInfo(TextView textView) {
+    private void toggleExpanded() {
+        mIsExpanded = !mIsExpanded;
+        
+        if (mIsExpanded) {
+            mDeviceInfoContainer.setVisibility(View.VISIBLE);
+            mToggleButton.setImageResource(android.R.drawable.arrow_up_float);
+            // 展开时移除单行限制，允许换行显示完整内容
+            mDeviceIdView.setSingleLine(false);
+            mDeviceIdView.setEllipsize(null);
+        } else {
+            mDeviceInfoContainer.setVisibility(View.GONE);
+            mToggleButton.setImageResource(android.R.drawable.arrow_down_float);
+            // 收起时恢复单行限制，用省略号结尾
+            mDeviceIdView.setSingleLine(true);
+            mDeviceIdView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        }
+    }
+    
+    private void updateDeviceInfo() {
         // 使用 HTTP API 获取设备信息
         if (mHttpClient == null) {
             mHttpClient = new HttpClient();
@@ -81,7 +109,8 @@ public class DeviceFragment extends Fragment {
                                 String errorMsg = jsonResponse.optString("data", "未知错误");
                                 Log.e(TAG, "API 返回错误: code=" + code + ", message=" + errorMsg);
                                 requireActivity().runOnUiThread(() -> {
-                                    textView.setText("API 错误: " + errorMsg);
+                                    mDeviceIdView.setText("API 错误: " + errorMsg);
+                                    mDeviceIpView.setText("");
                                 });
                                 return;
                             }
@@ -91,7 +120,8 @@ public class DeviceFragment extends Fragment {
                         } else {
                             Log.e(TAG, "未知的响应格式: " + responseBody);
                             requireActivity().runOnUiThread(() -> {
-                                textView.setText("未知的响应格式");
+                                mDeviceIdView.setText("未知的响应格式");
+                                mDeviceIpView.setText("");
                             });
                             return;
                         }
@@ -124,59 +154,20 @@ public class DeviceFragment extends Fragment {
                                 
                                 // 在主线程更新 UI
                                 requireActivity().runOnUiThread(() -> {
-                                    StringBuilder deviceInfo = new StringBuilder();
-                                    deviceInfo.append("📱 设备信息\n");
-                                    deviceInfo.append("═══════════\n\n");
+                                    // 设置设备ID
+                                    mDeviceIdView.setText(mDevice.deviceID);
                                     
-                                    // 设备基本信息
-                                    deviceInfo.append("📛 设备名称: ").append(mDevice.getDisplayName()).append("\n");
-                                    deviceInfo.append("🆔 设备ID: ").append(mDevice.deviceID).append("\n\n");
-                                    
-                                    // 显示 IP 地址信息
-                                    deviceInfo.append("🌐 网络地址:\n");
+                                    // 设置IP地址
                                     if (mDevice.addresses != null && !mDevice.addresses.isEmpty()) {
+                                        StringBuilder ipBuilder = new StringBuilder();
                                         for (int k = 0; k < mDevice.addresses.size(); k++) {
-                                            deviceInfo.append("   ").append(k + 1).append(". ").append(mDevice.addresses.get(k)).append("\n");
+                                            if (k > 0) ipBuilder.append(", ");
+                                            ipBuilder.append(mDevice.addresses.get(k));
                                         }
+                                        mDeviceIpView.setText(ipBuilder.toString());
                                     } else {
-                                        deviceInfo.append("   无可用地址\n");
+                                        mDeviceIpView.setText("无可用地址");
                                     }
-                                    deviceInfo.append("\n");
-                                    
-                                    // 其他设备信息
-                                    deviceInfo.append("⚙️ 设备配置:\n");
-                                    if (mDevice.compression != null && !mDevice.compression.isEmpty()) {
-                                        deviceInfo.append("   压缩: ").append(mDevice.compression).append("\n");
-                                    }
-                                    
-                                    if (mDevice.certName != null && !mDevice.certName.isEmpty()) {
-                                        deviceInfo.append("   证书: ").append(mDevice.certName).append("\n");
-                                    }
-                                    
-                                    deviceInfo.append("   介绍者: ").append(mDevice.introducer ? "是" : "否").append("\n");
-                                    deviceInfo.append("   状态: ").append(mDevice.paused ? "⏸️ 已暂停" : "▶️ 运行中").append("\n");
-                                    
-                                    // 显示连接信息
-                                    boolean connected = deviceJson.optBoolean("connected", false);
-                                    String connectionType = deviceJson.optString("connectionType", "");
-                                    String clientVersion = deviceJson.optString("clientVersion", "");
-                                    boolean isLocalNetwork = deviceJson.optBoolean("isLocalNetwork", false);
-                                    String crypto = deviceJson.optString("crypto", "");
-                                    
-                                    deviceInfo.append("\n🔗 连接信息:\n");
-                                    deviceInfo.append("   连接状态: ").append(connected ? "🟢 已连接" : "🔴 未连接").append("\n");
-                                    if (!connectionType.isEmpty()) {
-                                        deviceInfo.append("   连接类型: ").append(connectionType).append("\n");
-                                    }
-                                    if (!clientVersion.isEmpty()) {
-                                        deviceInfo.append("   客户端版本: ").append(clientVersion).append("\n");
-                                    }
-                                    deviceInfo.append("   本地网络: ").append(isLocalNetwork ? "是" : "否").append("\n");
-                                    if (!crypto.isEmpty()) {
-                                        deviceInfo.append("   加密: ").append(crypto).append("\n");
-                                    }
-                                    
-                                    textView.setText(deviceInfo.toString());
                                 });
                                 return;
                             }
@@ -184,19 +175,22 @@ public class DeviceFragment extends Fragment {
                         
                         // 如果没找到设备
                         requireActivity().runOnUiThread(() -> {
-                            textView.setText("未找到设备信息");
+                            mDeviceIdView.setText("未找到设备信息");
+                            mDeviceIpView.setText("");
                         });
                         
                     } catch (Exception e) {
                         Log.e(TAG, "解析设备信息失败", e);
                         requireActivity().runOnUiThread(() -> {
-                            textView.setText("解析设备信息失败: " + e.getMessage());
+                            mDeviceIdView.setText("解析设备信息失败: " + e.getMessage());
+                            mDeviceIpView.setText("");
                         });
                     }
                 } else {
                     Log.e(TAG, "HTTP 请求失败: " + response.code());
                     requireActivity().runOnUiThread(() -> {
-                        textView.setText("HTTP 请求失败: " + response.code());
+                        mDeviceIdView.setText("HTTP 请求失败: " + response.code());
+                        mDeviceIpView.setText("");
                     });
                 }
             }
@@ -205,7 +199,8 @@ public class DeviceFragment extends Fragment {
             public void onFailure(okhttp3.Call call, IOException e) {
                 Log.e(TAG, "获取设备信息失败: " + e.getMessage());
                 requireActivity().runOnUiThread(() -> {
-                    textView.setText("获取设备信息失败: " + e.getMessage());
+                    mDeviceIdView.setText("获取设备信息失败: " + e.getMessage());
+                    mDeviceIpView.setText("");
                 });
             }
         });

@@ -5,29 +5,73 @@
     android:orientation="vertical"
     android:padding="16dp">
 
-    <Button
-        android:id="@+id/refresh_button"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="end"
-        android:layout_marginBottom="8dp"
-        android:text="🔄 刷新"
-        android:textSize="14sp" />
-
-    <ScrollView
+    <!-- 设备ID行 - 默认显示 -->
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp"
+        android:gravity="center_vertical">
 
         <TextView
-            android:id="@+id/device_info"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="设备信息"
+            android:text="设备ID: "
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginEnd="8dp" />
+
+        <TextView
+            android:id="@+id/device_id"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text=""
             android:textSize="16sp"
             android:fontFamily="monospace"
-            android:lineSpacingExtra="4dp" />
+            android:textIsSelectable="true"
+            android:singleLine="true"
+            android:ellipsize="end" />
 
-    </ScrollView>
+        <ImageView
+            android:id="@+id/toggle_button"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_marginStart="8dp"
+            android:src="@android:drawable/arrow_down_float"
+            android:contentDescription="展开/收起"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="4dp" />
+
+    </LinearLayout>
+
+    <!-- IP地址部分 - 默认隐藏 -->
+    <LinearLayout
+        android:id="@+id/device_info_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="IP地址: "
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginEnd="8dp" />
+
+        <TextView
+            android:id="@+id/device_ip"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text=""
+            android:textSize="16sp"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true" />
+
+    </LinearLayout>
 
 </LinearLayout> 
