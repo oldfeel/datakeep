@@ -26,6 +26,10 @@ dependencies {
     annotationProcessor("com.google.dagger:dagger-compiler:2.49")
     androidTestImplementation("androidx.test:rules:1.4.0")
     androidTestImplementation("androidx.annotation:annotation:1.2.0")
+
+    // OkHttp 网络库
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+    // 移除 Conscrypt 依赖，现在使用预制证书方案
 }
 
 android {

@@ -63,12 +63,16 @@ import com.nutomic.syncthingandroid.service.Constants;
 import com.nutomic.syncthingandroid.service.RestApi;
 import com.nutomic.syncthingandroid.service.SyncthingService;
 import com.nutomic.syncthingandroid.service.SyncthingServiceBinder;
+import com.nutomic.syncthingandroid.util.HttpClient;
 import com.nutomic.syncthingandroid.util.PermissionUtil;
 import com.nutomic.syncthingandroid.util.Util;
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.io.IOException;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import javax.inject.Inject;
 
@@ -118,6 +122,7 @@ public class MainActivity extends StateDialogActivity
 
     private LinearLayout mTabButtonContainer;
     private int mCurrentTabIndex = 0;
+    private HttpClient mHttpClient;
 
     /**
      * Handles various dialogs based on current state.
@@ -201,26 +206,116 @@ public class MainActivity extends StateDialogActivity
         // 本机文件tab
         mFragments.add(mFolderListFragment);
         mFragmentTitles.add(getString(R.string.local_files_tab));
-        // 动态添加设备tab
-        RestApi api = getApi();
-        if (api != null && api.isConfigLoaded()) {
-            List<Device> devices = api.getDevices(false);
-            for (Device device : devices) {
-                mFragments.add(DeviceFragment.newInstance(device.deviceID));
-                mFragmentTitles.add(device.getDisplayName());
-            }
+        
+        // 从 HTTP API 获取设备列表并动态添加设备tab
+        loadDevicesFromHttpApi();
+    }
+    
+    private void loadDevicesFromHttpApi() {
+        Log.d(TAG, "从 HTTP API 加载设备列表");
+        
+        if (mHttpClient == null) {
+            mHttpClient = new HttpClient();
         }
-        mDynamicPagerAdapter = new FragmentPagerAdapter(getSupportFragmentManager()) {
+        
+        mHttpClient.getDevices(new okhttp3.Callback() {
             @Override
-            public Fragment getItem(int position) { return mFragments.get(position); }
+            public void onResponse(okhttp3.Call call, okhttp3.Response response) throws IOException {
+                if (response.isSuccessful()) {
+                    String responseBody = response.body().string();
+                    
+                    // 打印原始响应数据
+                    Log.d(TAG, "设备列表接口返回数据:");
+                    Log.d(TAG, "状态码: " + response.code());
+                    Log.d(TAG, "响应头: " + response.headers());
+                    Log.d(TAG, "响应体: " + responseBody);
+                    
+                    try {
+                        JSONObject jsonResponse = new JSONObject(responseBody);
+                        JSONArray devices = jsonResponse.getJSONArray("devices");
+                        
+                        Log.d(TAG, "解析到 " + devices.length() + " 个设备");
+                        
+                        List<Device> deviceList = new ArrayList<>();
+                        for (int i = 0; i < devices.length(); i++) {
+                            JSONObject deviceJson = devices.getJSONObject(i);
+                            Device device = new Device();
+                            device.deviceID = deviceJson.getString("deviceID");
+                            device.name = deviceJson.optString("name", "未知设备");
+                            device.addresses = new ArrayList<>(); // 初始化为空列表
+                            
+                            // 解析地址数组
+                            if (deviceJson.has("addresses")) {
+                                JSONArray addresses = deviceJson.getJSONArray("addresses");
+                                for (int j = 0; j < addresses.length(); j++) {
+                                    device.addresses.add(addresses.getString(j));
+                                }
+                            }
+                            
+                            // 打印每个设备的详细信息
+                            Log.d(TAG, "设备 " + (i + 1) + ":");
+                            Log.d(TAG, "  - deviceID: " + device.deviceID);
+                            Log.d(TAG, "  - name: " + device.name);
+                            Log.d(TAG, "  - addresses: " + device.addresses);
+                            
+                            deviceList.add(device);
+                        }
+                        
+                        // 在主线程更新 UI
+                        runOnUiThread(() -> {
+                            // 添加设备tab
+                            for (Device device : deviceList) {
+                                mFragments.add(DeviceFragment.newInstance(device.deviceID));
+                                mFragmentTitles.add(device.getDisplayName());
+                            }
+                            
+                            // 更新适配器
+                            mDynamicPagerAdapter = new FragmentPagerAdapter(getSupportFragmentManager()) {
+                                @Override
+                                public Fragment getItem(int position) { return mFragments.get(position); }
+                                @Override
+                                public int getCount() { return mFragments.size(); }
+                                @Override
+                                public CharSequence getPageTitle(int position) { return mFragmentTitles.get(position); }
+                            };
+                            mViewPager.setAdapter(mDynamicPagerAdapter);
+                            
+                            // 设置按钮导航栏
+                            setupTabButtons();
+                            
+                            Log.d(TAG, "设备列表加载完成，共 " + deviceList.size() + " 个设备");
+                        });
+                        
+                    } catch (Exception e) {
+                        Log.e(TAG, "解析设备列表失败", e);
+                        runOnUiThread(() -> {
+                            Toast.makeText(MainActivity.this, 
+                                "解析设备列表失败: " + e.getMessage(), 
+                                Toast.LENGTH_SHORT).show();
+                        });
+                    }
+                } else {
+                    Log.e(TAG, "HTTP 请求失败: " + response.code());
+                    String errorBody = response.body() != null ? response.body().string() : "无错误详情";
+                    Log.e(TAG, "错误响应: " + errorBody);
+                    runOnUiThread(() -> {
+                        Toast.makeText(MainActivity.this, 
+                            "HTTP 请求失败: " + response.code(), 
+                            Toast.LENGTH_SHORT).show();
+                    });
+                }
+            }
+            
             @Override
-            public int getCount() { return mFragments.size(); }
-            @Override
-            public CharSequence getPageTitle(int position) { return mFragmentTitles.get(position); }
-        };
-        mViewPager.setAdapter(mDynamicPagerAdapter);
-        // 设置按钮导航栏
-        setupTabButtons();
+            public void onFailure(okhttp3.Call call, IOException e) {
+                Log.e(TAG, "加载设备列表失败: " + e.getMessage());
+                runOnUiThread(() -> {
+                    Toast.makeText(MainActivity.this, 
+                        "加载设备列表失败: " + e.getMessage(), 
+                        Toast.LENGTH_SHORT).show();
+                });
+            }
+        });
     }
 
     private void setupTabButtons() {
@@ -302,7 +397,7 @@ public class MainActivity extends StateDialogActivity
             mDrawerFragment = new DrawerFragment();
         }
         mViewPager = findViewById(R.id.pager);
-        setupTabs();
+        // 移除这里的 setupTabs() 调用，等待服务状态变为 ACTIVE 后再调用
         mViewPager.addOnPageChangeListener(new ViewPager.OnPageChangeListener() {
             @Override
             public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {}
