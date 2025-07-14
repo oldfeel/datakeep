@@ -29,7 +29,8 @@ dependencies {
 
     // OkHttp 网络库
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
-    // 移除 Conscrypt 依赖，现在使用预制证书方案
+    // AndroidUtilCode 工具库 (AndroidX 版本)
+    implementation("com.blankj:utilcodex:1.31.1")
 }
 
 android {

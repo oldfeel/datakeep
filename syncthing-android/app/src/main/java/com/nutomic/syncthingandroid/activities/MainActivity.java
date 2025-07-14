@@ -73,6 +73,7 @@ import java.util.List;
 import java.io.IOException;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import com.blankj.utilcode.util.ToastUtils;
 
 import javax.inject.Inject;
 
@@ -175,7 +176,7 @@ public class MainActivity extends StateDialogActivity
                         // Some devices dont seem to support this request (according to Google Play
                         // crash reports).
                         Log.w(TAG, "Request ignore battery optimizations not supported", e);
-                        Toast.makeText(this, R.string.dialog_disable_battery_optimizations_not_supported, Toast.LENGTH_LONG).show();
+                        ToastUtils.showLong(getString(R.string.dialog_disable_battery_optimizations_not_supported));
                         mPreferences.edit().putBoolean("battery_optimization_dont_show_again", true).apply();
                     }
                 })
@@ -232,9 +233,34 @@ public class MainActivity extends StateDialogActivity
                     
                     try {
                         JSONObject jsonResponse = new JSONObject(responseBody);
-                        JSONArray devices = jsonResponse.getJSONArray("devices");
+                        JSONArray devices;
                         
-                        Log.d(TAG, "解析到 " + devices.length() + " 个设备");
+                        // 检查响应格式
+                        if (jsonResponse.has("code") && jsonResponse.has("data")) {
+                            // 新的统一格式：{"code": 0, "data": [...]}
+                            int code = jsonResponse.getInt("code");
+                            if (code != 0) {
+                                String errorMsg = jsonResponse.optString("data", "未知错误");
+                                Log.e(TAG, "API 返回错误: code=" + code + ", message=" + errorMsg);
+                                runOnUiThread(() -> {
+                                    ToastUtils.showShort("API 错误: " + errorMsg);
+                                });
+                                return;
+                            }
+                            
+                            devices = jsonResponse.getJSONArray("data");
+                            Log.d(TAG, "解析到 " + devices.length() + " 个设备");
+                        } else if (jsonResponse.has("devices")) {
+                            // 兼容旧格式：{"devices": [...]}
+                            devices = jsonResponse.getJSONArray("devices");
+                            Log.d(TAG, "解析到 " + devices.length() + " 个设备（旧格式）");
+                        } else {
+                            Log.e(TAG, "未知的响应格式: " + responseBody);
+                            runOnUiThread(() -> {
+                                ToastUtils.showShort("未知的响应格式");
+                            });
+                            return;
+                        }
                         
                         List<Device> deviceList = new ArrayList<>();
                         for (int i = 0; i < devices.length(); i++) {
@@ -289,9 +315,7 @@ public class MainActivity extends StateDialogActivity
                     } catch (Exception e) {
                         Log.e(TAG, "解析设备列表失败", e);
                         runOnUiThread(() -> {
-                            Toast.makeText(MainActivity.this, 
-                                "解析设备列表失败: " + e.getMessage(), 
-                                Toast.LENGTH_SHORT).show();
+                            ToastUtils.showShort("解析设备列表失败: " + e.getMessage());
                         });
                     }
                 } else {
@@ -299,9 +323,7 @@ public class MainActivity extends StateDialogActivity
                     String errorBody = response.body() != null ? response.body().string() : "无错误详情";
                     Log.e(TAG, "错误响应: " + errorBody);
                     runOnUiThread(() -> {
-                        Toast.makeText(MainActivity.this, 
-                            "HTTP 请求失败: " + response.code(), 
-                            Toast.LENGTH_SHORT).show();
+                        ToastUtils.showShort("HTTP 请求失败: " + response.code());
                     });
                 }
             }
@@ -310,9 +332,7 @@ public class MainActivity extends StateDialogActivity
             public void onFailure(okhttp3.Call call, IOException e) {
                 Log.e(TAG, "加载设备列表失败: " + e.getMessage());
                 runOnUiThread(() -> {
-                    Toast.makeText(MainActivity.this, 
-                        "加载设备列表失败: " + e.getMessage(), 
-                        Toast.LENGTH_SHORT).show();
+                    ToastUtils.showShort("加载设备列表失败: " + e.getMessage());
                 });
             }
         });
@@ -722,7 +742,7 @@ public class MainActivity extends StateDialogActivity
         } catch (ActivityNotFoundException e) {
             Log.w(TAG, "Request all files access not supported", e);
         }
-        Toast.makeText(this, R.string.dialog_all_files_access_not_supported, Toast.LENGTH_LONG).show();
+                            ToastUtils.showLong(getString(R.string.dialog_all_files_access_not_supported));
     }
 
     @Override
@@ -731,7 +751,7 @@ public class MainActivity extends StateDialogActivity
             if (grantResults.length == 0 || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
                 Log.i(TAG, "User denied WRITE_EXTERNAL_STORAGE permission.");
             } else {
-                Toast.makeText(this, R.string.permission_granted, Toast.LENGTH_SHORT).show();
+                ToastUtils.showShort(getString(R.string.permission_granted));
                 Log.i(TAG, "User granted WRITE_EXTERNAL_STORAGE permission.");
             }
         } else {

@@ -295,30 +295,431 @@ public class HttpsApiController {
             } else if (uri.startsWith("/api/syncthing/events")) {
                 return handleSyncthingEvents();
             } else {
-                return createErrorResponse("Not Found", 404);
+                return fail(404, "Not Found");
             }
         } catch (Exception e) {
             Log.e(TAG, "处理请求时出错", e);
-            return createErrorResponse("Internal Server Error", 500);
+            return fail(500, "Internal Server Error");
         }
     }
     
     private String handleDevices() {
-        // 返回模拟的设备列表
+        try {
+            Log.i(TAG, "开始获取设备列表");
+            
+            // 从 Android 的 Syncthing 配置中获取设备信息
+            List<Map<String, Object>> devices = getDevicesFromSyncthing();
+            
+            Log.i(TAG, "成功获取到 " + devices.size() + " 个设备");
+            for (int i = 0; i < devices.size(); i++) {
+                Map<String, Object> device = devices.get(i);
+                Log.i(TAG, "设备 " + (i + 1) + ": " + device.get("name") + " (" + device.get("deviceID") + ")");
+            }
+            
+            return success(devices);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "获取设备列表失败", e);
+            return fail(1004, "Failed to get devices: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 从 Android 的 Syncthing 配置中获取设备列表
+     */
+    private List<Map<String, Object>> getDevicesFromSyncthing() throws Exception {
         List<Map<String, Object>> devices = new ArrayList<>();
         
-        Map<String, Object> localDevice = new HashMap<>();
-        localDevice.put("deviceID", "local");
-        localDevice.put("name", "Android Device");
-        localDevice.put("addresses", new String[]{"dynamic"});
-        localDevice.put("isLocal", true);
-        devices.add(localDevice);
+        // 获取本机设备ID
+        String localDeviceID = getLocalDeviceID();
+        Log.i(TAG, "本机设备ID: " + localDeviceID);
         
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("devices", devices);
+        // 获取本机局域网IP地址
+        List<String> localIPs = getLocalNetworkIPs();
+        Log.i(TAG, "本机局域网IP: " + localIPs);
         
-        return mGson.toJson(response);
+        // 获取设备配置
+        List<Map<String, Object>> configDevices = getConfigDevices();
+        Log.i(TAG, "从配置获取到 " + configDevices.size() + " 个设备");
+        
+        // 获取设备连接状态
+        Map<String, Map<String, Object>> connections = getDeviceConnections();
+        Log.i(TAG, "从连接状态获取到 " + connections.size() + " 个设备连接信息");
+        
+        // 获取设备发现信息
+        Map<String, Object> discoveryInfo = getDeviceDiscovery();
+        Log.i(TAG, "设备发现信息: " + discoveryInfo);
+        
+        // 构建设备列表
+        for (Map<String, Object> configDevice : configDevices) {
+            String deviceID = (String) configDevice.get("deviceID");
+            String name = (String) configDevice.get("name");
+            
+            Map<String, Object> device = new HashMap<>();
+            device.put("deviceID", deviceID);
+            device.put("name", name != null ? name : "未知设备");
+            device.put("compression", configDevice.get("compression"));
+            device.put("certName", configDevice.get("certName"));
+            device.put("introducer", configDevice.get("introducer"));
+            
+            // 检查是否为本机设备
+            boolean isLocalDevice = localDeviceID != null && localDeviceID.equals(deviceID);
+            
+            // 设置连接状态
+            if (connections.containsKey(deviceID)) {
+                Map<String, Object> conn = connections.get(deviceID);
+                device.put("connected", conn.get("connected"));
+                device.put("connectionType", conn.get("type"));
+                device.put("clientVersion", conn.get("clientVersion"));
+                device.put("inBytesTotal", conn.get("inBytesTotal"));
+                device.put("outBytesTotal", conn.get("outBytesTotal"));
+                device.put("isLocalNetwork", conn.get("isLocalNetwork"));
+                device.put("crypto", conn.get("crypto"));
+            } else if (isLocalDevice) {
+                // 本机设备特殊处理
+                device.put("connected", true);
+                device.put("connectionType", "local");
+                device.put("clientVersion", "local");
+                device.put("inBytesTotal", 0L);
+                device.put("outBytesTotal", 0L);
+                device.put("isLocalNetwork", true);
+                device.put("crypto", "local");
+                Log.i(TAG, "本机设备 " + name + " 设置为在线状态");
+            } else {
+                // 其他设备默认离线
+                device.put("connected", false);
+                device.put("connectionType", "unknown");
+                device.put("clientVersion", "");
+                device.put("inBytesTotal", 0L);
+                device.put("outBytesTotal", 0L);
+                device.put("isLocalNetwork", false);
+                device.put("crypto", "");
+            }
+            
+            // 处理地址列表
+            List<String> addresses = new ArrayList<>();
+            
+            // 从连接状态获取地址
+            if (connections.containsKey(deviceID)) {
+                Map<String, Object> conn = connections.get(deviceID);
+                if (Boolean.TRUE.equals(conn.get("connected"))) {
+                    String address = (String) conn.get("address");
+                    if (address != null && !address.isEmpty()) {
+                        addresses.add(address);
+                    }
+                    
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> primary = (Map<String, Object>) conn.get("primary");
+                    if (primary != null) {
+                        String primaryAddress = (String) primary.get("address");
+                        if (primaryAddress != null && !primaryAddress.isEmpty() && !primaryAddress.equals(address)) {
+                            addresses.add(primaryAddress);
+                        }
+                    }
+                }
+            }
+            
+            // 从发现信息获取地址
+            if (discoveryInfo != null && discoveryInfo.containsKey(deviceID)) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> deviceDiscovery = (Map<String, Object>) discoveryInfo.get(deviceID);
+                if (deviceDiscovery != null && deviceDiscovery.containsKey("addresses")) {
+                    @SuppressWarnings("unchecked")
+                    List<String> discoveryAddresses = (List<String>) deviceDiscovery.get("addresses");
+                    if (discoveryAddresses != null) {
+                        for (String addr : discoveryAddresses) {
+                            if (!addr.contains("relay://")) {
+                                addresses.add(addr);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 为本机设备添加本地地址
+            if (isLocalDevice && localIPs != null) {
+                addresses.addAll(localIPs);
+                Log.i(TAG, "为本机设备添加本地地址: " + localIPs);
+            }
+            
+            // 去重并过滤地址
+            List<String> uniqueAddresses = new ArrayList<>();
+            for (String addr : addresses) {
+                if (!uniqueAddresses.contains(addr)) {
+                    uniqueAddresses.add(addr);
+                }
+            }
+            
+            // 过滤局域网地址
+            List<String> filteredAddresses = filterAndExtractIPAddresses(uniqueAddresses, localIPs);
+            device.put("addresses", filteredAddresses);
+            
+            Log.i(TAG, "设备 " + name + " 地址: " + filteredAddresses + 
+                      ", 连接状态: " + device.get("connected") + 
+                      ", 类型: " + device.get("connectionType") + 
+                      ", 本地连接: " + device.get("isLocalNetwork"));
+            
+            devices.add(device);
+        }
+        
+        return devices;
+    }
+    
+    /**
+     * 获取本机设备ID
+     */
+    private String getLocalDeviceID() {
+        try {
+            // 从 RestApi 获取本机设备ID
+            if (mRestApi != null && mRestApi.isConfigLoaded()) {
+                com.nutomic.syncthingandroid.model.Device localDevice = mRestApi.getLocalDevice();
+                if (localDevice != null) {
+                    Log.i(TAG, "从 RestApi 获取到本机设备ID: " + localDevice.deviceID);
+                    return localDevice.deviceID;
+                }
+            }
+            
+            Log.w(TAG, "无法从 RestApi 获取本机设备ID，返回默认值");
+            return "local-device-id";
+        } catch (Exception e) {
+            Log.e(TAG, "获取本机设备ID失败", e);
+            return "local-device-id";
+        }
+    }
+    
+    /**
+     * 获取本机局域网IP地址
+     */
+    private List<String> getLocalNetworkIPs() {
+        List<String> localIPs = new ArrayList<>();
+        try {
+            // 获取所有网络接口
+            java.util.Enumeration<java.net.NetworkInterface> interfaces = java.net.NetworkInterface.getNetworkInterfaces();
+            
+            while (interfaces.hasMoreElements()) {
+                java.net.NetworkInterface iface = interfaces.nextElement();
+                
+                // 跳过回环接口和down的接口
+                if (iface.isLoopback() || !iface.isUp()) {
+                    continue;
+                }
+                
+                java.util.Enumeration<java.net.InetAddress> addrs = iface.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    java.net.InetAddress addr = addrs.nextElement();
+                    
+                    // 只获取IPv4地址，并且是私有地址
+                    if (addr instanceof java.net.Inet4Address && isPrivateIP(addr.getHostAddress())) {
+                        String ip = addr.getHostAddress();
+                        if (!localIPs.contains(ip)) {
+                            localIPs.add(ip);
+                            Log.i(TAG, "发现本地网络IP: " + ip + " (接口: " + iface.getDisplayName() + ")");
+                        }
+                    }
+                }
+            }
+            
+            Log.i(TAG, "获取到 " + localIPs.size() + " 个本地网络IP: " + localIPs);
+            return localIPs;
+            
+        } catch (Exception e) {
+            Log.e(TAG, "获取本机局域网IP失败", e);
+            // 返回默认值
+            localIPs.add("192.168.1.100");
+            return localIPs;
+        }
+    }
+    
+    /**
+     * 判断是否为私有IP地址
+     */
+    private boolean isPrivateIP(String ip) {
+        try {
+            java.net.InetAddress addr = java.net.InetAddress.getByName(ip);
+            return addr.isSiteLocalAddress();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+    
+    /**
+     * 从配置获取设备列表
+     */
+    private List<Map<String, Object>> getConfigDevices() {
+        List<Map<String, Object>> devices = new ArrayList<>();
+        
+        try {
+            // 使用 RestApi 中的 config 获取设备列表
+            if (mRestApi != null && mRestApi.isConfigLoaded()) {
+                // 获取所有设备（包括本地设备）
+                List<com.nutomic.syncthingandroid.model.Device> configDevices = mRestApi.getDevices(true);
+                
+                Log.i(TAG, "从 RestApi 获取到 " + configDevices.size() + " 个设备");
+                
+                for (com.nutomic.syncthingandroid.model.Device configDevice : configDevices) {
+                    Map<String, Object> device = new HashMap<>();
+                    device.put("deviceID", configDevice.deviceID);
+                    device.put("name", configDevice.name != null ? configDevice.name : "未知设备");
+                    device.put("compression", configDevice.compression);
+                    device.put("certName", configDevice.certName);
+                    device.put("introducer", configDevice.introducer);
+                    device.put("paused", configDevice.paused);
+                    
+                    // 处理地址列表
+                    List<String> addresses = new ArrayList<>();
+                    if (configDevice.addresses != null) {
+                        addresses.addAll(configDevice.addresses);
+                    }
+                    device.put("addresses", addresses);
+                    
+                    Log.i(TAG, "设备: " + configDevice.getDisplayName() + 
+                              " (ID: " + configDevice.deviceID + 
+                              ", 地址: " + addresses + ")");
+                    
+                    devices.add(device);
+                }
+            } else {
+                Log.w(TAG, "RestApi 未初始化或配置未加载，返回空设备列表");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "从 RestApi 获取设备列表失败", e);
+            // 返回空列表而不是抛出异常，避免整个请求失败
+        }
+        
+        return devices;
+    }
+    
+    /**
+     * 获取设备连接状态
+     */
+    private Map<String, Map<String, Object>> getDeviceConnections() {
+        Map<String, Map<String, Object>> connections = new HashMap<>();
+        
+        try {
+            // 从 RestApi 获取连接状态
+            if (mRestApi != null && mRestApi.isConfigLoaded()) {
+                // 由于 RestApi.getConnections 是异步的，我们暂时返回空连接信息
+                // 在实际实现中，可能需要使用同步方式或者缓存连接信息
+                Log.i(TAG, "设备连接状态暂时返回空数据（需要实现同步获取连接信息的逻辑）");
+                
+                // 这里可以添加同步获取连接信息的逻辑
+                // 或者使用缓存的连接信息
+            } else {
+                Log.w(TAG, "RestApi 未初始化或配置未加载，返回空连接信息");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "从 RestApi 获取设备连接状态失败", e);
+            // 返回空连接信息而不是抛出异常
+        }
+        
+        return connections;
+    }
+    
+    /**
+     * 获取设备发现信息
+     */
+    private Map<String, Object> getDeviceDiscovery() {
+        Map<String, Object> discoveryInfo = new HashMap<>();
+        
+        try {
+            // 从 RestApi 获取设备发现信息
+            if (mRestApi != null && mRestApi.isConfigLoaded()) {
+                // 这里应该调用 RestApi 的发现相关方法
+                // 由于 RestApi 可能没有直接的发现信息接口，我们暂时返回空数据
+                // 在实际实现中，可能需要通过其他方式获取发现信息
+                Log.i(TAG, "设备发现信息暂时返回空数据（需要实现具体的发现信息获取逻辑）");
+            } else {
+                Log.w(TAG, "RestApi 未初始化或配置未加载，返回空发现信息");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "获取设备发现信息失败", e);
+            // 返回空发现信息而不是抛出异常
+        }
+        
+        return discoveryInfo;
+    }
+    
+    /**
+     * 过滤和提取IP地址
+     */
+    private List<String> filterAndExtractIPAddresses(List<String> addresses, List<String> localIPs) {
+        List<String> filteredIPs = new ArrayList<>();
+        
+        for (String addr : addresses) {
+            // 跳过relay地址
+            if (addr.contains("relay://")) {
+                continue;
+            }
+            
+            // 跳过IPv6地址
+            if (addr.contains("[") && addr.contains("]")) {
+                continue;
+            }
+            
+            // 提取IP地址
+            String ip = extractIPFromAddress(addr);
+            if (ip != null && !ip.isEmpty()) {
+                // 检查是否与本机在同一局域网
+                if (isInSameNetwork(ip, localIPs)) {
+                    if (!filteredIPs.contains(ip)) {
+                        filteredIPs.add(ip);
+                    }
+                }
+            }
+        }
+        
+        return filteredIPs;
+    }
+    
+    /**
+     * 从地址字符串中提取IP地址
+     */
+    private String extractIPFromAddress(String addr) {
+        // 简单的IPv4地址提取
+        String[] parts = addr.split(":");
+        if (parts.length > 0) {
+            String ipPart = parts[0];
+            if (ipPart.matches("\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")) {
+                return ipPart;
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * 检查IP是否与本机在同一局域网
+     */
+    private boolean isInSameNetwork(String ip, List<String> localIPs) {
+        if (localIPs == null || localIPs.isEmpty()) {
+            return false;
+        }
+        
+        for (String localIP : localIPs) {
+            String[] ipParts = ip.split("\\.");
+            String[] localParts = localIP.split("\\.");
+            
+            if (ipParts.length == 4 && localParts.length == 4) {
+                // 对于192.168.x.x，检查前两个字节
+                if (ipParts[0].equals("192") && ipParts[1].equals("168") &&
+                    localParts[0].equals("192") && localParts[1].equals("168")) {
+                    return ipParts[2].equals(localParts[2]);
+                }
+                // 对于10.x.x.x，检查第一个字节
+                else if (ipParts[0].equals("10") && localParts[0].equals("10")) {
+                    return ipParts[1].equals(localParts[1]);
+                }
+                // 对于172.16-31.x.x，检查前两个字节
+                else if (ipParts[0].equals("172") && localParts[0].equals("172")) {
+                    int ipSecond = Integer.parseInt(ipParts[1]);
+                    int localSecond = Integer.parseInt(localParts[1]);
+                    if (ipSecond >= 16 && ipSecond <= 31 && localSecond >= 16 && localSecond <= 31) {
+                        return ipSecond == localSecond;
+                    }
+                }
+            }
+        }
+        
+        return false;
     }
     
     private String handleDeviceFolders(String uri) {
@@ -335,11 +736,7 @@ public class HttpsApiController {
         folder.put("type", "sendreceive");
         folders.add(folder);
         
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("folders", folders);
-        
-        return mGson.toJson(response);
+        return success(folders);
     }
     
     private String handleFolderFiles(String uri) {
@@ -355,47 +752,61 @@ public class HttpsApiController {
         file.put("type", "file");
         files.add(file);
         
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("files", files);
-        
-        return mGson.toJson(response);
+        return success(files);
     }
     
     private String handleLocalDeviceId() {
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("deviceID", "local-device-id");
-        return mGson.toJson(response);
+        return success("local-device-id");
     }
     
     private String handleWifiInfo() {
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("ssid", "Android WiFi");
-        response.put("signal", -50);
-        return mGson.toJson(response);
+        Map<String, Object> wifiInfo = new HashMap<>();
+        wifiInfo.put("ssid", "Android WiFi");
+        wifiInfo.put("signal", -50);
+        
+        return success(wifiInfo);
     }
     
     private String handleFolderShare(String uri) {
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("message", "文件夹共享更新成功");
-        return mGson.toJson(response);
+        return success("文件夹共享更新成功");
     }
     
     private String handleSyncthingEvents() {
+        return success(new ArrayList<>());
+    }
+    
+    /**
+     * 成功响应辅助方法
+     * @param data 响应数据
+     * @return JSON 字符串
+     */
+    private String success(Object data) {
         Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("events", new ArrayList<>());
+        response.put("code", 0);
+        response.put("data", data);
         return mGson.toJson(response);
     }
     
-    private String createErrorResponse(String message, int statusCode) {
+    /**
+     * 失败响应辅助方法
+     * @param code 错误代码
+     * @param message 错误信息
+     * @return JSON 字符串
+     */
+    private String fail(int code, String message) {
         Map<String, Object> response = new HashMap<>();
-        response.put("success", false);
-        response.put("error", message);
-        response.put("statusCode", statusCode);
+        response.put("code", code);
+        response.put("data", message);
         return mGson.toJson(response);
+    }
+    
+    /**
+     * 创建错误响应（保持向后兼容）
+     * @param message 错误信息
+     * @param statusCode 状态码
+     * @return JSON 字符串
+     */
+    private String createErrorResponse(String message, int statusCode) {
+        return fail(statusCode, message);
     }
 } 
