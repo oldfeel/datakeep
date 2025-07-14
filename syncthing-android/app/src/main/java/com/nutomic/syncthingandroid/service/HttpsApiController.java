@@ -4,6 +4,11 @@ import android.content.Context;
 import android.util.Log;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonArray;
+import java.util.stream.Collectors;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -22,7 +27,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CompletableFuture;
+import java.io.File;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.X509TrustManager;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLServerSocketFactory;
 import javax.net.ssl.KeyManagerFactory;
@@ -30,17 +43,30 @@ import java.security.PrivateKey;
 import java.security.KeyFactory;
 import java.security.spec.PKCS8EncodedKeySpec;
 
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.MediaType;
+import okhttp3.RequestBody;
+import java.util.concurrent.TimeUnit;
+
 /**
  * HTTPS API 服务器，提供与桌面版相同的 REST API 接口
- * 使用预制证书实现 HTTPS
+ * 使用预制证书实现 HTTPS，直接访问 Syncthing REST API
  */
 public class HttpsApiController {
     private static final String TAG = "HttpsApiController";
     private static final int PORT = 8443; // 使用 HTTPS 端口
     
+    // Syncthing API 配置
+    private String mSyncthingApiBase; // 动态获取，不使用硬编码
+    private static final String SYNCTHING_API_KEY = "your-api-key"; // 需要从配置中获取
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+    
     private final Context mContext;
-    private final RestApi mRestApi;
+    private final RestApi mRestApi; // 保留用于获取 API Key
     private final Gson mGson;
+    private OkHttpClient mHttpClient; // 移除 final，因为可能为 null
     private SSLServerSocket mServerSocket;
     private ExecutorService mExecutor;
     private boolean mRunning = false;
@@ -49,6 +75,150 @@ public class HttpsApiController {
         mContext = context;
         mRestApi = restApi;
         mGson = new Gson();
+        
+        // 从 RestApi 获取 Syncthing API URL
+        if (restApi != null && restApi.getUrl() != null) {
+            mSyncthingApiBase = restApi.getUrl().toString();
+            Log.i(TAG, "使用 RestApi 的 URL: " + mSyncthingApiBase);
+        } else {
+            // 备用方案：使用默认 HTTPS URL
+            mSyncthingApiBase = "https://127.0.0.1:8384";
+            Log.w(TAG, "RestApi 不可用，使用默认 URL: " + mSyncthingApiBase);
+        }
+        
+        // 创建 OkHttpClient，使用与 RestApi 相同的 SSL 配置
+        OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS);
+        
+        // 初始化时不创建 OkHttpClient，等到需要时再创建
+        mHttpClient = null;
+        Log.i(TAG, "OkHttpClient 延迟初始化，等待证书文件生成");
+    }
+    
+    /**
+     * 延迟初始化 OkHttpClient
+     */
+    private synchronized OkHttpClient getOrCreateHttpClient() throws Exception {
+        if (mHttpClient != null) {
+            return mHttpClient;
+        }
+        
+        Log.i(TAG, "开始延迟初始化 OkHttpClient...");
+        
+        // 创建 OkHttpClient，使用与 RestApi 相同的 SSL 配置
+        OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS);
+        
+        try {
+            Log.i(TAG, "开始配置自定义 SSL...");
+            File httpsCertFile = com.nutomic.syncthingandroid.service.Constants.getHttpsCertFile(mContext);
+            Log.i(TAG, "证书文件路径: " + httpsCertFile.getAbsolutePath());
+            Log.i(TAG, "证书文件存在: " + httpsCertFile.exists());
+            
+            if (!httpsCertFile.exists()) {
+                throw new Exception("证书文件不存在: " + httpsCertFile.getAbsolutePath());
+            }
+            
+            TrustManager[] trustManagers = new TrustManager[]{new com.nutomic.syncthingandroid.http.SyncthingTrustManager(httpsCertFile)};
+            Log.i(TAG, "TrustManager 创建成功");
+            
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, trustManagers, new SecureRandom());
+            Log.i(TAG, "SSLContext 创建成功");
+            
+            SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
+            Log.i(TAG, "SSLSocketFactory 创建成功");
+
+            clientBuilder.sslSocketFactory(sslSocketFactory, (X509TrustManager) trustManagers[0])
+                    .hostnameVerifier((hostname, session) -> true);
+            
+            Log.i(TAG, "使用自定义 SSL 配置");
+            mHttpClient = clientBuilder.build();
+            Log.i(TAG, "OkHttpClient 创建成功");
+            return mHttpClient;
+        } catch (Exception e) {
+            Log.e(TAG, "自定义SSL配置失败，API 不可用", e);
+            Log.e(TAG, "错误详情: " + e.getMessage());
+            throw e;
+        }
+    }
+    
+    /**
+     * 获取 Syncthing API Key
+     */
+    private String getApiKey() {
+        try {
+            if (mRestApi != null && mRestApi.isConfigLoaded()) {
+                return mRestApi.getGui().apiKey;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "获取 API Key 失败", e);
+        }
+        return "your-api-key"; // 默认值
+    }
+    
+    /**
+     * 执行 HTTP GET 请求到 Syncthing API
+     */
+    private String executeGetRequest(String endpoint) throws IOException {
+        try {
+            OkHttpClient client = getOrCreateHttpClient();
+            String url = mSyncthingApiBase + endpoint;
+            Log.d(TAG, "请求 Syncthing API: " + url);
+            
+            Request request = new Request.Builder()
+                    .url(url)
+                    .addHeader("X-API-Key", getApiKey())
+                    .build();
+            
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    throw new IOException("HTTP 请求失败: " + response.code());
+                }
+                
+                String responseBody = response.body().string();
+                Log.d(TAG, "API 响应: " + responseBody);
+                return responseBody;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "OkHttpClient 初始化失败，无法访问 Syncthing API", e);
+            throw new IOException("HTTPS 客户端初始化失败，无法访问 Syncthing API: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 执行 HTTP POST 请求到 Syncthing API
+     */
+    private String executePostRequest(String endpoint, String jsonBody) throws IOException {
+        try {
+            OkHttpClient client = getOrCreateHttpClient();
+            String url = mSyncthingApiBase + endpoint;
+            Log.d(TAG, "POST 请求 Syncthing API: " + url);
+            
+            RequestBody body = RequestBody.create(jsonBody, JSON);
+            Request request = new Request.Builder()
+                    .url(url)
+                    .addHeader("X-API-Key", getApiKey())
+                    .post(body)
+                    .build();
+            
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    throw new IOException("HTTP POST 请求失败: " + response.code());
+                }
+                
+                String responseBody = response.body().string();
+                Log.d(TAG, "POST API 响应: " + responseBody);
+                return responseBody;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "OkHttpClient 初始化失败，无法访问 Syncthing API", e);
+            throw new IOException("HTTPS 客户端初始化失败，无法访问 Syncthing API: " + e.getMessage());
+        }
     }
     
     public void start() {
@@ -307,25 +477,84 @@ public class HttpsApiController {
         try {
             Log.i(TAG, "开始获取设备列表");
             
-            // 从 Android 的 Syncthing 配置中获取设备信息
-            List<Map<String, Object>> devices = getDevicesFromSyncthing();
+            // 尝试从 Syncthing API 获取设备列表
+            String jsonResponse = executeGetRequest("/rest/system/config");
+            JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
+             
+             List<Map<String, Object>> devices = new ArrayList<>();
+             if (jsonObject.has("devices")) {
+                 JsonElement devicesElement = jsonObject.get("devices");
+                 
+                 if (devicesElement.isJsonObject()) {
+                     // devices 是对象格式
+                     JsonObject devicesObject = devicesElement.getAsJsonObject();
+                     for (Map.Entry<String, JsonElement> entry : devicesObject.entrySet()) {
+                         JsonObject deviceJson = entry.getValue().getAsJsonObject();
+                         Map<String, Object> device = new HashMap<>();
+                         device.put("deviceID", entry.getKey());
+                         device.put("name", deviceJson.has("name") ? deviceJson.get("name").getAsString() : "未知设备");
+                         device.put("compression", deviceJson.has("compression") ? deviceJson.get("compression").getAsString() : "");
+                         device.put("certName", deviceJson.has("certName") ? deviceJson.get("certName").getAsString() : "");
+                         device.put("introducer", deviceJson.has("introducer") ? deviceJson.get("introducer").getAsBoolean() : false);
+                         device.put("paused", deviceJson.has("paused") ? deviceJson.get("paused").getAsBoolean() : false);
+                         
+                         // 处理地址列表
+                         List<String> addresses = new ArrayList<>();
+                         if (deviceJson.has("addresses")) {
+                             for (JsonElement addrElement : deviceJson.getAsJsonArray("addresses")) {
+                                 addresses.add(addrElement.getAsString());
+                             }
+                         }
+                         device.put("addresses", addresses);
+                         
+                         Log.i(TAG, "设备: " + device.get("name") + " (ID: " + device.get("deviceID") + ", 地址: " + addresses + ")");
+                         devices.add(device);
+                     }
+                 } else if (devicesElement.isJsonArray()) {
+                     // devices 是数组格式
+                     JsonArray devicesArray = devicesElement.getAsJsonArray();
+                     for (JsonElement deviceElement : devicesArray) {
+                         JsonObject deviceJson = deviceElement.getAsJsonObject();
+                         Map<String, Object> device = new HashMap<>();
+                         device.put("deviceID", deviceJson.has("deviceID") ? deviceJson.get("deviceID").getAsString() : "未知ID");
+                         device.put("name", deviceJson.has("name") ? deviceJson.get("name").getAsString() : "未知设备");
+                         device.put("compression", deviceJson.has("compression") ? deviceJson.get("compression").getAsString() : "");
+                         device.put("certName", deviceJson.has("certName") ? deviceJson.get("certName").getAsString() : "");
+                         device.put("introducer", deviceJson.has("introducer") ? deviceJson.get("introducer").getAsBoolean() : false);
+                         device.put("paused", deviceJson.has("paused") ? deviceJson.get("paused").getAsBoolean() : false);
+                         
+                         // 处理地址列表
+                         List<String> addresses = new ArrayList<>();
+                         if (deviceJson.has("addresses")) {
+                             for (JsonElement addrElement : deviceJson.getAsJsonArray("addresses")) {
+                                 addresses.add(addrElement.getAsString());
+                             }
+                         }
+                         device.put("addresses", addresses);
+                         
+                         Log.i(TAG, "设备: " + device.get("name") + " (ID: " + device.get("deviceID") + ", 地址: " + addresses + ")");
+                         devices.add(device);
+                     }
+                 } else {
+                     Log.w(TAG, "devices 字段格式未知: " + devicesElement.getClass().getSimpleName());
+                 }
+             }
             
             Log.i(TAG, "成功获取到 " + devices.size() + " 个设备");
-            for (int i = 0; i < devices.size(); i++) {
-                Map<String, Object> device = devices.get(i);
-                Log.i(TAG, "设备 " + (i + 1) + ": " + device.get("name") + " (" + device.get("deviceID") + ")");
-            }
-            
             return success(devices);
             
+        } catch (IOException e) {
+            Log.e(TAG, "从 Syncthing API 获取设备列表失败，尝试返回模拟数据", e);
+            // 返回模拟设备数据
+            return getMockDevices();
         } catch (Exception e) {
-            Log.e(TAG, "获取设备列表失败", e);
-            return fail(1004, "Failed to get devices: " + e.getMessage());
+            Log.e(TAG, "获取设备列表时发生未知错误", e);
+            return fail(1005, "Failed to get devices: " + e.getMessage());
         }
     }
     
     /**
-     * 从 Android 的 Syncthing 配置中获取设备列表
+     * 从 Syncthing API 获取设备列表
      */
     private List<Map<String, Object>> getDevicesFromSyncthing() throws Exception {
         List<Map<String, Object>> devices = new ArrayList<>();
@@ -470,16 +699,17 @@ public class HttpsApiController {
      */
     private String getLocalDeviceID() {
         try {
-            // 从 RestApi 获取本机设备ID
-            if (mRestApi != null && mRestApi.isConfigLoaded()) {
-                com.nutomic.syncthingandroid.model.Device localDevice = mRestApi.getLocalDevice();
-                if (localDevice != null) {
-                    Log.i(TAG, "从 RestApi 获取到本机设备ID: " + localDevice.deviceID);
-                    return localDevice.deviceID;
-                }
+            // 从 Syncthing API 获取本机设备ID
+            String jsonResponse = executeGetRequest("/rest/system/status");
+            JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
+            
+            if (jsonObject.has("myID")) {
+                String localDeviceID = jsonObject.get("myID").getAsString();
+                Log.i(TAG, "从 Syncthing API 获取到本机设备ID: " + localDeviceID);
+                return localDeviceID;
             }
             
-            Log.w(TAG, "无法从 RestApi 获取本机设备ID，返回默认值");
+            Log.w(TAG, "无法从 Syncthing API 获取本机设备ID，返回默认值");
             return "local-device-id";
         } catch (Exception e) {
             Log.e(TAG, "获取本机设备ID失败", e);
@@ -549,40 +779,43 @@ public class HttpsApiController {
         List<Map<String, Object>> devices = new ArrayList<>();
         
         try {
-            // 使用 RestApi 中的 config 获取设备列表
-            if (mRestApi != null && mRestApi.isConfigLoaded()) {
-                // 获取所有设备（包括本地设备）
-                List<com.nutomic.syncthingandroid.model.Device> configDevices = mRestApi.getDevices(true);
-                
-                Log.i(TAG, "从 RestApi 获取到 " + configDevices.size() + " 个设备");
-                
-                for (com.nutomic.syncthingandroid.model.Device configDevice : configDevices) {
-                    Map<String, Object> device = new HashMap<>();
-                    device.put("deviceID", configDevice.deviceID);
-                    device.put("name", configDevice.name != null ? configDevice.name : "未知设备");
-                    device.put("compression", configDevice.compression);
-                    device.put("certName", configDevice.certName);
-                    device.put("introducer", configDevice.introducer);
-                    device.put("paused", configDevice.paused);
-                    
-                    // 处理地址列表
-                    List<String> addresses = new ArrayList<>();
-                    if (configDevice.addresses != null) {
-                        addresses.addAll(configDevice.addresses);
-                    }
-                    device.put("addresses", addresses);
-                    
-                    Log.i(TAG, "设备: " + configDevice.getDisplayName() + 
-                              " (ID: " + configDevice.deviceID + 
-                              ", 地址: " + addresses + ")");
-                    
-                    devices.add(device);
-                }
-            } else {
-                Log.w(TAG, "RestApi 未初始化或配置未加载，返回空设备列表");
-            }
+            // 从 Syncthing API 获取设备配置
+            String jsonResponse = executeGetRequest("/rest/system/config");
+            JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
+            
+                         if (jsonObject.has("devices")) {
+                 for (Map.Entry<String, JsonElement> entry : jsonObject.getAsJsonObject("devices").entrySet()) {
+                     JsonObject deviceJson = entry.getValue().getAsJsonObject();
+                     String deviceID = entry.getKey();
+                     
+                     Map<String, Object> device = new HashMap<>();
+                     device.put("deviceID", deviceID);
+                     device.put("name", deviceJson.has("name") ? deviceJson.get("name").getAsString() : "未知设备");
+                     device.put("compression", deviceJson.has("compression") ? deviceJson.get("compression").getAsString() : "");
+                     device.put("certName", deviceJson.has("certName") ? deviceJson.get("certName").getAsString() : "");
+                     device.put("introducer", deviceJson.has("introducer") ? deviceJson.get("introducer").getAsBoolean() : false);
+                     device.put("paused", deviceJson.has("paused") ? deviceJson.get("paused").getAsBoolean() : false);
+                     
+                     // 处理地址列表
+                     List<String> addresses = new ArrayList<>();
+                     if (deviceJson.has("addresses")) {
+                         for (JsonElement addrElement : deviceJson.getAsJsonArray("addresses")) {
+                             addresses.add(addrElement.getAsString());
+                         }
+                     }
+                     device.put("addresses", addresses);
+                     
+                     Log.i(TAG, "设备: " + device.get("name") + 
+                               " (ID: " + deviceID + 
+                               ", 地址: " + addresses + ")");
+                     
+                     devices.add(device);
+                 }
+             }
+            
+            Log.i(TAG, "从 Syncthing API 获取到 " + devices.size() + " 个设备");
         } catch (Exception e) {
-            Log.e(TAG, "从 RestApi 获取设备列表失败", e);
+            Log.e(TAG, "从 Syncthing API 获取设备列表失败", e);
             // 返回空列表而不是抛出异常，避免整个请求失败
         }
         
@@ -592,51 +825,130 @@ public class HttpsApiController {
     /**
      * 获取设备连接状态
      */
-    private Map<String, Map<String, Object>> getDeviceConnections() {
-        Map<String, Map<String, Object>> connections = new HashMap<>();
-        
-        try {
-            // 从 RestApi 获取连接状态
-            if (mRestApi != null && mRestApi.isConfigLoaded()) {
-                // 由于 RestApi.getConnections 是异步的，我们暂时返回空连接信息
-                // 在实际实现中，可能需要使用同步方式或者缓存连接信息
-                Log.i(TAG, "设备连接状态暂时返回空数据（需要实现同步获取连接信息的逻辑）");
+    /**
+     * 异步获取设备连接信息
+     */
+    private CompletableFuture<Map<String, Map<String, Object>>> getDeviceConnectionsAsync() {
+        return CompletableFuture.supplyAsync(() -> {
+            Map<String, Map<String, Object>> connections = new HashMap<>();
+            
+            try {
+                Log.i(TAG, "开始异步获取设备连接信息");
+                // 从 Syncthing API 获取连接状态
+                String jsonResponse = executeGetRequest("/rest/system/connections");
+                JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
                 
-                // 这里可以添加同步获取连接信息的逻辑
-                // 或者使用缓存的连接信息
-            } else {
-                Log.w(TAG, "RestApi 未初始化或配置未加载，返回空连接信息");
+                if (jsonObject.has("connections")) {
+                    for (Map.Entry<String, JsonElement> entry : jsonObject.getAsJsonObject("connections").entrySet()) {
+                        JsonObject connJson = entry.getValue().getAsJsonObject();
+                        String deviceID = entry.getKey();
+                        
+                        Map<String, Object> connectionInfo = new HashMap<>();
+                        connectionInfo.put("connected", connJson.has("connected") ? connJson.get("connected").getAsBoolean() : false);
+                        connectionInfo.put("type", connJson.has("type") ? connJson.get("type").getAsString() : "");
+                        connectionInfo.put("address", connJson.has("address") ? connJson.get("address").getAsString() : "");
+                        connectionInfo.put("clientVersion", connJson.has("clientVersion") ? connJson.get("clientVersion").getAsString() : "");
+                        connectionInfo.put("inBytesTotal", connJson.has("inBytesTotal") ? connJson.get("inBytesTotal").getAsLong() : 0L);
+                        connectionInfo.put("outBytesTotal", connJson.has("outBytesTotal") ? connJson.get("outBytesTotal").getAsLong() : 0L);
+                        connectionInfo.put("isLocalNetwork", connJson.has("isLocalNetwork") ? connJson.get("isLocalNetwork").getAsBoolean() : false);
+                        connectionInfo.put("crypto", connJson.has("crypto") ? connJson.get("crypto").getAsString() : "");
+                        
+                        // 处理 primary 地址
+                        if (connJson.has("primary")) {
+                            JsonObject primaryJson = connJson.getAsJsonObject("primary");
+                            Map<String, Object> primary = new HashMap<>();
+                            primary.put("address", primaryJson.get("address").getAsString());
+                            primary.put("type", primaryJson.get("type").getAsString());
+                            connectionInfo.put("primary", primary);
+                        }
+                        
+                        connections.put(deviceID, connectionInfo);
+                        
+                        Log.i(TAG, "设备 " + deviceID + " 连接信息: " +
+                                  "connected=" + connectionInfo.get("connected") + 
+                                  ", type=" + connectionInfo.get("type") + 
+                                  ", address=" + connectionInfo.get("address") + 
+                                  ", isLocalNetwork=" + connectionInfo.get("isLocalNetwork"));
+                    }
+                } else {
+                    Log.w(TAG, "连接数据为空");
+                }
+            } catch (IOException e) {
+                Log.e(TAG, "从 Syncthing API 获取设备连接状态失败", e);
             }
+            
+            Log.i(TAG, "异步获取设备连接信息完成，共 " + connections.size() + " 个设备");
+            return connections;
+        });
+    }
+
+    /**
+     * 获取设备连接信息（使用 await 风格）
+     */
+    private Map<String, Map<String, Object>> getDeviceConnections() {
+        try {
+            // 类似 JavaScript 的 await
+            return getDeviceConnectionsAsync().get();
         } catch (Exception e) {
-            Log.e(TAG, "从 RestApi 获取设备连接状态失败", e);
-            // 返回空连接信息而不是抛出异常
+            Log.e(TAG, "等待异步获取设备连接信息失败", e);
+            return new HashMap<>();
         }
-        
-        return connections;
     }
     
     /**
-     * 获取设备发现信息
+     * 异步获取设备发现信息
+     */
+    private CompletableFuture<Map<String, Object>> getDeviceDiscoveryAsync() {
+        return CompletableFuture.supplyAsync(() -> {
+            Map<String, Object> discoveryInfo = new HashMap<>();
+            
+            try {
+                Log.i(TAG, "开始异步获取设备发现信息");
+                // 从 Syncthing API 获取设备发现信息
+                String jsonResponse = executeGetRequest("/rest/system/discovery");
+                JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
+                
+                if (jsonObject.has("devices")) {
+                    for (Map.Entry<String, JsonElement> entry : jsonObject.getAsJsonObject("devices").entrySet()) {
+                        JsonObject deviceJson = entry.getValue().getAsJsonObject();
+                        String deviceID = entry.getKey();
+                        
+                        Map<String, Object> deviceDiscoveryInfo = new HashMap<>();
+                        List<String> addresses = new ArrayList<>();
+                        if (deviceJson.has("addresses")) {
+                            for (JsonElement addrElement : deviceJson.getAsJsonArray("addresses")) {
+                                addresses.add(addrElement.getAsString());
+                            }
+                        }
+                        deviceDiscoveryInfo.put("addresses", addresses);
+                        
+                        discoveryInfo.put(deviceID, deviceDiscoveryInfo);
+                        
+                        Log.i(TAG, "设备 " + deviceID + " 发现信息: " + deviceDiscoveryInfo);
+                    }
+                } else {
+                    Log.w(TAG, "发现数据为空");
+                }
+            } catch (IOException e) {
+                Log.e(TAG, "从 Syncthing API 获取设备发现信息失败", e);
+            }
+            
+            Log.i(TAG, "异步获取设备发现信息完成，共 " + discoveryInfo.size() + " 个设备");
+            return discoveryInfo;
+        });
+    }
+
+    /**
+     * 获取设备发现信息（使用 await 风格）
      */
     private Map<String, Object> getDeviceDiscovery() {
-        Map<String, Object> discoveryInfo = new HashMap<>();
-        
         try {
-            // 从 RestApi 获取设备发现信息
-            if (mRestApi != null && mRestApi.isConfigLoaded()) {
-                // 这里应该调用 RestApi 的发现相关方法
-                // 由于 RestApi 可能没有直接的发现信息接口，我们暂时返回空数据
-                // 在实际实现中，可能需要通过其他方式获取发现信息
-                Log.i(TAG, "设备发现信息暂时返回空数据（需要实现具体的发现信息获取逻辑）");
-            } else {
-                Log.w(TAG, "RestApi 未初始化或配置未加载，返回空发现信息");
-            }
+            // 类似 JavaScript 的 await
+            return getDeviceDiscoveryAsync().get();
         } catch (Exception e) {
-            Log.e(TAG, "获取设备发现信息失败", e);
-            // 返回空发现信息而不是抛出异常
+            Log.e(TAG, "等待异步获取设备发现信息失败", e);
+            return new HashMap<>();
         }
-        
-        return discoveryInfo;
     }
     
     /**
@@ -757,6 +1069,14 @@ public class HttpsApiController {
     
     private String handleLocalDeviceId() {
         return success("local-device-id");
+    }
+    
+    /**
+     * 返回空设备列表
+     */
+    private String getMockDevices() {
+        Log.i(TAG, "返回空设备列表");
+        return success(new ArrayList<>());
     }
     
     private String handleWifiInfo() {

@@ -54,9 +54,7 @@ import android.widget.ImageButton;
 import com.annimon.stream.function.Consumer;
 import com.nutomic.syncthingandroid.R;
 import com.nutomic.syncthingandroid.SyncthingApp;
-import com.nutomic.syncthingandroid.fragments.DeviceListFragment;
 import com.nutomic.syncthingandroid.fragments.DrawerFragment;
-import com.nutomic.syncthingandroid.fragments.FolderListFragment;
 import com.nutomic.syncthingandroid.fragments.DeviceFragment;
 import com.nutomic.syncthingandroid.model.Device;
 import com.nutomic.syncthingandroid.service.Constants;
@@ -80,8 +78,7 @@ import javax.inject.Inject;
 import static java.lang.Math.min;
 
 /**
- * Shows {@link FolderListFragment} and
- * {@link DeviceListFragment} in different tabs, and
+ * Shows device fragments in different tabs, and
  * {@link DrawerFragment} in the navigation drawer.
  */
 public class MainActivity extends StateDialogActivity
@@ -109,8 +106,6 @@ public class MainActivity extends StateDialogActivity
 
     private ViewPager mViewPager;
 
-    private FolderListFragment mFolderListFragment;
-    private DeviceListFragment mDeviceListFragment;
     private DrawerFragment     mDrawerFragment;
 
     private ActionBarDrawerToggle mDrawerToggle;
@@ -204,9 +199,6 @@ public class MainActivity extends StateDialogActivity
     private void setupTabs() {
         mFragments.clear();
         mFragmentTitles.clear();
-        // 本机文件tab
-        mFragments.add(mFolderListFragment);
-        mFragmentTitles.add(getString(R.string.local_files_tab));
         
         // 从 HTTP API 获取设备列表并动态添加设备tab
         loadDevicesFromHttpApi();
@@ -343,10 +335,8 @@ public class MainActivity extends StateDialogActivity
             mTabButtonContainer = findViewById(R.id.tabButtonContainer);
         }
         mTabButtonContainer.removeAllViews();
-        // 本机文件按钮
-        addTabButton(getString(R.string.local_files_tab), 0);
         // 设备按钮
-        for (int i = 1; i < mFragmentTitles.size(); i++) {
+        for (int i = 0; i < mFragmentTitles.size(); i++) {
             addTabButton(mFragmentTitles.get(i), i);
         }
         // 添加"+"按钮
@@ -408,12 +398,9 @@ public class MainActivity extends StateDialogActivity
         mTabButtonContainer = findViewById(R.id.tabButtonContainer);
         FragmentManager fm = getSupportFragmentManager();
         if (savedInstanceState != null) {
-            mFolderListFragment = (FolderListFragment) fm.getFragment(
-                    savedInstanceState, FolderListFragment.class.getName());
             mDrawerFragment = (DrawerFragment) fm.getFragment(
                     savedInstanceState, DrawerFragment.class.getName());
         } else {
-            mFolderListFragment = new FolderListFragment();
             mDrawerFragment = new DrawerFragment();
         }
         mViewPager = findViewById(R.id.pager);
@@ -467,8 +454,6 @@ public class MainActivity extends StateDialogActivity
         SyncthingService mSyncthingService = getService();
         if (mSyncthingService != null) {
             mSyncthingService.unregisterOnServiceStateChangeListener(this);
-            mSyncthingService.unregisterOnServiceStateChangeListener(mFolderListFragment);
-            mSyncthingService.unregisterOnServiceStateChangeListener(mDeviceListFragment);
         }
     }
 
@@ -501,8 +486,6 @@ public class MainActivity extends StateDialogActivity
                 fm.putFragment(outState, fragment.getClass().getName(), fragment);
             }
         };
-        putFragment.accept(mFolderListFragment);
-        putFragment.accept(mDeviceListFragment);
         putFragment.accept(mDrawerFragment);
 
         outState.putInt("currentTab", mViewPager.getCurrentItem());

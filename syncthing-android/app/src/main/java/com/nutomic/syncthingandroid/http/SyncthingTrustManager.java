@@ -23,13 +23,13 @@ import javax.net.ssl.X509TrustManager;
  *
  * Based on http://stackoverflow.com/questions/16719959#16759793
  */
-class SyncthingTrustManager implements X509TrustManager {
+public class SyncthingTrustManager implements X509TrustManager {
 
     private static final String TAG = "SyncthingTrustManager";
 
     private final File mHttpsCertPath;
 
-    SyncthingTrustManager(File httpsCertPath) {
+    public SyncthingTrustManager(File httpsCertPath) {
         mHttpsCertPath = httpsCertPath;
     }
 
@@ -66,6 +66,6 @@ class SyncthingTrustManager implements X509TrustManager {
         }
     }
     public X509Certificate[] getAcceptedIssuers() {
-        return null;
+        return new X509Certificate[0]; // 返回空数组而不是 null
     }
 }
