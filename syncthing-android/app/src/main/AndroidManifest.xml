@@ -128,6 +128,14 @@
                 android:value=".activities.MainActivity" />
         </activity>
         <activity android:name=".activities.FileListActivity" />
+        <activity 
+            android:name=".activities.FolderDetailActivity"
+            android:label="文件列表"
+            android:parentActivityName=".activities.MainActivity">
+            <meta-data
+                android:name="android.support.PARENT_ACTIVITY"
+                android:value=".activities.MainActivity" />
+        </activity>
         <service android:name=".service.SyncthingService" />
         <receiver android:name=".receiver.BootReceiver"
             android:exported="false">

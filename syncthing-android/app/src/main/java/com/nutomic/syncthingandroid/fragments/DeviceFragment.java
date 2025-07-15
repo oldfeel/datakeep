@@ -22,6 +22,8 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import android.content.Intent;
+import com.nutomic.syncthingandroid.activities.FolderDetailActivity;
 
 public class DeviceFragment extends Fragment {
     private static final String TAG = "DeviceFragment";
@@ -56,7 +58,9 @@ public class DeviceFragment extends Fragment {
     @Nullable
     @Override
     public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
+        Log.d(TAG, "onCreateView: 开始创建DeviceFragment视图");
         View view = inflater.inflate(R.layout.fragment_device, container, false);
+        Log.d(TAG, "onCreateView: 布局加载完成");
         
         // 绑定UI组件
         mDeviceIdView = view.findViewById(R.id.device_id);
@@ -65,15 +69,38 @@ public class DeviceFragment extends Fragment {
         mDeviceInfoContainer = view.findViewById(R.id.device_info_container);
         mFoldersRecyclerView = view.findViewById(R.id.folders_recycler_view);
         
+        Log.d(TAG, "onCreateView: UI组件绑定完成 - deviceIdView=" + (mDeviceIdView != null) + 
+                   ", deviceIpView=" + (mDeviceIpView != null) + 
+                   ", toggleButton=" + (mToggleButton != null) + 
+                   ", deviceInfoContainer=" + (mDeviceInfoContainer != null) + 
+                   ", foldersRecyclerView=" + (mFoldersRecyclerView != null));
+        
         // 设置RecyclerView
         mFoldersRecyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
         mFolderAdapter = new FolderAdapter();
         mFoldersRecyclerView.setAdapter(mFolderAdapter);
+        Log.d(TAG, "onCreateView: RecyclerView设置完成");
+        
+        // 设置文件夹点击事件
+        mFolderAdapter.setOnItemClickListener(folder -> {
+            Log.d(TAG, "onCreateView: 文件夹被点击 - folderId=" + folder.id + ", label=" + folder.label);
+            try {
+                Intent intent = FolderDetailActivity.newIntent(getContext(), mDeviceId, folder.id, folder.label);
+                Log.d(TAG, "onCreateView: 创建Intent成功 - " + intent.toString());
+                startActivity(intent);
+                Log.d(TAG, "onCreateView: 启动FolderDetailActivity成功");
+            } catch (Exception e) {
+                Log.e(TAG, "onCreateView: 启动FolderDetailActivity失败", e);
+            }
+        });
+        Log.d(TAG, "onCreateView: 文件夹点击事件设置完成");
         
         // 设置展开/收起按钮点击事件
         mToggleButton.setOnClickListener(v -> toggleExpanded());
+        Log.d(TAG, "onCreateView: 展开/收起按钮点击事件设置完成");
         
         // 初始加载设备信息和文件夹列表
+        Log.d(TAG, "onCreateView: 开始加载数据");
         updateDeviceInfo();
         loadFolders();
         
@@ -99,17 +126,22 @@ public class DeviceFragment extends Fragment {
     }
     
     private void loadFolders() {
+        Log.d(TAG, "loadFolders: 开始加载文件夹列表");
         if (mHttpClient == null) {
             mHttpClient = new HttpClient();
+            Log.d(TAG, "loadFolders: 创建新的HttpClient");
         }
         
-        Log.i(TAG, "GET /api/device/" + mDeviceId + "/folders - 获取设备文件夹");
+        Log.i(TAG, "loadFolders: GET /api/device/" + mDeviceId + "/folders - 获取设备文件夹");
         
         mHttpClient.getDeviceFolders(mDeviceId, new okhttp3.Callback() {
             @Override
             public void onResponse(okhttp3.Call call, okhttp3.Response response) throws IOException {
+                Log.d(TAG, "loadFolders: onResponse - status=" + response.code() + ", success=" + response.isSuccessful());
                 if (response.isSuccessful()) {
                     String responseBody = response.body().string();
+                    Log.d(TAG, "loadFolders: 响应内容长度=" + responseBody.length());
+                    Log.d(TAG, "loadFolders: 响应内容=" + responseBody);
                     
                     try {
                         JSONObject jsonResponse = new JSONObject(responseBody);
@@ -118,16 +150,19 @@ public class DeviceFragment extends Fragment {
                         // 检查响应格式
                         if (jsonResponse.has("code") && jsonResponse.has("data")) {
                             int code = jsonResponse.getInt("code");
+                            Log.d(TAG, "loadFolders: API响应code=" + code);
                             if (code != 0) {
                                 String errorMsg = jsonResponse.optString("data", "未知错误");
-                                Log.e(TAG, "API 返回错误: code=" + code + ", message=" + errorMsg);
+                                Log.e(TAG, "loadFolders: API 返回错误: code=" + code + ", message=" + errorMsg);
                                 return;
                             }
                             folders = jsonResponse.getJSONArray("data");
+                            Log.d(TAG, "loadFolders: 从data字段获取文件夹数组，长度=" + folders.length());
                         } else if (jsonResponse.has("folders")) {
                             folders = jsonResponse.getJSONArray("folders");
+                            Log.d(TAG, "loadFolders: 从folders字段获取文件夹数组，长度=" + folders.length());
                         } else {
-                            Log.e(TAG, "未知的响应格式: " + responseBody);
+                            Log.e(TAG, "loadFolders: 未知的响应格式: " + responseBody);
                             return;
                         }
                         
@@ -141,24 +176,29 @@ public class DeviceFragment extends Fragment {
                             folder.path = folderJson.optString("path", "");
                             folder.type = folderJson.optString("type", "");
                             folderList.add(folder);
+                            Log.d(TAG, "loadFolders: 解析文件夹 " + i + " - id=" + folder.id + ", label=" + folder.label + ", path=" + folder.path);
                         }
+                        
+                        Log.d(TAG, "loadFolders: 解析完成，文件夹总数=" + folderList.size());
                         
                         // 在主线程更新UI
                         requireActivity().runOnUiThread(() -> {
+                            Log.d(TAG, "loadFolders: 在主线程更新UI");
                             mFolderAdapter.setFolders(folderList);
+                            Log.d(TAG, "loadFolders: 设置适配器数据完成");
                         });
                         
                     } catch (Exception e) {
-                        Log.e(TAG, "解析文件夹信息失败", e);
+                        Log.e(TAG, "loadFolders: 解析文件夹信息失败", e);
                     }
                 } else {
-                    Log.e(TAG, "获取文件夹失败: " + response.code());
+                    Log.e(TAG, "loadFolders: 获取文件夹失败: " + response.code());
                 }
             }
             
             @Override
             public void onFailure(okhttp3.Call call, IOException e) {
-                Log.e(TAG, "获取文件夹失败: " + e.getMessage());
+                Log.e(TAG, "loadFolders: 获取文件夹失败: " + e.getMessage(), e);
             }
         });
     }
@@ -293,15 +333,28 @@ public class DeviceFragment extends Fragment {
     
     // 文件夹适配器
     private static class FolderAdapter extends RecyclerView.Adapter<FolderAdapter.ViewHolder> {
+        private static final String TAG = "FolderAdapter";
         private List<FolderItem> folders = new ArrayList<>();
+        private OnItemClickListener listener;
+        
+        public interface OnItemClickListener {
+            void onItemClick(FolderItem folder);
+        }
+        
+        public void setOnItemClickListener(OnItemClickListener listener) {
+            this.listener = listener;
+            Log.d(TAG, "setOnItemClickListener: 设置点击监听器");
+        }
         
         public void setFolders(List<FolderItem> folders) {
             this.folders = folders;
+            Log.d(TAG, "setFolders: 设置文件夹列表，数量=" + folders.size());
             notifyDataSetChanged();
         }
         
         @Override
         public ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+            Log.d(TAG, "onCreateViewHolder: 创建ViewHolder");
             View view = LayoutInflater.from(parent.getContext())
                     .inflate(android.R.layout.simple_list_item_2, parent, false);
             return new ViewHolder(view);
@@ -310,12 +363,25 @@ public class DeviceFragment extends Fragment {
         @Override
         public void onBindViewHolder(ViewHolder holder, int position) {
             FolderItem folder = folders.get(position);
+            Log.d(TAG, "onBindViewHolder: 绑定位置 " + position + " - folder=" + folder.label + " (id=" + folder.id + ")");
+            
             holder.text1.setText(folder.label.isEmpty() ? folder.id : folder.label);
             holder.text2.setText(folder.path + " (" + folder.type + ")");
+            
+            // 设置点击事件
+            holder.itemView.setOnClickListener(v -> {
+                Log.d(TAG, "onBindViewHolder: 文件夹被点击 - " + folder.label + " (id=" + folder.id + ")");
+                if (listener != null) {
+                    listener.onItemClick(folder);
+                } else {
+                    Log.w(TAG, "onBindViewHolder: 点击监听器为null");
+                }
+            });
         }
         
         @Override
         public int getItemCount() {
+            Log.d(TAG, "getItemCount: 返回文件夹数量=" + folders.size());
             return folders.size();
         }
         
