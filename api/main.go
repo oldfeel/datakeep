@@ -5,14 +5,42 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
+var logger *zap.Logger
+
+func initZapLogger() *zap.Logger {
+	logDir := "logs"
+	logFile := filepath.Join(logDir, "app.log")
+	if _, err := os.Stat(logDir); os.IsNotExist(err) {
+		os.Mkdir(logDir, 0755)
+	}
+	ljWriter := &lumberjack.Logger{
+		Filename:   logFile,
+		MaxSize:    20, // 单个文件最大20MB
+		MaxBackups: 0,  // 不限制备份数量
+		MaxAge:     30, // 最多保存30天
+		Compress:   false,
+	}
+	encoder := zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig())
+	core := zapcore.NewCore(encoder, zapcore.AddSync(ljWriter), zapcore.DebugLevel)
+	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
+	zap.ReplaceGlobals(logger) // 让 zap.L() 可全局调用
+	return logger
+}
+
 func main() {
+	logger = initZapLogger()
+	logger.Info("zap + lumberjack 日志系统初始化完成")
 	// 解析命令行参数
 	flag.Parse()
 
@@ -30,11 +58,12 @@ func main() {
 
 	var err error
 	// 1. 初始化 GORM 数据库
-	db, err = gorm.Open(sqlite.Open("files.db"), &gorm.Config{})
+	db, err = gorm.Open(sqlite.Open("mydata.db"), &gorm.Config{})
 	if err != nil {
 		log.Fatal("failed to connect database:", err)
 	}
-	if err := db.AutoMigrate(&File{}); err != nil {
+	// 自动迁移设备表和文件夹表
+	if err := db.AutoMigrate(&File{}, &DeviceInfo{}, &FolderInfo{}); err != nil {
 		log.Fatal("auto migrate failed:", err)
 	}
 

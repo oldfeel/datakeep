@@ -75,6 +75,27 @@ type File struct {
 	IsDir    bool   `json:"isDir"`
 }
 
+// 设备表
+// 保存设备 id、name、局域网 ip
+// 表名: devices
+type DeviceInfo struct {
+	ID       uint   `gorm:"primaryKey" json:"id"`                 // 自增主键
+	DeviceID string `gorm:"uniqueIndex;not null" json:"deviceId"` // 设备唯一ID
+	Name     string `json:"name"`                                 // 设备名称
+	LanIP    string `json:"lanIp"`                                // 局域网IP
+}
+
+// 文件夹表
+// 保存设备id、文件夹名字、文件夹id、文件夹路径
+// 表名: folders
+type FolderInfo struct {
+	ID       uint   `gorm:"primaryKey" json:"id"`           // 自增主键
+	DeviceID string `gorm:"index;not null" json:"deviceId"` // 所属设备ID
+	FolderID string `gorm:"not null" json:"folderId"`       // 文件夹唯一ID
+	Name     string `json:"name"`                           // 文件夹名字
+	Path     string `json:"path"`                           // 文件夹路径
+}
+
 // 函数实现
 func getConfigPath() string {
 	usr, _ := user.Current()
