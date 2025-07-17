@@ -1,4 +1,4 @@
-package `fun`.anhu.syncthing.ui.theme
+package tech.shuipi.syncthing.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
