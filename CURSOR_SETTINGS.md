@@ -5,12 +5,13 @@
 ### 技术栈
 - **前端**: React + TypeScript + Material-UI (MUI)
 - **桌面应用**: Wails (Go + Web)
+- **Android 应用**: Kotlin + Ktor + Netty
 - **后端 API**: Go + Fiber (RESTful API)
 - **数据库**: SQLite + GORM
 
 ### 架构设计
 
-#### 1. 双重接口设计
+#### 1. 多重接口设计
 - **Wails 接口**: 用于桌面应用特有功能
   - 文件夹选择器 (`SelectFolder`)
   - 系统级操作
@@ -20,6 +21,10 @@
   - 文件夹管理 (`/api/device/:deviceId/folders`)
   - 文件浏览 (`/api/folder/:folderId`)
   - Syncthing 代理接口
+- **Android HTTPS API**: 用于 Android 设备局域网访问
+  - 监听地址: `0.0.0.0:8080` (支持局域网访问)
+  - 代理 Syncthing REST API
+  - 提供文件访问服务
 
 #### 2. 文件结构
 ```
@@ -36,6 +41,19 @@ mydata/
 │           │   ├── App.tsx           # 主应用页面
 │           │   └── DeviceDetail.tsx  # 设备详情页面
 │           └── wailsjs/              # Wails 生成的绑定
+├── android/               # Android 应用
+│   └── app/
+│       └── src/
+│           └── main/
+│               ├── java/tech/shuipi/syncthing/
+│               │   ├── MainActivity.kt        # 主活动
+│               │   └── service/
+│               │       ├── SyncthingService.kt    # 前台服务
+│               │       ├── SyncthingRunnable.kt   # Syncthing 运行器
+│               │       └── ProxyController.kt     # HTTPS API 代理
+│               └── jniLibs/
+│                   └── arm64-v8a/
+│                       └── libsyncthing.so        # Syncthing 原生库
 └── syncthing/             # Syncthing 源码（参考用）
 ```
 
@@ -44,6 +62,7 @@ mydata/
 ### 1. 接口使用原则
 - **桌面应用功能** → 使用 Wails 接口
 - **局域网访问** → 使用 REST API (localhost:8080)
+- **Android 局域网访问** → 使用 Android HTTPS API (0.0.0.0:8080)
 - **文件选择器** → 使用 Wails 的 `SelectFolder()`
 - **设备列表** → 使用 REST API `/api/devices`
 
@@ -67,6 +86,14 @@ mydata/
 - **API 错误**: 显示 Snackbar 提示
 - **删除失败**: 自动刷新页面
 - **加载失败**: 显示错误信息
+
+### 6. Android 应用设定
+- **前台服务**: 应用启动时启动前台服务，确保后台运行
+- **Syncthing 原生库**: 运行 `libsyncthing.so` 提供文件同步功能
+- **HTTPS 服务器**: 使用 Ktor + Netty 提供局域网 API 访问
+- **监听地址**: `0.0.0.0:8080` 支持局域网设备访问
+- **API 代理**: 代理 Syncthing REST API，提供统一接口
+- **文件访问**: 通过 API 访问 Android 设备上的文件
 
 ## 开发注意事项
 
@@ -186,8 +213,11 @@ const response = await fetch('http://localhost:8080/api/devices');
 1. 修改后端代码 → 重新编译 API
 2. 修改前端代码 → Wails 自动热重载
 3. 添加 Wails 接口 → 重新生成绑定
+4. 修改 Android 代码 → 重新编译 APK
 
 ## 参考资源
 - Syncthing GUI 源码: `syncthing/gui/` (用于参考 UI 设计)
 - Wails 文档: https://wails.io/docs/
-- Material-UI 文档: https://mui.com/ 
+- Material-UI 文档: https://mui.com/
+- Ktor 文档: https://ktor.io/docs/
+- Android 前台服务: https://developer.android.com/guide/components/services 
