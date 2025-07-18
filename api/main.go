@@ -251,6 +251,9 @@ func main() {
 
 	// Syncthing 代理路由
 	app.Get("/api/syncthing/events", syncthingEventsProxyHandler)
+	app.Get("/api/syncthing/discovery", syncthingDiscoveryProxyHandler)           // 新增设备发现代理接口
+	app.Get("/api/syncthing/deviceid", syncthingDeviceIdProxyHandler)             // 新增设备ID校验接口
+	app.Post("/api/syncthing/config/devices", syncthingConfigDevicesProxyHandler) // 新增添加设备接口
 
 	// 健康检查端点
 	app.Get("/health", func(c *fiber.Ctx) error {

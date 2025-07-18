@@ -1,6 +1,7 @@
 import { Device, Folder, ApiResponse } from '../types';
 
-const API_BASE_URL = 'https://localhost:8443/api';
+// dev 模式用测试机 IP，正式版用 localhost
+const API_BASE_URL = __DEV__ ? 'http://192.168.2.6:8080/api' : 'http://localhost:8080/api';
 
 class ApiService {
   private async request<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {

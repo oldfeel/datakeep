@@ -80,13 +80,9 @@ export const HomeScreen: React.FC = () => {
   const loadDevices = async (): Promise<ExtendedDevice[]> => {
     try {
       console.log('开始加载设备列表...');
-      const response = await fetch('https://localhost:8443/api/devices');
-      if (!response.ok) throw new Error('API 请求失败');
-      const result = await response.json();
-      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
-      const devicesData = result.data || [];
+      const devicesData = await apiService.getDevices();
       console.log('设备列表加载成功，设备数量:', devicesData.length);
-      return devicesData;
+      return devicesData as ExtendedDevice[];
     } catch (err) {
       console.error('Failed to load devices:', err);
       return [];
@@ -97,11 +93,7 @@ export const HomeScreen: React.FC = () => {
   const loadDeviceFolders = async (deviceId: string) => {
     try {
       console.log('加载设备文件夹:', deviceId);
-      const response = await fetch(`https://localhost:8443/api/device/${deviceId}/folders`);
-      if (!response.ok) throw new Error('API 请求失败');
-      const result = await response.json();
-      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
-      const foldersData = result.data || [];
+      const foldersData = await apiService.getDeviceFolders(deviceId);
       console.log('文件夹加载成功，文件夹数量:', foldersData.length);
       setFolders(foldersData);
     } catch (error) {
