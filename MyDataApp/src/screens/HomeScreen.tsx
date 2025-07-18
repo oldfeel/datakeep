@@ -16,6 +16,7 @@ import {
 import { SearchBar } from '../components/SearchBar';
 import { SimpleServiceManager } from '../components/SimpleServiceManager';
 import { CustomFAB } from '../components/CustomFAB';
+import { PermissionStatus } from '../components/PermissionStatus';
 import { apiService } from '../services/api';
 import { Device, Folder } from '../types';
 
@@ -27,6 +28,11 @@ export const HomeScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [permissions, setPermissions] = useState({
+    notifications: false,
+    storage: false,
+  });
+  const [serviceStatus, setServiceStatus] = useState<'running' | 'stopped' | 'starting' | 'error'>('stopped');
 
   useEffect(() => {
     loadData();
@@ -140,12 +146,19 @@ export const HomeScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
+      <PermissionStatus 
+        permissions={permissions}
+        serviceStatus={serviceStatus}
+      />
+      
       <SimpleServiceManager 
         onServiceStarted={() => {
           console.log('Syncthing 服务已启动');
+          setServiceStatus('running');
         }}
         onServiceStopped={() => {
           console.log('Syncthing 服务已停止');
+          setServiceStatus('stopped');
         }}
       />
 

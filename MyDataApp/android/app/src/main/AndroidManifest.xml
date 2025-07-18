@@ -30,7 +30,7 @@
       
       <!-- Syncthing 前台服务 -->
       <service
-        android:name=".service.SyncthingService"
+        android:name="com.mydata.app.service.SyncthingService"
         android:enabled="true"
         android:exported="false"
         android:foregroundServiceType="dataSync" />
