@@ -7,7 +7,10 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "build:syncthing": "./build-syncthing.sh",
+    "build:android": "npm run build:syncthing && npx react-native run-android",
+    "clean:syncthing": "rm -rf lib_build/gobuild && rm -rf android/app/src/main/jniLibs/*"
   },
   "dependencies": {
     "@react-native/new-app-screen": "0.80.1",
