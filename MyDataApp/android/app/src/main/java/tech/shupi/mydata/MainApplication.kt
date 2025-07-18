@@ -1,4 +1,4 @@
-package com.mydataapp
+package tech.shupi.mydata
 
 import android.app.Application
 import com.facebook.react.PackageList

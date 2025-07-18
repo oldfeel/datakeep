@@ -1,4 +1,4 @@
-module com.mydata.app/lib_build
+module tech.shupi.mydata/lib_build
 
 go 1.21
 

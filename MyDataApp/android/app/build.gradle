@@ -77,9 +77,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.mydataapp"
+    namespace "tech.shupi.mydata"
     defaultConfig {
-        applicationId "com.mydataapp"
+        applicationId "tech.shupi.mydata"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

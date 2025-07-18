@@ -1,4 +1,4 @@
-package com.mydataapp
+package tech.shupi.mydata
 
 import android.Manifest
 import android.content.Intent
@@ -12,7 +12,7 @@ import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
-import com.mydata.app.service.SyncthingService
+import tech.shupi.mydata.service.SyncthingService
 
 class MainActivity : ReactActivity() {
     

@@ -1,4 +1,4 @@
-package com.mydata.app.service
+package tech.shupi.mydata.service
 
 import android.content.Context
 import android.util.Log

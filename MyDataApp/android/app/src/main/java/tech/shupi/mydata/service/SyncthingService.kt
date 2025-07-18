@@ -1,4 +1,4 @@
-package com.mydata.app.service
+package tech.shupi.mydata.service
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -12,9 +12,9 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.mydataapp.R
+import tech.shupi.mydata.R
 import java.util.concurrent.atomic.AtomicReference
-import com.mydata.app.service.HttpsApiController
+import tech.shupi.mydata.service.HttpsApiController
 
 /**
  * 前台服务，用于运行 Syncthing 原生二进制文件
@@ -29,9 +29,9 @@ class SyncthingService : Service() {
         private const val CHANNEL_NAME = "Syncthing Service"
         
         // Intent Actions
-        const val ACTION_START = "com.mydata.app.service.START"
-        const val ACTION_STOP = "com.mydata.app.service.STOP"
-        const val ACTION_RESTART = "com.mydata.app.service.RESTART"
+        const val ACTION_START = "tech.shupi.mydata.service.START"
+        const val ACTION_STOP = "tech.shupi.mydata.service.STOP"
+        const val ACTION_RESTART = "tech.shupi.mydata.service.RESTART"
     }
 
     /**
@@ -214,7 +214,7 @@ class SyncthingService : Service() {
      * 创建通知
      */
     private fun createNotification(content: String): Notification {
-        val intent = Intent(this, com.mydataapp.MainActivity::class.java).apply {
+        val intent = Intent(this, tech.shupi.mydata.MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
         
