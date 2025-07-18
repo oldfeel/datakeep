@@ -11,10 +11,11 @@ import {
   Title,
   Paragraph,
   Chip,
-  FAB,
   Snackbar,
 } from 'react-native-paper';
 import { SearchBar } from '../components/SearchBar';
+import { SimpleServiceManager } from '../components/SimpleServiceManager';
+import { CustomFAB } from '../components/CustomFAB';
 import { apiService } from '../services/api';
 import { Device, Folder } from '../types';
 
@@ -139,6 +140,15 @@ export const HomeScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
+      <SimpleServiceManager 
+        onServiceStarted={() => {
+          console.log('Syncthing 服务已启动');
+        }}
+        onServiceStopped={() => {
+          console.log('Syncthing 服务已停止');
+        }}
+      />
+
       <SearchBar
         value={searchQuery}
         onChangeText={setSearchQuery}
@@ -174,8 +184,7 @@ export const HomeScreen: React.FC = () => {
         style={styles.list}
       />
 
-      <FAB
-        style={styles.fab}
+      <CustomFAB
         icon="plus"
         onPress={() => {
           // TODO: 实现添加文件夹功能

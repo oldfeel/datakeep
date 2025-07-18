@@ -1,6 +1,6 @@
 import { Device, Folder, ApiResponse } from '../types';
 
-const API_BASE_URL = 'http://localhost:8080/api';
+const API_BASE_URL = 'https://localhost:8443/api';
 
 class ApiService {
   private async request<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
