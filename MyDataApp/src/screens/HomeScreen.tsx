@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   StyleSheet,
+  ScrollView,
   FlatList,
   RefreshControl,
   Alert,
@@ -11,47 +12,102 @@ import {
   Title,
   Paragraph,
   Chip,
+  IconButton,
+  Searchbar,
+  Button,
   Snackbar,
 } from 'react-native-paper';
-import { SearchBar } from '../components/SearchBar';
-import { SimpleServiceManager } from '../components/SimpleServiceManager';
 import { CustomFAB } from '../components/CustomFAB';
-import { PermissionStatus } from '../components/PermissionStatus';
 import { apiService } from '../services/api';
 import { Device, Folder } from '../types';
 
+// 扩展 Device 接口以匹配参考实现
+interface ExtendedDevice extends Device {
+  deviceID: string;
+  addresses: string[];
+  compression: string;
+  certName: string;
+  introducer: boolean;
+  connected: boolean;
+  connectionType: string;
+  clientVersion: string;
+  inBytesTotal: number;
+  outBytesTotal: number;
+  isLocalNetwork: boolean;
+  crypto: string;
+}
+
 export const HomeScreen: React.FC = () => {
-  const [devices, setDevices] = useState<Device[]>([]);
+  const [devices, setDevices] = useState<ExtendedDevice[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDevice, setSelectedDevice] = useState<ExtendedDevice | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
-  const [permissions, setPermissions] = useState({
-    notifications: false,
-    storage: false,
-  });
-  const [serviceStatus, setServiceStatus] = useState<'running' | 'stopped' | 'starting' | 'error'>('stopped');
 
   useEffect(() => {
     loadData();
   }, []);
 
+  // 当选中设备改变时，加载对应的文件夹
+  useEffect(() => {
+    if (selectedDevice) {
+      loadDeviceFolders(selectedDevice.deviceID);
+    }
+  }, [selectedDevice]);
+
   const loadData = async () => {
     try {
       setIsLoading(true);
-      const [devicesData, foldersData] = await Promise.all([
-        apiService.getDevices(),
-        apiService.getFolders(),
-      ]);
+      const devicesData = await loadDevices();
       setDevices(devicesData);
-      setFolders(foldersData);
+      
+      // 默认选中第一个设备（通常是本机）
+      if (devicesData.length > 0) {
+        setSelectedDevice(devicesData[0]);
+      }
     } catch (error) {
       console.error('Failed to load data:', error);
       showSnackbar('加载数据失败');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // 加载设备列表 - 参考 client/frontend/src/pages/App.tsx
+  const loadDevices = async (): Promise<ExtendedDevice[]> => {
+    try {
+      console.log('开始加载设备列表...');
+      const response = await fetch('https://localhost:8443/api/devices');
+      if (!response.ok) throw new Error('API 请求失败');
+      const result = await response.json();
+      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+      const devicesData = result.data || [];
+      console.log('设备列表加载成功，设备数量:', devicesData.length);
+      return devicesData;
+    } catch (err) {
+      console.error('Failed to load devices:', err);
+      return [];
+    }
+  };
+
+  // 加载设备文件夹 - 参考 client/frontend/src/components/FolderList.tsx
+  const loadDeviceFolders = async (deviceId: string) => {
+    try {
+      console.log('加载设备文件夹:', deviceId);
+      const response = await fetch(`https://localhost:8443/api/device/${deviceId}/folders`);
+      if (!response.ok) throw new Error('API 请求失败');
+      const result = await response.json();
+      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
+      const foldersData = result.data || [];
+      console.log('文件夹加载成功，文件夹数量:', foldersData.length);
+      setFolders(foldersData);
+    } catch (error) {
+      console.error('Failed to load folders:', error);
+      setFolders([]);
+      showSnackbar('加载文件夹失败');
     }
   };
 
@@ -66,57 +122,62 @@ export const HomeScreen: React.FC = () => {
     setSnackbarVisible(true);
   };
 
-  const handleDeleteFolder = (folderId: string) => {
-    Alert.alert(
-      '确认删除',
-      '确定要删除这个文件夹吗？',
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '删除',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await apiService.deleteFolder(folderId);
-              showSnackbar('文件夹删除成功');
-              loadData(); // 重新加载数据
-            } catch (error) {
-              console.error('Failed to delete folder:', error);
-              showSnackbar('删除失败');
-            }
-          },
-        },
-      ]
-    );
+  const handleDeviceSelect = (device: ExtendedDevice) => {
+    setSelectedDevice(device);
   };
 
-  const filteredDevices = devices.filter(device =>
-    device.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const handleAddDevice = () => {
+    showSnackbar('添加设备功能开发中');
+  };
 
-  const filteredFolders = folders.filter(folder =>
-    folder.label.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const handleMessagePress = () => {
+    showSnackbar('消息功能开发中');
+  };
 
-  const renderDevice = ({ item }: { item: Device }) => (
-    <Card style={styles.card} mode="outlined">
-      <Card.Content>
-        <Title>{item.name}</Title>
-        <Paragraph>{item.address}</Paragraph>
-        <View style={styles.chipContainer}>
+  const handleProfilePress = () => {
+    showSnackbar('个人中心功能开发中');
+  };
+
+  const handleFolderPress = (folder: Folder) => {
+    showSnackbar(`打开文件夹: ${folder.label}`);
+  };
+
+  const isLocalDevice = (device: ExtendedDevice) => {
+    return device.deviceID === 'local' || device.isLocal;
+  };
+
+  const getConnectionStatus = (device: ExtendedDevice) => {
+    return device.connected ? '已连接' : '未连接';
+  };
+
+  const getConnectionColor = (device: ExtendedDevice) => {
+    return device.connected ? '#4CAF50' : '#FF5722';
+  };
+
+  const renderDevice = ({ item }: { item: ExtendedDevice }) => (
+    <Card 
+      style={[
+        styles.deviceCard,
+        selectedDevice?.deviceID === item.deviceID && styles.selectedDeviceCard
+      ]}
+      mode="outlined"
+      onPress={() => handleDeviceSelect(item)}
+    >
+      <Card.Content style={styles.deviceCardContent}>
+        <Title style={styles.deviceTitle}>{item.name}</Title>
+        <Paragraph style={styles.deviceAddress}>{item.address}</Paragraph>
+        <View style={styles.deviceChips}>
           <Chip
             mode="outlined"
             style={[
               styles.statusChip,
-              {
-                backgroundColor: item.status === 'connected' ? '#4CAF50' : '#FF5722',
-              },
+              { backgroundColor: getConnectionColor(item) }
             ]}
             textStyle={{ color: 'white' }}
           >
-            {item.status === 'connected' ? '已连接' : '未连接'}
+            {getConnectionStatus(item)}
           </Chip>
-          {item.isLocal && (
+          {isLocalDevice(item) && (
             <Chip mode="outlined" style={styles.localChip}>
               本机
             </Chip>
@@ -127,11 +188,11 @@ export const HomeScreen: React.FC = () => {
   );
 
   const renderFolder = ({ item }: { item: Folder }) => (
-    <Card style={styles.card} mode="outlined">
+    <Card style={styles.folderCard} mode="outlined" onPress={() => handleFolderPress(item)}>
       <Card.Content>
-        <Title>{item.label}</Title>
-        <Paragraph>{item.path}</Paragraph>
-        <View style={styles.chipContainer}>
+        <Title style={styles.folderTitle}>{item.label}</Title>
+        <Paragraph style={styles.folderPath}>{item.path}</Paragraph>
+        <View style={styles.folderChips}>
           <Chip mode="outlined" style={styles.typeChip}>
             {item.type === 'sendonly' ? '仅发送' : 
              item.type === 'receiveonly' ? '仅接收' : '双向同步'}
@@ -146,61 +207,87 @@ export const HomeScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      <PermissionStatus 
-        permissions={permissions}
-        serviceStatus={serviceStatus}
-      />
-      
-      <SimpleServiceManager 
-        onServiceStarted={() => {
-          console.log('Syncthing 服务已启动');
-          setServiceStatus('running');
-        }}
-        onServiceStopped={() => {
-          console.log('Syncthing 服务已停止');
-          setServiceStatus('stopped');
-        }}
-      />
+      {/* 顶部搜索栏和按钮 */}
+      <View style={styles.header}>
+        <Searchbar
+          placeholder="搜索设备或文件夹..."
+          onChangeText={setSearchQuery}
+          value={searchQuery}
+          style={styles.searchBar}
+        />
+        <View style={styles.headerButtons}>
+          <IconButton
+            icon="message-outline"
+            size={24}
+            onPress={handleMessagePress}
+            style={styles.headerButton}
+          />
+          <IconButton
+            icon="account-outline"
+            size={24}
+            onPress={handleProfilePress}
+            style={styles.headerButton}
+          />
+        </View>
+      </View>
 
-      <SearchBar
-        value={searchQuery}
-        onChangeText={setSearchQuery}
-        placeholder="搜索设备或文件夹..."
-        height={40}
-        fontSize={14}
-        onClear={() => setSearchQuery('')}
-      />
-
-      <FlatList
-        data={filteredDevices}
-        renderItem={renderDevice}
-        keyExtractor={(item) => item.id}
+      <ScrollView 
+        style={styles.scrollView}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-        ListHeaderComponent={
-          <Title style={styles.sectionTitle}>设备 ({filteredDevices.length})</Title>
-        }
-        style={styles.list}
-      />
+      >
+        {/* 设备列表 */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Title style={styles.sectionTitle}>
+              设备 ({devices.length})
+            </Title>
+            <Button
+              mode="contained"
+              onPress={handleAddDevice}
+              style={styles.addButton}
+              icon="plus"
+            >
+              添加设备
+            </Button>
+          </View>
+          
+          <FlatList
+            data={devices}
+            renderItem={renderDevice}
+            keyExtractor={(item) => item.deviceID}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.deviceList}
+            contentContainerStyle={styles.deviceListContent}
+          />
+        </View>
 
-      <FlatList
-        data={filteredFolders}
-        renderItem={renderFolder}
-        keyExtractor={(item) => item.id}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        ListHeaderComponent={
-          <Title style={styles.sectionTitle}>文件夹 ({filteredFolders.length})</Title>
-        }
-        style={styles.list}
-      />
+        {/* 文件夹列表 */}
+        {selectedDevice && (
+          <View style={styles.section}>
+            <Title style={styles.sectionTitle}>
+              {selectedDevice.name} 的文件夹 ({folders.length})
+            </Title>
+            
+            <FlatList
+              data={folders}
+              renderItem={renderFolder}
+              keyExtractor={(item) => item.id}
+              numColumns={2}
+              showsVerticalScrollIndicator={false}
+              style={styles.folderList}
+              contentContainerStyle={styles.folderListContent}
+            />
+          </View>
+        )}
+      </ScrollView>
 
+      {/* 添加文件夹 FAB */}
       <CustomFAB
         icon="plus"
         onPress={() => {
-          // TODO: 实现添加文件夹功能
           showSnackbar('添加文件夹功能开发中');
         }}
       />
@@ -221,39 +308,116 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  list: {
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: 'white',
+    elevation: 2,
+  },
+  searchBar: {
+    flex: 1,
+    marginRight: 8,
+    elevation: 0,
+  },
+  headerButtons: {
+    flexDirection: 'row',
+  },
+  headerButton: {
+    marginLeft: 4,
+  },
+  scrollView: {
     flex: 1,
   },
-  card: {
-    marginHorizontal: 16,
-    marginVertical: 4,
+  section: {
+    marginVertical: 16,
   },
-  chipContainer: {
+  sectionHeader: {
     flexDirection: 'row',
-    marginTop: 8,
-    gap: 8,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  addButton: {
+    borderRadius: 20,
+  },
+  deviceList: {
+    maxHeight: 120,
+  },
+  deviceListContent: {
+    paddingHorizontal: 16,
+  },
+  deviceCard: {
+    width: 200,
+    marginRight: 12,
+    marginBottom: 8,
+  },
+  selectedDeviceCard: {
+    borderColor: '#2196F3',
+    borderWidth: 2,
+  },
+  deviceCardContent: {
+    padding: 12,
+  },
+  deviceTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  deviceAddress: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 8,
+  },
+  deviceChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
   },
   statusChip: {
-    marginRight: 8,
+    marginRight: 4,
   },
   localChip: {
     backgroundColor: '#2196F3',
   },
+  folderList: {
+    flex: 1,
+  },
+  folderListContent: {
+    paddingHorizontal: 16,
+  },
+  folderCard: {
+    flex: 1,
+    margin: 4,
+    marginBottom: 8,
+  },
+  folderTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  folderPath: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 8,
+    fontFamily: 'monospace',
+  },
+  folderChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
   typeChip: {
     backgroundColor: '#FF9800',
+    marginRight: 4,
   },
   deviceCountChip: {
     backgroundColor: '#9C27B0',
   },
-  sectionTitle: {
-    marginHorizontal: 16,
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  fab: {
-    position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
-  },
-}); 
+});
