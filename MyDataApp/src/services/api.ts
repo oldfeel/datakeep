@@ -1,78 +1,104 @@
 import { Device, Folder, ApiResponse } from '../types';
-
-// dev 模式用真机 HTTPS API，正式版用 localhost
-const API_BASE_URL = __DEV__ ? 'https://192.168.2.6:8443/api' : 'http://localhost:8080/api';
+import ApiModule from '../types/ApiModule';
 
 class ApiService {
-  private async request<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
+  // 获取设备列表
+  async getDevices(): Promise<Device[]> {
     try {
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...options?.headers,
-        },
-        ...options,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data;
+      console.log('🌐 通过 Native Module 获取设备列表...');
+      const response = await ApiModule.getDevices();
+      const data = JSON.parse(response);
+      console.log('✅ 设备列表获取成功，设备数量:', data.data?.length || 0);
+      return data.data || [];
     } catch (error) {
-      console.error('API request failed:', error);
+      console.error('❌ 获取设备列表失败:', error);
       throw error;
     }
   }
 
-  // 获取设备列表
-  async getDevices(): Promise<Device[]> {
-    const response = await this.request<Device[]>('/devices');
-    return response.data;
-  }
-
   // 获取文件夹列表
   async getFolders(): Promise<Folder[]> {
-    const response = await this.request<Folder[]>('/folders');
-    return response.data;
+    try {
+      console.log('🌐 通过 Native Module 获取文件夹列表...');
+      const response = await ApiModule.getDeviceFolders('local');
+      const data = JSON.parse(response);
+      console.log('✅ 文件夹列表获取成功，文件夹数量:', data.data?.length || 0);
+      return data.data || [];
+    } catch (error) {
+      console.error('❌ 获取文件夹列表失败:', error);
+      throw error;
+    }
   }
 
   // 获取特定设备的文件夹
   async getDeviceFolders(deviceId: string): Promise<Folder[]> {
-    const response = await this.request<Folder[]>(`/device/${deviceId}/folders`);
-    return response.data;
+    try {
+      console.log(`🌐 通过 Native Module 获取设备 ${deviceId} 的文件夹...`);
+      const response = await ApiModule.getDeviceFolders(deviceId);
+      const data = JSON.parse(response);
+      console.log('✅ 设备文件夹获取成功，文件夹数量:', data.data?.length || 0);
+      return data.data || [];
+    } catch (error) {
+      console.error('❌ 获取设备文件夹失败:', error);
+      throw error;
+    }
   }
 
   // 获取文件夹内容
   async getFolderContent(folderId: string, path: string = ''): Promise<any> {
-    const response = await this.request<any>(`/folder/${folderId}?path=${encodeURIComponent(path)}`);
-    return response.data;
+    try {
+      console.log(`🌐 通过 Native Module 获取文件夹 ${folderId} 的内容...`);
+      const response = await ApiModule.getFolderFiles(folderId);
+      const data = JSON.parse(response);
+      console.log('✅ 文件夹内容获取成功');
+      return data.data || [];
+    } catch (error) {
+      console.error('❌ 获取文件夹内容失败:', error);
+      throw error;
+    }
   }
 
-  // 添加文件夹
+  // 获取本机设备ID
+  async getLocalDeviceId(): Promise<string> {
+    try {
+      console.log('🌐 通过 Native Module 获取本机设备ID...');
+      const response = await ApiModule.getLocalDeviceId();
+      const data = JSON.parse(response);
+      console.log('✅ 本机设备ID获取成功');
+      return data.data?.deviceId || '';
+    } catch (error) {
+      console.error('❌ 获取本机设备ID失败:', error);
+      throw error;
+    }
+  }
+
+  // 获取WiFi信息
+  async getWifiInfo(): Promise<any> {
+    try {
+      console.log('🌐 通过 Native Module 获取WiFi信息...');
+      const response = await ApiModule.getWifiInfo();
+      const data = JSON.parse(response);
+      console.log('✅ WiFi信息获取成功');
+      return data.data || {};
+    } catch (error) {
+      console.error('❌ 获取WiFi信息失败:', error);
+      throw error;
+    }
+  }
+
+  // 添加文件夹（暂未实现）
   async addFolder(folder: Omit<Folder, 'id'>): Promise<Folder> {
-    const response = await this.request<Folder>('/folders', {
-      method: 'POST',
-      body: JSON.stringify(folder),
-    });
-    return response.data;
+    throw new Error('添加文件夹功能暂未实现');
   }
 
-  // 删除文件夹
+  // 删除文件夹（暂未实现）
   async deleteFolder(folderId: string): Promise<void> {
-    await this.request<void>(`/folders/${folderId}`, {
-      method: 'DELETE',
-    });
+    throw new Error('删除文件夹功能暂未实现');
   }
 
-  // 更新文件夹
+  // 更新文件夹（暂未实现）
   async updateFolder(folderId: string, updates: Partial<Folder>): Promise<Folder> {
-    const response = await this.request<Folder>(`/folders/${folderId}`, {
-      method: 'PUT',
-      body: JSON.stringify(updates),
-    });
-    return response.data;
+    throw new Error('更新文件夹功能暂未实现');
   }
 }
 
