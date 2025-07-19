@@ -269,20 +269,31 @@ class SyncthingService : Service() {
      * 启动 HTTPS API 服务器
      */
     private fun startHttpsServer() {
+        Log.d(TAG, "🚀 开始启动 HTTPS API 服务器...")
+        
         try {
             if (httpsApiController != null) {
-                Log.w(TAG, "HTTPS 服务器已经在运行")
+                Log.w(TAG, "⚠️ HTTPS 服务器已经在运行")
                 return
             }
             
+            Log.d(TAG, "🔧 创建 HttpsApiController 实例...")
             // 创建并启动 HTTPS 服务器
             httpsApiController = HttpsApiController(this)
+            Log.d(TAG, "✅ HttpsApiController 实例创建成功")
+            
+            Log.d(TAG, "🚀 调用 HttpsApiController.start()...")
             httpsApiController?.start()
             
-            Log.i(TAG, "HTTPS API 服务器已启动")
+            Log.i(TAG, "✅ HTTPS API 服务器启动成功！")
+            Log.i(TAG, "📡 服务器地址: https://192.168.2.6:8443")
+            Log.i(TAG, "🌐 可用端点: /api/devices, /api/device/*/folders, /api/folder/*")
             
         } catch (e: Exception) {
-            Log.e(TAG, "启动 HTTPS 服务器失败", e)
+            Log.e(TAG, "❌ 启动 HTTPS 服务器失败", e)
+            Log.e(TAG, "错误详情: ${e.message}")
+            Log.e(TAG, "堆栈跟踪:")
+            e.printStackTrace()
         }
     }
     
