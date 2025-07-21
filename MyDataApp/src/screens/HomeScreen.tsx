@@ -6,6 +6,8 @@ import {
   FlatList,
   RefreshControl,
   Alert,
+  Text,
+  TouchableOpacity,
 } from 'react-native';
 import {
   Card,
@@ -38,10 +40,109 @@ interface ExtendedDevice extends Device {
   crypto: string;
 }
 
+// 新设备卡片组件
+interface DeviceCardProps {
+  icon: string;
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+  selected?: boolean;
+}
+const DeviceCard: React.FC<DeviceCardProps> = ({ icon, title, subtitle, onPress, selected }) => (
+  <Card style={[styles.deviceCardNew, selected && styles.deviceCardSelected]} onPress={onPress}>
+    <View style={styles.deviceCardContentNew}>
+      <IconButton icon={icon} size={28} style={styles.deviceIcon} />
+      <View>
+        <Text style={styles.deviceTitleNew}>{title}</Text>
+        <Text style={styles.deviceSubtitleNew}>{subtitle}</Text>
+      </View>
+    </View>
+  </Card>
+);
+
+// 新增添加按钮卡片
+interface AddDeviceCardProps {
+  onPress: () => void;
+}
+const AddDeviceCard: React.FC<AddDeviceCardProps> = ({ onPress }) => (
+  <Card style={styles.deviceCardNew} onPress={onPress}>
+    <View style={[styles.deviceCardContentNew, { justifyContent: 'center', alignItems: 'center' }]}> 
+      <IconButton icon="plus" size={32} />
+    </View>
+  </Card>
+);
+
+// 设备类型与图标映射
+const getDeviceIcon = (type?: string) => {
+  switch (type) {
+    case 'phone':
+      return 'cellphone';
+    case 'pc':
+      return 'laptop';
+    case 'tv':
+      return 'television';
+    case 'cloud':
+      return 'cloud-outline';
+    default:
+      return 'devices';
+  }
+};
+
+// 测试文件夹数据
+const testFolders = [
+  {
+    id: '1',
+    name: 'DCIM',
+    date: '2025/07/03 19:04',
+    count: 8,
+    type: '',
+    icon: 'folder-image',
+  },
+  {
+    id: '2',
+    name: '外包',
+    date: '2025/07/03 19:04',
+    count: 12,
+    type: '',
+    icon: 'folder',
+  },
+  {
+    id: '3',
+    name: 'Documents',
+    date: '2025/06/23 16:21',
+    count: 7,
+    type: '',
+    icon: 'folder',
+  },
+];
+
+// 文件夹项组件
+interface FolderItemProps {
+  icon: string;
+  name: string;
+  date: string;
+  count: number;
+  type: string;
+  onPress: () => void;
+}
+const FolderItem: React.FC<FolderItemProps> = ({ icon, name, date, count, type, onPress }) => (
+  <TouchableOpacity style={styles.folderItem} onPress={onPress}>
+    <IconButton icon={icon} size={36} style={styles.folderIcon} />
+    <View style={styles.folderInfo}>
+      <Text style={styles.folderName}>{name}</Text>
+      <View style={styles.folderMetaRow}>
+        <Text style={styles.folderMeta}>{date}</Text>
+        <Text style={styles.folderMeta}> | {count}项</Text>
+        {type ? <Text style={styles.folderMeta}> | {type}</Text> : null}
+      </View>
+    </View>
+    <IconButton icon="chevron-right" size={24} style={styles.folderArrow} />
+  </TouchableOpacity>
+);
+
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation();
   const [devices, setDevices] = useState<ExtendedDevice[]>([]);
-  const [folders, setFolders] = useState<Folder[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDevice, setSelectedDevice] = useState<ExtendedDevice | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -53,12 +154,13 @@ export const HomeScreen: React.FC = () => {
     loadData();
   }, []);
 
-  // 当选中设备改变时，加载对应的文件夹
+  // 默认选中本机
   useEffect(() => {
-    if (selectedDevice) {
-      loadDeviceFolders(selectedDevice.deviceID);
+    if (devices.length > 0 && !selectedDevice) {
+      const local = devices.find(d => (d as any).isLocal === true);
+      setSelectedDevice(local || devices[0]);
     }
-  }, [selectedDevice]);
+  }, [devices]);
 
   const loadData = async () => {
     try {
@@ -88,20 +190,6 @@ export const HomeScreen: React.FC = () => {
     } catch (err) {
       console.error('Failed to load devices:', err);
       return [];
-    }
-  };
-
-  // 加载设备文件夹 - 参考 client/frontend/src/components/FolderList.tsx
-  const loadDeviceFolders = async (deviceId: string) => {
-    try {
-      console.log('加载设备文件夹:', deviceId);
-      const foldersData = await apiService.getDeviceFolders(deviceId);
-      console.log('文件夹加载成功，文件夹数量:', foldersData.length);
-      setFolders(foldersData);
-    } catch (error) {
-      console.error('Failed to load folders:', error);
-      setFolders([]);
-      showSnackbar('加载文件夹失败');
     }
   };
 
@@ -233,24 +321,27 @@ export const HomeScreen: React.FC = () => {
       >
         {/* 设备列表 */}
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Title style={styles.sectionTitle}>
-              设备 ({devices.length})
-            </Title>
-            <Button
-              mode="contained"
-              onPress={handleAddDevice}
-              style={styles.addButton}
-              icon="plus"
-            >
-              添加设备
-            </Button>
-          </View>
-          
           <FlatList
-            data={devices}
-            renderItem={renderDevice}
-            keyExtractor={(item) => item.deviceID}
+            data={[...devices, { isAddButton: true }]}
+            renderItem={({ item }) => {
+              if ('isAddButton' in item) {
+                return <AddDeviceCard onPress={handleAddDevice} />;
+              } else {
+                // 图标和副标题可根据实际数据调整
+                const icon = getDeviceIcon((item as any).device_type);
+                const subtitle = item.status === 'connected' ? '在线' : '离线';
+                return (
+                  <DeviceCard
+                    icon={icon}
+                    title={item.name}
+                    subtitle={subtitle}
+                    onPress={() => handleDeviceSelect(item)}
+                    selected={selectedDevice?.id === item.id}
+                  />
+                );
+              }
+            }}
+            keyExtractor={(item, index) => 'isAddButton' in item ? 'add-device-btn' : item.deviceID}
             horizontal
             showsHorizontalScrollIndicator={false}
             style={styles.deviceList}
@@ -259,23 +350,22 @@ export const HomeScreen: React.FC = () => {
         </View>
 
         {/* 文件夹列表 */}
-        {selectedDevice && (
-          <View style={styles.section}>
-            <Title style={styles.sectionTitle}>
-              {selectedDevice.name} 的文件夹 ({folders.length})
-            </Title>
-            
-            <FlatList
-              data={folders}
-              renderItem={renderFolder}
-              keyExtractor={(item) => item.id}
-              numColumns={2}
-              showsVerticalScrollIndicator={false}
-              style={styles.folderList}
-              contentContainerStyle={styles.folderListContent}
-            />
-          </View>
-        )}
+        <View style={styles.section}>
+          <FlatList
+            data={testFolders}
+            renderItem={({ item }) => (
+              <FolderItem
+                icon={item.icon}
+                name={item.name}
+                date={item.date}
+                count={item.count}
+                type={item.type}
+                onPress={() => {}}
+              />
+            )}
+            keyExtractor={item => item.id}
+          />
+        </View>
       </ScrollView>
 
       {/* 添加文件夹 FAB */}
@@ -325,7 +415,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   section: {
-    marginVertical: 16,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -343,6 +432,8 @@ const styles = StyleSheet.create({
   },
   deviceList: {
     maxHeight: 120,
+    paddingTop: 8,
+    paddingBottom: 8,
   },
   deviceListContent: {
     paddingHorizontal: 16,
@@ -353,6 +444,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   selectedDeviceCard: {
+    borderWidth: 2,
+    borderColor: '#2196F3',
+    backgroundColor: '#e3f2fd',
   },
   deviceCardContent: {
     padding: 12,
@@ -411,5 +505,79 @@ const styles = StyleSheet.create({
   },
   deviceCountChip: {
     backgroundColor: '#9C27B0',
+  },
+  deviceCardNew: {
+    borderRadius: 18,
+    backgroundColor: '#f5f8ff',
+    marginRight: 12,
+    minWidth: 100,
+    height: 56,
+    paddingLeft: 8,
+    paddingRight: 8,
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+    borderWidth: 0,
+  },
+  deviceCardContentNew: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    height: '100%',
+  },
+  deviceIcon: {
+    marginRight: 8,
+    backgroundColor: 'transparent',
+  },
+  deviceTitleNew: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#222',
+  },
+  deviceSubtitleNew: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
+  },
+  deviceCardSelected: {
+    borderWidth: 2,
+    borderColor: '#2196F3',
+    backgroundColor: '#e3f2fd',
+  },
+  folderItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  folderIcon: {
+    marginRight: 8,
+    backgroundColor: 'transparent',
+  },
+  folderInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  folderName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#222',
+  },
+  folderMetaRow: {
+    flexDirection: 'row',
+    marginTop: 2,
+  },
+  folderMeta: {
+    fontSize: 12,
+    color: '#888',
+  },
+  folderArrow: {
+    marginLeft: 4,
+    backgroundColor: 'transparent',
   },
 });

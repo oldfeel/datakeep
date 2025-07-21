@@ -808,10 +808,27 @@ class HttpsApiController(private val context: Context) {
         val devices = listOf(
             mapOf(
                 "id" to "MOCK-DEVICE-1",
-                "name" to "MyDataApp (模拟)",
+                "name" to "本机",
                 "address" to "127.0.0.1:$SYNCTHING_PORT",
                 "status" to "connected",
-                "isLocal" to true
+                "isLocal" to true,
+                "device_type" to "phone"
+            ),
+            mapOf(
+                "id" to "MOCK-DEVICE-2",
+                "name" to "电脑",
+                "address" to "192.168.2.100:22000",
+                "status" to "disconnected",
+                "isLocal" to false,
+                "device_type" to "pc"
+            ),
+            mapOf(
+                "id" to "MOCK-DEVICE-3",
+                "name" to "电视",
+                "address" to "192.168.2.101:22000",
+                "status" to "disconnected",
+                "isLocal" to false,
+                "device_type" to "tv"
             )
         )
         return success(devices)

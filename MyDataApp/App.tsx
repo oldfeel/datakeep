@@ -46,7 +46,7 @@ function App(): React.JSX.Element {
             name="Home"
             component={HomeScreen}
             options={{
-              title: '我的数据',
+              headerShown: false, // 完全隐藏顶部导航栏
             }}
           />
           <Stack.Screen
