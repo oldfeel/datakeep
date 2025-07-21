@@ -1639,6 +1639,11 @@ func filePreviewHandler(c *fiber.Ctx) error {
 		return fail(c, 400, "文件夹ID不能为空")
 	}
 
+	// 新增：对 folderID 做 URL 解码，兼容中文和特殊字符的文件夹ID
+	if decodedID, err := url.QueryUnescape(folderID); err == nil {
+		folderID = decodedID
+	}
+
 	filePath := c.Query("path")
 	if filePath == "" {
 		return fail(c, 400, "文件路径不能为空")
