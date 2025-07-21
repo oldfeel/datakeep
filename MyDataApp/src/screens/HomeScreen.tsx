@@ -23,6 +23,7 @@ import { CustomFAB } from '../components/CustomFAB';
 import { apiService } from '../services/api';
 import { Device, Folder } from '../types';
 import { useNavigation } from '@react-navigation/native';
+import { Modal, Portal, Dialog, Button as PaperButton, TextInput, RadioButton, Checkbox } from 'react-native-paper';
 
 // 扩展 Device 接口以匹配参考实现
 interface ExtendedDevice extends Device {
@@ -141,7 +142,7 @@ const FolderItem: React.FC<FolderItemProps> = ({ icon, name, date, count, type, 
 );
 
 export const HomeScreen: React.FC = () => {
-  const navigation = useNavigation();
+  const navigation: any = useNavigation();
   const [devices, setDevices] = useState<ExtendedDevice[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDevice, setSelectedDevice] = useState<ExtendedDevice | null>(null);
@@ -371,9 +372,7 @@ export const HomeScreen: React.FC = () => {
       {/* 添加文件夹 FAB */}
       <CustomFAB
         icon="plus"
-        onPress={() => {
-          showSnackbar('添加文件夹功能开发中');
-        }}
+        onPress={() => navigation.navigate('AddFolder')}
       />
 
       <Snackbar

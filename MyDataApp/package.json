@@ -13,6 +13,7 @@
     "clean:syncthing": "rm -rf lib_build/gobuild && rm -rf android/app/src/main/jniLibs/*"
   },
   "dependencies": {
+    "@react-native-picker/picker": "^2.11.1",
     "@react-native/new-app-screen": "0.80.1",
     "@react-navigation/native": "^7.1.14",
     "@react-navigation/stack": "^7.4.2",

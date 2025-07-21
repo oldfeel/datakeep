@@ -13,6 +13,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import 'react-native-gesture-handler';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { AddDeviceScreen } from './src/screens/AddDeviceScreen';
+import AddFolderScreen from './src/screens/AddFolderScreen';
 
 const Stack = createStackNavigator();
 
@@ -48,6 +49,11 @@ function App(): React.JSX.Element {
             options={{
               headerShown: false, // 完全隐藏顶部导航栏
             }}
+          />
+          <Stack.Screen
+            name="AddFolder"
+            component={AddFolderScreen}
+            options={{ title: '添加文件夹' }}
           />
           <Stack.Screen
             name="AddDevice"
