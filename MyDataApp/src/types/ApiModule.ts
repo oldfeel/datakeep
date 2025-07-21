@@ -6,6 +6,7 @@ interface ApiModuleInterface {
   getFolderFiles(folderId: string): Promise<string>;
   getLocalDeviceId(): Promise<string>;
   getWifiInfo(): Promise<string>;
+  getNearbyDevices(): Promise<string>;
 }
 
 const { ApiModule } = NativeModules;

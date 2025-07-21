@@ -20,6 +20,7 @@ import {
 import { CustomFAB } from '../components/CustomFAB';
 import { apiService } from '../services/api';
 import { Device, Folder } from '../types';
+import { useNavigation } from '@react-navigation/native';
 
 // 扩展 Device 接口以匹配参考实现
 interface ExtendedDevice extends Device {
@@ -38,6 +39,7 @@ interface ExtendedDevice extends Device {
 }
 
 export const HomeScreen: React.FC = () => {
+  const navigation = useNavigation();
   const [devices, setDevices] = useState<ExtendedDevice[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -119,7 +121,7 @@ export const HomeScreen: React.FC = () => {
   };
 
   const handleAddDevice = () => {
-    showSnackbar('添加设备功能开发中');
+    (navigation as any).navigate('AddDevice');
   };
 
   const handleMessagePress = () => {
@@ -351,8 +353,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   selectedDeviceCard: {
-    borderColor: '#2196F3',
-    borderWidth: 2,
   },
   deviceCardContent: {
     padding: 12,

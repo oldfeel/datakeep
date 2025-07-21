@@ -6,9 +6,15 @@
  */
 
 import React from 'react';
-import { SafeAreaView, StatusBar, StyleSheet } from 'react-native';
+import { StatusBar, StyleSheet } from 'react-native';
 import { Provider as PaperProvider, DefaultTheme } from 'react-native-paper';
+import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+import 'react-native-gesture-handler';
 import { HomeScreen } from './src/screens/HomeScreen';
+import { AddDeviceScreen } from './src/screens/AddDeviceScreen';
+
+const Stack = createStackNavigator();
 
 const theme = {
   ...DefaultTheme,
@@ -22,10 +28,36 @@ const theme = {
 function App(): React.JSX.Element {
   return (
     <PaperProvider theme={theme}>
-      <SafeAreaView style={styles.container}>
+      <NavigationContainer>
         <StatusBar barStyle="dark-content" backgroundColor="#f5f5f5" />
-        <HomeScreen />
-      </SafeAreaView>
+        <Stack.Navigator
+          initialRouteName="Home"
+          screenOptions={{
+            headerStyle: {
+              backgroundColor: '#f5f5f5',
+            },
+            headerTintColor: '#333',
+            headerTitleStyle: {
+              fontWeight: 'bold',
+            },
+          }}
+        >
+          <Stack.Screen
+            name="Home"
+            component={HomeScreen}
+            options={{
+              title: '我的数据',
+            }}
+          />
+          <Stack.Screen
+            name="AddDevice"
+            component={AddDeviceScreen}
+            options={{
+              title: '添加设备',
+            }}
+          />
+        </Stack.Navigator>
+      </NavigationContainer>
     </PaperProvider>
   );
 }

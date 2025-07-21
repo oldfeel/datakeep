@@ -108,4 +108,20 @@ public class ApiModule extends ReactContextBaseJavaModule {
             promise.reject("API_ERROR", "获取WiFi信息失败: " + e.getMessage(), e);
         }
     }
+    
+    /**
+     * 获取附近发现的设备
+     */
+    @ReactMethod
+    public void getNearbyDevices(Promise promise) {
+        try {
+            Log.d(TAG, "开始获取附近设备...");
+            String response = mHttpClient.getNearbyDevices();
+            Log.i(TAG, "附近设备获取成功");
+            promise.resolve(response);
+        } catch (Exception e) {
+            Log.e(TAG, "获取附近设备失败", e);
+            promise.reject("API_ERROR", "获取附近设备失败: " + e.getMessage(), e);
+        }
+    }
 } 

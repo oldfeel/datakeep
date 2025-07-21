@@ -86,6 +86,29 @@ class ApiService {
     }
   }
 
+  // 获取附近发现的设备
+  async getNearbyDevices(): Promise<string[]> {
+    try {
+      console.log('🌐 通过 Native Module 获取附近设备...');
+      const response = await ApiModule.getNearbyDevices();
+      const result = JSON.parse(response);
+      console.log('✅ 附近设备获取成功，响应数据:', result);
+      
+      // 检查响应格式
+      if (result.success && result.data) {
+        const deviceIds = Object.keys(result.data);
+        console.log('✅ 附近设备获取成功，设备数量:', deviceIds.length);
+        return deviceIds;
+      } else {
+        console.warn('⚠️ 响应格式不正确:', result);
+        return [];
+      }
+    } catch (error) {
+      console.error('❌ 获取附近设备失败:', error);
+      throw error;
+    }
+  }
+
   // 添加文件夹（暂未实现）
   async addFolder(folder: Omit<Folder, 'id'>): Promise<Folder> {
     throw new Error('添加文件夹功能暂未实现');

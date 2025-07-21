@@ -159,4 +159,18 @@ public class HttpClient {
             throw new IOException("HTTP 请求失败: " + response.code());
         }
     }
+    
+    /**
+     * 获取附近发现的设备
+     */
+    public String getNearbyDevices() throws IOException {
+        Response response = getSync("/api/syncthing/discovery");
+        if (response.isSuccessful()) {
+            String responseBody = response.body().string();
+            Log.d(TAG, "附近设备响应: " + responseBody);
+            return responseBody;
+        } else {
+            throw new IOException("HTTP 请求失败: " + response.code());
+        }
+    }
 } 

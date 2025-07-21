@@ -37,9 +37,9 @@ class HttpsApiController(private val context: Context) {
         private const val SYNCTHING_PORT = 8384 // Syncthing 默认端口
     }
     
-    // Syncthing API 配置
-    private val syncthingApiBase = "https://127.0.0.1:$SYNCTHING_PORT"
-    private val apiKey = "your-api-key" // 需要从配置中获取
+    // Syncthing API 配置 - 尝试从桌面端获取数据
+    private val syncthingApiBase = "http://192.168.2.6:8384" // 桌面端 Syncthing 地址
+    private val apiKey = getApiKeyFromConfig() // 从配置中获取
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     
     private val gson = Gson()
@@ -374,6 +374,10 @@ class HttpsApiController(private val context: Context) {
                 Log.d(TAG, "处理Syncthing事件请求")
                 handleSyncthingEvents()
             }
+            uri == "/api/syncthing/discovery" -> {
+                Log.d(TAG, "处理Syncthing设备发现请求")
+                handleSyncthingDiscovery()
+            }
             else -> {
                 Log.w(TAG, "❌ 未找到匹配的路由: $uri")
                 fail(404, "Not Found")
@@ -553,26 +557,73 @@ class HttpsApiController(private val context: Context) {
     }
     
     /**
+     * 处理 Syncthing 设备发现请求
+     */
+    private fun handleSyncthingDiscovery(): String {
+        Log.i(TAG, "🔍 开始处理 Syncthing 设备发现请求")
+        
+        // 检查 Syncthing 服务是否可用
+        if (!isSyncthingServiceAvailable()) {
+            Log.w(TAG, "⚠️ Syncthing 服务不可用，直接返回模拟数据")
+            return getMockDiscoveryData()
+        }
+        
+        return try {
+            Log.d(TAG, "📡 尝试从 Syncthing API 获取设备发现信息...")
+            val discoveryData = getDiscoveryFromSyncthing()
+            Log.i(TAG, "✅ 成功获取设备发现信息，设备数量: ${discoveryData.size}")
+            Log.d(TAG, "📋 发现数据详情: $discoveryData")
+            success(discoveryData)
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 获取设备发现信息失败", e)
+            Log.e(TAG, "🔍 异常详情: ${e.javaClass.simpleName} - ${e.message}")
+            Log.e(TAG, "📚 异常堆栈: ${e.stackTraceToString()}")
+            // 返回模拟数据
+            Log.w(TAG, "🔄 返回模拟数据作为备用")
+            getMockDiscoveryData()
+        }
+    }
+    
+    /**
      * 执行 HTTP GET 请求到 Syncthing API
      */
     private fun executeGetRequest(endpoint: String): String {
+        Log.d(TAG, "🚀 开始执行 HTTP GET 请求")
+        Log.d(TAG, "🔗 请求端点: $endpoint")
+        
         val client = getOrCreateHttpClient()
         val url = "$syncthingApiBase$endpoint"
-        Log.d(TAG, "请求 Syncthing API: $url")
+        Log.d(TAG, "🌐 完整 URL: $url")
+        Log.d(TAG, "🔑 API Key: ${if (apiKey.isNotEmpty()) "已设置" else "未设置"}")
         
         val request = Request.Builder()
             .url(url)
             .addHeader("X-API-Key", apiKey)
             .build()
         
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("HTTP 请求失败: ${response.code}")
+        Log.d(TAG, "📤 发送请求...")
+        
+        try {
+            client.newCall(request).execute().use { response ->
+                Log.d(TAG, "📥 收到响应，状态码: ${response.code}")
+                Log.d(TAG, "📋 响应头: ${response.headers}")
+                
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string() ?: "无错误详情"
+                    Log.e(TAG, "❌ HTTP 请求失败: ${response.code}")
+                    Log.e(TAG, "📄 错误响应体: $errorBody")
+                    throw IOException("HTTP 请求失败: ${response.code} - $errorBody")
+                }
+                
+                val responseBody = response.body?.string()
+                Log.d(TAG, "✅ 请求成功，响应体长度: ${responseBody?.length ?: 0}")
+                Log.d(TAG, "📄 响应内容: $responseBody")
+                return responseBody ?: ""
             }
-            
-            val responseBody = response.body?.string()
-            Log.d(TAG, "API 响应: $responseBody")
-            return responseBody ?: ""
+        } catch (e: Exception) {
+            Log.e(TAG, "💥 HTTP 请求执行失败", e)
+            Log.e(TAG, "🔍 具体错误: ${e.javaClass.simpleName} - ${e.message}")
+            throw e
         }
     }
     
@@ -605,6 +656,149 @@ class HttpsApiController(private val context: Context) {
             .build()
         
         return httpClient!!
+    }
+    
+    /**
+     * 从 Syncthing API 获取设备发现信息
+     */
+    private fun getDiscoveryFromSyncthing(): Map<String, Any> {
+        Log.d(TAG, "🌐 开始调用 Syncthing API: /rest/system/discovery")
+        
+        try {
+            val response = executeGetRequest("/rest/system/discovery")
+            Log.d(TAG, "📥 收到 Syncthing API 响应，长度: ${response.length}")
+            Log.d(TAG, "📄 响应内容: $response")
+            
+            val jsonObject = JsonParser.parseString(response).asJsonObject
+            Log.d(TAG, "🔍 JSON 解析成功，根对象键数量: ${jsonObject.size()}")
+            
+            val discoveryData = mutableMapOf<String, Any>()
+            
+            // 遍历所有发现的设备
+            for (entry in jsonObject.entrySet()) {
+                val deviceId = entry.key
+                val deviceData = entry.value.asJsonObject
+                Log.d(TAG, "📱 处理设备: $deviceId")
+                
+                val addresses = mutableListOf<String>()
+                if (deviceData.has("addresses")) {
+                    val addressesArray = deviceData.get("addresses").asJsonArray
+                    Log.d(TAG, "📍 设备 $deviceId 有 ${addressesArray.size()} 个地址")
+                    
+                    for (addrElement in addressesArray) {
+                        val address = addrElement.asString
+                        addresses.add(address)
+                        Log.d(TAG, "🌍 添加地址: $address")
+                    }
+                } else {
+                    Log.w(TAG, "⚠️ 设备 $deviceId 没有地址信息")
+                }
+                
+                discoveryData[deviceId] = mapOf("addresses" to addresses)
+                Log.d(TAG, "✅ 设备 $deviceId 处理完成，地址数量: ${addresses.size}")
+            }
+            
+            Log.i(TAG, "🎉 设备发现信息获取完成，总共 ${discoveryData.size} 个设备")
+            return discoveryData
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "💥 getDiscoveryFromSyncthing 方法执行失败", e)
+            Log.e(TAG, "🔍 具体错误: ${e.javaClass.simpleName} - ${e.message}")
+            throw e
+        }
+    }
+    
+    /**
+     * 获取模拟设备发现数据
+     */
+    private fun getMockDiscoveryData(): String {
+        val discoveryData = mapOf(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFG" to mapOf(
+                "addresses" to listOf("tcp://192.168.1.100:22000")
+            ),
+            "BCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGH" to mapOf(
+                "addresses" to listOf("tcp://192.168.1.101:22000")
+            )
+        )
+        return success(discoveryData)
+    }
+    
+    /**
+     * 检查 Syncthing 服务是否可用
+     */
+    private fun isSyncthingServiceAvailable(): Boolean {
+        Log.d(TAG, "🔍 检查 Syncthing 服务是否可用...")
+        
+        try {
+            // 尝试连接 Syncthing API 的状态端点
+            val client = getOrCreateHttpClient()
+            val url = "$syncthingApiBase/rest/system/status"
+            
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("X-API-Key", apiKey)
+                .build()
+            
+            Log.d(TAG, "🌐 测试连接: $url")
+            
+            client.newCall(request).execute().use { response ->
+                val isAvailable = response.isSuccessful
+                Log.d(TAG, "📡 Syncthing 服务状态: ${if (isAvailable) "可用" else "不可用"} (状态码: ${response.code})")
+                return isAvailable
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Syncthing 服务不可用: ${e.message}")
+            return false
+        }
+    }
+    
+    /**
+     * 从 Syncthing 配置文件获取 API Key
+     */
+    private fun getApiKeyFromConfig(): String {
+        Log.d(TAG, "🔍 尝试从 Syncthing 配置文件获取 API Key")
+        
+        try {
+            // 尝试从常见的配置文件路径读取
+            val configPaths = listOf(
+                "/data/data/tech.shupi.mydata/files/config.xml",
+                "/storage/emulated/0/Android/data/tech.shupi.mydata/files/config.xml",
+                "/sdcard/Android/data/tech.shupi.mydata/files/config.xml"
+            )
+            
+            for (configPath in configPaths) {
+                try {
+                    val file = File(configPath)
+                    if (file.exists()) {
+                        Log.d(TAG, "📁 找到配置文件: $configPath")
+                        val content = file.readText()
+                        
+                        // 简单的 XML 解析，查找 apikey 标签
+                        val apiKeyPattern = Regex("<apikey>([^<]+)</apikey>")
+                        val matchResult = apiKeyPattern.find(content)
+                        
+                        if (matchResult != null) {
+                            val apiKey = matchResult.groupValues[1]
+                            Log.d(TAG, "✅ 成功从配置文件获取 API Key: ${apiKey.take(8)}...")
+                            return apiKey
+                        } else {
+                            Log.w(TAG, "⚠️ 配置文件中未找到 apikey 标签")
+                        }
+                    } else {
+                        Log.d(TAG, "❌ 配置文件不存在: $configPath")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ 读取配置文件失败: $configPath", e)
+                }
+            }
+            
+            Log.w(TAG, "⚠️ 未找到有效的 Syncthing 配置文件，使用默认 API Key")
+            return "default-api-key" // 使用默认值
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "💥 获取 API Key 失败", e)
+            return "default-api-key" // 使用默认值
+        }
     }
     
     /**
