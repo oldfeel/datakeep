@@ -1087,7 +1087,7 @@ function App() {
           </Box>
           <TextField
             size="small"
-            placeholder="搜索设备..."
+            placeholder="搜索设备或文件夹..."
             value={searchText}
             onChange={handleSearchChange}
             sx={{
@@ -1106,50 +1106,22 @@ function App() {
               startAdornment: <SearchIcon sx={{ color: 'white', mr: 1 }} />,
             }}
           />
-          {/* 事件连接状态指示器 */}
-          <Box sx={{ ml: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Chip
-              size="small"
-              label={isEventConnected ? '事件已连接' : '事件未连接'}
-              color={isEventConnected ? 'success' : 'error'}
-              variant={isEventConnected ? 'filled' : 'outlined'}
-              sx={{ fontSize: '0.7rem' }}
-            />
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => {
-                console.log('手动测试事件监听');
-                eventService.start();
-              }}
-              sx={{
-                color: 'white',
+          {/* 消息按钮 */}
+          <IconButton
+            onClick={handleMessageDialogOpen}
+            sx={{
+              color: 'white',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
+              '&:hover': {
                 borderColor: 'white',
-                '&:hover': {
-                  borderColor: 'white',
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                }
-              }}
-            >
-              测试连接
-            </Button>
-            {/* 消息按钮 */}
-            <IconButton
-              onClick={handleMessageDialogOpen}
-              sx={{
-                color: 'white',
-                border: '1px solid rgba(255, 255, 255, 0.3)',
-                '&:hover': {
-                  borderColor: 'white',
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                }
-              }}
-            >
-              <Badge badgeContent={messageList.length} color="error">
-                <NotificationsIcon />
-              </Badge>
-            </IconButton>
-          </Box>
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              }
+            }}
+          >
+            <Badge badgeContent={messageList.length} color="error">
+              <NotificationsIcon />
+            </Badge>
+          </IconButton>
         </Toolbar>
       </AppBar>
 
