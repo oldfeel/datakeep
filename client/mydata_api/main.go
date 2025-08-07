@@ -1,4 +1,4 @@
-package main
+package mydata_api
 
 import (
 	"flag"
@@ -176,7 +176,7 @@ func syncEventsToDB() {
 	}
 }
 
-func main() {
+func StartServer() {
 	logger = initZapLogger()
 	logger.Info("zap + lumberjack 日志系统初始化完成")
 

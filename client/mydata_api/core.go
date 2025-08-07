@@ -1,4 +1,4 @@
-package main
+package mydata_api
 
 import (
 	"encoding/json"

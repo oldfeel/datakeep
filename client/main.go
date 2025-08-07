@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"log"
+	"mydata/mydata_api"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,6 +17,8 @@ import (
 var assets embed.FS
 
 func main() {
+	go mydata_api.StartServer()
+
 	// 创建一个带取消功能的上下文
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
