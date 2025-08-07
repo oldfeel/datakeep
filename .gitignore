@@ -2,3 +2,6 @@ example
 
 # 日志文件
 client/logs/
+
+# 数据库文件
+client/mydata.db
