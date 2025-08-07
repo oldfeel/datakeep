@@ -1,17 +1,21 @@
 package mydata_api
 
 import (
-	"flag"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
-	"log"
+	"math/big"
 	"os"
 	"path/filepath"
+	"time"
 
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"net"
 
@@ -25,6 +29,53 @@ import (
 )
 
 var logger *zap.Logger
+
+// ensureCert 检查并自动生成自签名证书
+func ensureCert(certFile, keyFile string) error {
+	if _, err := os.Stat(certFile); err == nil {
+		if _, err := os.Stat(keyFile); err == nil {
+			return nil // 都存在
+		}
+	}
+
+	logger.Info("生成自签名证书", zap.String("certFile", certFile), zap.String("keyFile", keyFile))
+
+	// 生成自签名证书
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+	template := x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "localhost"},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"localhost", "127.0.0.1"},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return err
+	}
+	certOut, err := os.Create(certFile)
+	if err != nil {
+		return err
+	}
+	defer certOut.Close()
+	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyOut, err := os.Create(keyFile)
+	if err != nil {
+		return err
+	}
+	defer keyOut.Close()
+	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
+
+	logger.Info("自签名证书生成完成")
+	return nil
+}
 
 func initZapLogger() *zap.Logger {
 	logDir := "logs"
@@ -194,42 +245,41 @@ func StartServer() {
 	// 2. 启动事件同步 goroutine
 	go syncEventsToDB()
 
-	// 解析命令行参数
-	flag.Parse()
-
-	// 显示帮助信息
-	if len(os.Args) > 1 && (os.Args[1] == "-h" || os.Args[1] == "--help") {
-		fmt.Println("Syncthing 文件索引服务")
-		fmt.Println("用法: ./api [选项]")
-		fmt.Println("选项:")
-		flag.PrintDefaults()
-		fmt.Println("\n示例:")
-		fmt.Println("  ./api              # 增量索引模式（默认）")
-		fmt.Println("  ./api -force       # 强制重新索引所有文件")
-		return
-	}
-
-	// 2. 获取 config.xml 路径
+	// 获取 config.xml 路径
 	configPath = getConfigPath()
-	fmt.Println("Syncthing config.xml:", configPath)
+	logger.Info("Syncthing config.xml", zap.String("path", configPath))
 
-	// 3. 异步启动索引
-	fmt.Println("启动异步索引...")
+	// 异步启动索引
+	logger.Info("启动异步索引...")
 	go func() {
 		loadAndIndex()
 	}()
 
-	// 如果是强制索引模式，立即执行
-	if len(os.Args) > 1 && os.Args[1] == "-force" {
-		fmt.Println("强制重新索引模式...")
-		loadAndIndex()
-	}
-
-	// 4. 监听 config.xml 变化
+	// 监听 config.xml 变化
 	go watchConfig()
 
 	// 5. 启动 Fiber API 服务
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		AppName:      "MyData API Server",
+		ServerHeader: "MyData",
+		// 性能优化配置
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+		// 连接池配置
+		DisableStartupMessage: true,
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+			}
+			return c.Status(code).JSON(fiber.Map{
+				"code": code,
+				"data": err.Error(),
+			})
+		},
+	})
+
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowHeaders: "*",
@@ -264,8 +314,30 @@ func StartServer() {
 		})
 	})
 
-	fmt.Println("启动 API 服务在端口 8080...")
-	if err := app.Listen(":8080"); err != nil {
-		log.Printf("API 服务启动失败: %v", err)
+	// 自动生成证书
+	certFile := filepath.Join("certs", "cert.pem")
+	keyFile := filepath.Join("certs", "key.pem")
+
+	// 创建证书目录
+	if err := os.MkdirAll("certs", 0755); err != nil {
+		logger.Fatal("创建证书目录失败", zap.Error(err))
+	}
+
+	if err := ensureCert(certFile, keyFile); err != nil {
+		logger.Fatal("自动生成证书失败", zap.Error(err))
+	}
+
+	logger.Info("启动 HTTPS API 服务", zap.String("port", "8443"))
+	logger.Info("服务器地址", zap.String("url", "https://localhost:8443"))
+	logger.Info("可用的 API 端点:")
+	logger.Info("  - GET    /api/folder/:folderId")
+	logger.Info("  - GET    /api/devices")
+	logger.Info("  - GET    /api/device/:deviceId/folders")
+	logger.Info("  - GET    /api/deviceid")
+	logger.Info("  - GET    /api/wifi")
+	logger.Info("  - GET    /health")
+
+	if err := app.ListenTLS(":8443", certFile, keyFile); err != nil {
+		logger.Fatal("HTTPS API 服务启动失败", zap.Error(err))
 	}
 }

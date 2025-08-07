@@ -5,3 +5,6 @@ client/logs/
 
 # 数据库文件
 client/mydata.db
+
+# 证书文件
+client/certs/
