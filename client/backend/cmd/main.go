@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"mydata/mydata_api"
+	"mydata/backend"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 
 	// 启动 HTTPS 服务器
 	go func() {
-		mydata_api.StartServer()
+		backend.StartServer()
 	}()
 
 	// 等待中断信号

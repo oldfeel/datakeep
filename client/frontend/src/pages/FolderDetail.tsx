@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
+
+import { GetHTTPSDevices, GetHTTPSFolderContents, GetHTTPSDeviceFolders } from '../../wailsjs/go/main/App';
 import {
   Box,
   Typography,
@@ -173,11 +175,11 @@ function FolderDetail() {
       } else {
         try {
           console.log('Loading remote device info');
-          const resp = await fetch('http://localhost:8080/api/devices');
-          if (!resp.ok) throw new Error('API 请求失败');
-          const result = await resp.json();
-          if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
-          const foundDevice = result.data.find((d: any) => d.deviceID === deviceId);
+          const result = await GetHTTPSDevices();
+          if (result && typeof result === 'object' && 'code' in result && result.code !== 0) {
+            throw new Error(result.data || 'API 返回错误');
+          }
+          const foundDevice = result?.data?.find((d: any) => d.deviceID === deviceId);
           if (foundDevice) {
             setDeviceName(foundDevice.name || foundDevice.deviceID);
             setDevice(foundDevice);
@@ -211,19 +213,14 @@ function FolderDetail() {
 
       // 加载文件夹信息
       try {
-        let apiUrl: string;
-        // 对于 Syncthing 文件夹，总是使用本地 API
-        apiUrl = `http://localhost:8080/api/device/${deviceId}/folders`;
-
-        console.log('Fetching folders from:', apiUrl);
-        const resp = await fetch(apiUrl);
-        if (!resp.ok) throw new Error('API 请求失败');
-        const result = await resp.json();
-        if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
-        const folder = result.data.find((f: any) => f.id === folderId);
-        if (folder) {
-          setFolderInfo(folder);
-          console.log('Folder info set:', folder);
+        // 使用 Wails 绑定获取文件夹信息
+        const result = await GetHTTPSDeviceFolders(deviceId);
+        if (result && typeof result === 'object' && 'code' in result && result.code === 0) {
+          const folder = result.data?.find((f: any) => f.id === folderId);
+          if (folder) {
+            setFolderInfo(folder);
+            console.log('Folder info set:', folder);
+          }
         }
       } catch (err) {
         console.error('Failed to load folder info:', err);
@@ -258,25 +255,17 @@ function FolderDetail() {
       setError(null);
       const path = currentPath.join('/');
 
-      // 构建 API URL
-      let apiUrl: string;
-      // 对于 Syncthing 文件夹，总是使用本地 API
-      if (path) {
-        apiUrl = `http://localhost:8080/api/folder/${encodeURIComponent(folderId)}?path=${encodeURIComponent(path)}`;
+      // 使用 Wails 绑定获取文件列表
+      console.log('Fetching files from HTTPS API, currentPath:', currentPath, 'path:', path);
+      const result = await GetHTTPSFolderContents(folderId, path);
+      console.log('HTTPS API response:', result);
+      if (result && typeof result === 'object' && 'code' in result && result.code === 0) {
+        console.log('Files data:', result.data);
+        console.log('Files count:', result.data ? result.data.length : 0);
+        setFiles(result.data);
       } else {
-        apiUrl = `http://localhost:8080/api/folder/${encodeURIComponent(folderId)}`;
+        throw new Error(result?.data || 'API 返回错误');
       }
-
-      console.log('Fetching files from:', apiUrl, 'currentPath:', currentPath, 'path:', path);
-      const resp = await fetch(apiUrl);
-      console.log('Response status:', resp.status, 'ok:', resp.ok);
-      if (!resp.ok) throw new Error('API 请求失败');
-      const result = await resp.json();
-      console.log('API response:', result);
-      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
-      console.log('Files data:', result.data);
-      console.log('Files count:', result.data ? result.data.length : 0);
-      setFiles(result.data);
     } catch (err) {
       console.error('Failed to load files:', err);
       setError(err instanceof Error ? err.message : '加载文件失败');

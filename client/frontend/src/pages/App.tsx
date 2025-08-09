@@ -50,10 +50,23 @@ import {
   Warning as WarningIcon,
   Error as ErrorIcon,
   CheckCircle as CheckCircleIcon,
+  BugReport as BugReportIcon,
 } from '@mui/icons-material';
 import DeviceDetail from './DeviceDetail';
 import FolderDetail from './FolderDetail';
 import FilePreview from './FilePreview';
+import TestWailsHTTPS from './TestWailsHTTPS';
+import { API_CONFIG } from '../config/api';
+import { 
+  GetHTTPSDevices, 
+  GetHTTPSWifiInfo, 
+  GetHTTPSDeviceFolders, 
+  GetHTTPSSyncthingEvents,
+  GetHTTPSSyncthingDeviceID,
+  GetHTTPSSyncthingConfigDevices,
+  GetHTTPSSyncthingDiscovery,
+  PostHTTPSAddDevice
+} from '../../wailsjs/go/main/App';
 import './App.css';
 
 // Syncthing 事件类型定义
@@ -131,7 +144,7 @@ class SyncthingEventService {
   private reconnectTimeout: number | null = null;
   private eventListeners: Map<string, ((event: SyncthingEvent) => void)[]> = new Map();
 
-  constructor(private baseUrl: string = 'http://localhost:8080') { }
+  constructor(private baseUrl: string = API_CONFIG.BASE_URL) { }
 
   // 添加事件监听器
   addEventListener(eventType: string, callback: (event: SyncthingEvent) => void) {
@@ -188,14 +201,11 @@ class SyncthingEventService {
 
     while (this.isConnected) {
       try {
-        // 使用代理接口
-        const response = await fetch(`${this.baseUrl}/api/syncthing/events?since=${this.lastEventId}&timeout=60`);
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const events: SyncthingEvent[] = await response.json();
+        // 使用 Wails 绑定函数避免证书验证问题
+        const eventsData = await GetHTTPSSyncthingEvents(this.lastEventId, 60);
+        
+        // 将返回的数据转换为 SyncthingEvent 数组
+        const events: SyncthingEvent[] = Array.isArray(eventsData) ? eventsData as SyncthingEvent[] : [];
 
         if (events && events.length > 0) {
           console.log(`收到 ${events.length} 个事件:`, events);
@@ -492,12 +502,9 @@ function App() {
   // 获取WiFi信息
   const getWifiInfo = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:8080/api/wifi-info');
-      if (response.ok) {
-        const result = await response.json();
-        if (result.code === 0) {
-          setWifiName(result.data.wifiName);
-        }
+      const result = await GetHTTPSWifiInfo();
+      if (result && typeof result === 'object' && 'code' in result && result.code === 0) {
+        setWifiName(result.data.wifiName);
       }
     } catch (error) {
       console.error('获取WiFi信息失败:', error);
@@ -505,15 +512,15 @@ function App() {
     }
   }, []);
 
-  // 加载设备列表 - 使用原有的 API 服务 (8080 端口)
+  // 加载设备列表 - 使用 Wails 绑定调用 HTTPS API
   const loadDevices = useCallback(async () => {
     try {
       console.log('开始加载设备列表...');
-      const resp = await fetch('http://localhost:8080/api/devices');
-      if (!resp.ok) throw new Error('API 请求失败');
-      const result = await resp.json();
-      if (result.code !== 0) throw new Error(result.data || 'API 返回错误');
-      const devicesData = result.data || [];
+      const result = await GetHTTPSDevices();
+      if (result && typeof result === 'object' && 'code' in result && result.code !== 0) {
+        throw new Error(result.data || 'API 返回错误');
+      }
+      const devicesData = result?.data || [];
       console.log('设备列表加载成功，设备数量:', devicesData.length);
       
       setDevices(devicesData);
@@ -842,12 +849,11 @@ function App() {
       return;
     }
 
-    // 验证设备 ID 有效性（通过代理接口）
+    // 验证设备 ID 有效性（通过 Wails 绑定）
     try {
-      const response = await fetch(`http://localhost:8080/api/syncthing/deviceid?id=${encodeURIComponent(cleanID)}`);
-      const result = await response.json();
+      const result = await GetHTTPSSyncthingDeviceID(cleanID);
 
-      if (result.error) {
+      if (result && typeof result === 'object' && 'error' in result && result.error) {
         setDeviceValidation({
           isValid: false,
           isUnique: true,
@@ -896,16 +902,10 @@ function App() {
         maxSendKbps: 0
       };
 
-      // 调用代理接口添加设备
-      const response = await fetch('http://localhost:8080/api/syncthing/config/devices', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(deviceConfig)
-      });
+      // 调用 Wails 绑定添加设备
+      const result = await PostHTTPSAddDevice(JSON.stringify(deviceConfig));
 
-      if (!response.ok) {
+      if (result && typeof result === 'object' && 'error' in result && result.error) {
         throw new Error('添加设备失败');
       }
 
@@ -948,11 +948,7 @@ function App() {
   // 获取附近设备列表
   const loadNearbyDevices = async () => {
     try {
-      const response = await fetch('http://localhost:8080/api/syncthing/discovery');
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
+      const data = await GetHTTPSSyncthingDiscovery();
 
       // 处理发现的数据，提取未知设备
       const unknownDevices: Array<{ id: string, name?: string }> = [];
@@ -981,9 +977,9 @@ function App() {
     }
 
     try {
-      // 使用代理接口验证设备 ID
-      const response = await fetch(`http://localhost:8080/api/syncthing/deviceid?id=${encodeURIComponent(cleanID)}`);
-      return response.ok;
+      // 使用 Wails 绑定验证设备 ID
+      const result = await GetHTTPSSyncthingDeviceID(cleanID);
+      return result && typeof result === 'object' && !('error' in result);
     } catch (error) {
       console.error('设备 ID 验证失败:', error);
       return false;
@@ -1002,19 +998,8 @@ function App() {
     }
 
     try {
-      // 使用代理接口获取设备列表
-      const response = await fetch('http://localhost:8080/api/syncthing/config/devices', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const devices = await response.json();
+      // 使用 Wails 绑定获取设备列表
+      const devices = await GetHTTPSSyncthingConfigDevices();
 
       // 检查设备是否已存在
       const deviceExists = devices.some((device: any) => device.deviceID === newDevice.deviceID);
@@ -1106,6 +1091,21 @@ function App() {
               startAdornment: <SearchIcon sx={{ color: 'white', mr: 1 }} />,
             }}
           />
+          {/* 测试按钮 */}
+          <IconButton
+            onClick={() => navigate('/test-https')}
+            sx={{
+              color: 'white',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
+              mr: 1,
+              '&:hover': {
+                borderColor: 'white',
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              }
+            }}
+          >
+            <BugReportIcon />
+          </IconButton>
           {/* 消息按钮 */}
           <IconButton
             onClick={handleMessageDialogOpen}
@@ -1151,7 +1151,8 @@ function App() {
           <Route path="/" element={<Navigate to="/device/local" replace />} />
           <Route path="/device/:deviceId" element={<DeviceDetail />} />
           <Route path="/folder/:deviceId/:folderId" element={<FolderDetail />} />
-        <Route path="/preview/:deviceId/:folderId/:filePath" element={<FilePreview />} />
+          <Route path="/preview/:deviceId/:folderId/:filePath" element={<FilePreview />} />
+          <Route path="/test-https" element={<TestWailsHTTPS />} />
         </Routes>
       </Box>
 

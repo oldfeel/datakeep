@@ -10,6 +10,24 @@ export function GetFolderContents(arg1:string,arg2:string):Promise<Array<main.Fi
 
 export function GetFolders():Promise<Array<main.Folder>>;
 
+export function GetHTTPSDeviceFolders(arg1:string):Promise<any>;
+
+export function GetHTTPSDevices():Promise<any>;
+
+export function GetHTTPSFolderContents(arg1:string,arg2:string):Promise<any>;
+
+export function GetHTTPSSyncthingConfigDevices():Promise<any>;
+
+export function GetHTTPSSyncthingDeviceID(arg1:string):Promise<any>;
+
+export function GetHTTPSSyncthingDiscovery():Promise<any>;
+
+export function GetHTTPSSyncthingEvents(arg1:number,arg2:number):Promise<any>;
+
+export function GetHTTPSWifiInfo():Promise<any>;
+
 export function Greet(arg1:string):Promise<string>;
+
+export function PostHTTPSAddDevice(arg1:string):Promise<any>;
 
 export function SelectFolder():Promise<string>;

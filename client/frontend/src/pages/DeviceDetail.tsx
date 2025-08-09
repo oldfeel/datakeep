@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+
+import { GetHTTPSDeviceFolders, GetHTTPSDevices, GetDevices } from '../../wailsjs/go/main/App';
 import {
   Box,
   Typography,
@@ -51,43 +53,34 @@ export default function DeviceDetail() {
           foldersData = result || [];
         } catch (wailsError) {
           console.error('Wails 获取文件夹失败:', wailsError);
-          // 如果 Wails 失败，尝试使用 API
-          const response = await fetch('http://localhost:8080/api/device/local/folders');
-          if (response.ok) {
-            const apiResult = await response.json();
-            if (apiResult.code === 0) {
-              foldersData = apiResult.data || [];
+          // 如果 Wails 失败，尝试使用 HTTPS API
+          try {
+            const result = await GetHTTPSDeviceFolders('local');
+            if (result && typeof result === 'object' && 'code' in result && result.code === 0) {
+              foldersData = result.data || [];
             }
+          } catch (httpsError) {
+            console.error('HTTPS API 获取文件夹失败:', httpsError);
           }
         }
       } else {
-        // 远程设备使用 API
+        // 远程设备使用 HTTPS API
         try {
-          const response = await fetch(`http://localhost:8080/api/device/${deviceId}/folders`);
-          if (response.ok) {
-            const result = await response.json();
-            if (result.code === 0) {
-              foldersData = result.data || [];
-            } else {
-              console.warn('API 返回错误:', result);
-              // 如果设备离线，设置空列表但不显示错误
-              if (result.data && result.data.includes('offline')) {
-                foldersData = [];
-                setError(null);
-                return;
-              }
-            }
+          const result = await GetHTTPSDeviceFolders(deviceId);
+          if (result && typeof result === 'object' && 'code' in result && result.code === 0) {
+            foldersData = result.data || [];
           } else {
-            console.error('API 请求失败:', response.status);
+            console.warn('HTTPS API 返回错误:', result);
             // 如果设备离线，设置空列表但不显示错误
-            if (response.status === 404 || response.status === 503) {
+            if (result && typeof result === 'object' && 'data' in result && 
+                typeof result.data === 'string' && result.data.includes('offline')) {
               foldersData = [];
               setError(null);
               return;
             }
           }
         } catch (apiError) {
-          console.error('API 请求异常:', apiError);
+          console.error('HTTPS API 请求异常:', apiError);
           // 网络错误时也设置空列表
           foldersData = [];
           setError(null);
@@ -130,38 +123,60 @@ export default function DeviceDetail() {
                 isLocalNetwork: true
               });
             } else {
-              // 获取远程设备信息
-              const response = await fetch('http://localhost:8080/api/devices');
-              if (!response.ok) {
-                throw new Error(`API 请求失败: ${response.status}`);
-              }
+              // 获取远程设备信息 - 使用 Golang 函数
+              try {
+                const devices = await GetDevices();
+                const foundDevice = devices.find((d: any) => d.deviceID === deviceId);
 
-              const result = await response.json();
-              if (result.code !== 0) {
-                throw new Error(result.data || 'API 返回错误');
-              }
+                console.log('Found device:', foundDevice);
+                if (foundDevice) {
+                  setDevice({
+                    deviceID: foundDevice.deviceID,
+                    name: foundDevice.name || foundDevice.deviceID,
+                    addresses: foundDevice.addresses || null,
+                    connected: true, // Golang Device 类型没有 connected 属性，默认为 true
+                    isLocalNetwork: false // Golang Device 类型没有 isLocalNetwork 属性，默认为 false
+                  });
+                  console.log('Device addresses:', foundDevice.addresses);
+                } else {
+                  setDevice({
+                    deviceID: deviceId,
+                    name: deviceId,
+                    addresses: null,
+                    connected: false,
+                    isLocalNetwork: false
+                  });
+                }
+              } catch (golangError) {
+                console.error('Golang 获取设备失败:', golangError);
+                // 如果 Golang 失败，尝试使用 HTTPS API 作为备选
+                const result = await GetHTTPSDevices();
+                if (result && typeof result === 'object' && 'code' in result && result.code !== 0) {
+                  throw new Error(result.data || 'API 返回错误');
+                }
 
-              const devices = result.data || [];
-              const foundDevice = devices.find((d: Device) => d.deviceID === deviceId);
+                const devices = result?.data || [];
+                const foundDevice = devices.find((d: Device) => d.deviceID === deviceId);
 
-              console.log('Found device:', foundDevice);
-              if (foundDevice) {
-                setDevice({
-                  deviceID: foundDevice.deviceID,
-                  name: foundDevice.name || foundDevice.deviceID,
-                  addresses: foundDevice.addresses,
-                  connected: foundDevice.connected,
-                  isLocalNetwork: foundDevice.isLocalNetwork
-                });
-                console.log('Device addresses:', foundDevice.addresses);
-              } else {
-                setDevice({
-                  deviceID: deviceId,
-                  name: deviceId,
-                  addresses: null,
-                  connected: false,
-                  isLocalNetwork: false
-                });
+                console.log('Found device (HTTPS):', foundDevice);
+                if (foundDevice) {
+                  setDevice({
+                    deviceID: foundDevice.deviceID,
+                    name: foundDevice.name || foundDevice.deviceID,
+                    addresses: foundDevice.addresses,
+                    connected: foundDevice.connected,
+                    isLocalNetwork: foundDevice.isLocalNetwork
+                  });
+                  console.log('Device addresses (HTTPS):', foundDevice.addresses);
+                } else {
+                  setDevice({
+                    deviceID: deviceId,
+                    name: deviceId,
+                    addresses: null,
+                    connected: false,
+                    isLocalNetwork: false
+                  });
+                }
               }
             }
           } catch (err) {
@@ -250,7 +265,9 @@ export default function DeviceDetail() {
           try {
             console.log('开始移除设备:', deviceId);
 
-            const response = await fetch(`http://localhost:8080/api/device/${deviceId}`, {
+            // 使用 HTTPS API 删除设备
+            const deleteUrl = `https://localhost:8443/api/device/${deviceId}`;
+            const response = await fetch(deleteUrl, {
               method: 'DELETE',
             });
 

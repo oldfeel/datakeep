@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	goruntime "runtime"
+	"strings"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -94,8 +96,9 @@ type FolderContents struct {
 }
 
 const (
-	syncthingAPI = "http://127.0.0.1:8384" // Syncthing REST API 地址
-	apiKey       = ""                      // 替换为你的 Syncthing API Key
+	syncthingAPI = "http://127.0.0.1:8384"  // Syncthing REST API 地址
+	apiKey       = ""                       // 替换为你的 Syncthing API Key
+	httpsAPI     = "https://localhost:8443" // HTTPS API 地址
 )
 
 // NewApp creates a new App application struct
@@ -305,4 +308,330 @@ func (a *App) SelectFolder() (string, error) {
 		return "", fmt.Errorf("选择文件夹失败: %v", err)
 	}
 	return selectedPath, nil
+}
+
+// GetHTTPSDevices 通过 HTTPS API 获取设备列表
+func (a *App) GetHTTPSDevices() (interface{}, error) {
+	req, err := http.NewRequest("GET", httpsAPI+"/api/devices", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 忽略自签名证书验证（仅开发环境）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTPS API error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetHTTPSSyncthingEvents 通过 HTTPS API 获取 Syncthing 事件
+func (a *App) GetHTTPSSyncthingEvents(since int, timeout int) (interface{}, error) {
+	// 创建请求 URL
+	url := fmt.Sprintf("%s/api/syncthing/events?since=%d&timeout=%d", httpsAPI, since, timeout)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %v", err)
+	}
+
+	// 配置客户端以忽略自签名证书
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	// 发送请求
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	// 解析 JSON 响应
+	var result interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("解析 JSON 失败: %v", err)
+	}
+
+	return result, nil
+}
+
+// GetHTTPSWifiInfo 通过 HTTPS API 获取 WiFi 信息
+func (a *App) GetHTTPSWifiInfo() (interface{}, error) {
+	req, err := http.NewRequest("GET", httpsAPI+"/api/wifi-info", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 忽略自签名证书验证（仅开发环境）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTPS API error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetHTTPSDeviceFolders 通过 HTTPS API 获取设备文件夹
+func (a *App) GetHTTPSDeviceFolders(deviceID string) (interface{}, error) {
+	req, err := http.NewRequest("GET", httpsAPI+"/api/device/"+deviceID+"/folders", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 忽略自签名证书验证（仅开发环境）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTPS API error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetHTTPSFolderContents 通过 HTTPS API 获取文件夹内容
+func (a *App) GetHTTPSFolderContents(folderID string, path string) (interface{}, error) {
+	apiURL := httpsAPI + "/api/folder/" + folderID
+	if path != "" {
+		apiURL += "?path=" + url.QueryEscape(path)
+	}
+	
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 忽略自签名证书验证（仅开发环境）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTPS API error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetHTTPSSyncthingDeviceID 通过 HTTPS API 获取 Syncthing 设备 ID
+func (a *App) GetHTTPSSyncthingDeviceID(id string) (interface{}, error) {
+	url := fmt.Sprintf("%s/api/syncthing/deviceid?id=%s", httpsAPI, id)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 忽略自签名证书验证（仅开发环境）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTPS API error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetHTTPSSyncthingConfigDevices 通过 HTTPS API 获取 Syncthing 配置设备
+func (a *App) GetHTTPSSyncthingConfigDevices() (interface{}, error) {
+	req, err := http.NewRequest("GET", httpsAPI+"/api/syncthing/config/devices", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 忽略自签名证书验证（仅开发环境）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTPS API error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetHTTPSSyncthingDiscovery 通过 HTTPS API 获取 Syncthing 发现信息
+func (a *App) GetHTTPSSyncthingDiscovery() (interface{}, error) {
+	req, err := http.NewRequest("GET", httpsAPI+"/api/syncthing/discovery", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// 忽略自签名证书验证（仅开发环境）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTPS API error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// PostHTTPSAddDevice 通过 HTTPS API 添加设备
+func (a *App) PostHTTPSAddDevice(deviceData string) (interface{}, error) {
+	req, err := http.NewRequest("POST", httpsAPI+"/api/syncthing/config/devices", strings.NewReader(deviceData))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// 忽略自签名证书验证（仅开发环境）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTPS API error: %s", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

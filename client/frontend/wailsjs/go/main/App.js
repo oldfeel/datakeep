@@ -18,8 +18,44 @@ export function GetFolders() {
   return window['go']['main']['App']['GetFolders']();
 }
 
+export function GetHTTPSDeviceFolders(arg1) {
+  return window['go']['main']['App']['GetHTTPSDeviceFolders'](arg1);
+}
+
+export function GetHTTPSDevices() {
+  return window['go']['main']['App']['GetHTTPSDevices']();
+}
+
+export function GetHTTPSFolderContents(arg1, arg2) {
+  return window['go']['main']['App']['GetHTTPSFolderContents'](arg1, arg2);
+}
+
+export function GetHTTPSSyncthingConfigDevices() {
+  return window['go']['main']['App']['GetHTTPSSyncthingConfigDevices']();
+}
+
+export function GetHTTPSSyncthingDeviceID(arg1) {
+  return window['go']['main']['App']['GetHTTPSSyncthingDeviceID'](arg1);
+}
+
+export function GetHTTPSSyncthingDiscovery() {
+  return window['go']['main']['App']['GetHTTPSSyncthingDiscovery']();
+}
+
+export function GetHTTPSSyncthingEvents(arg1, arg2) {
+  return window['go']['main']['App']['GetHTTPSSyncthingEvents'](arg1, arg2);
+}
+
+export function GetHTTPSWifiInfo() {
+  return window['go']['main']['App']['GetHTTPSWifiInfo']();
+}
+
 export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
+}
+
+export function PostHTTPSAddDevice(arg1) {
+  return window['go']['main']['App']['PostHTTPSAddDevice'](arg1);
 }
 
 export function SelectFolder() {
