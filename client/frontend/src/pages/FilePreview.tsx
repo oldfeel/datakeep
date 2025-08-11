@@ -244,29 +244,57 @@ function FilePreview() {
         setLoading(true);
         setError(null);
 
-        // 构建文件预览 API URL
-        let apiUrl: string;
-        // 对于 Syncthing 文件夹，总是使用本地 API
-        apiUrl = `http://localhost:8080/api/folder/${encodeURIComponent(folderId)}/preview?path=${encodeURIComponent(decodedFilePath)}`;
-
         console.log('文件路径解码后:', decodedFilePath);
-        console.log('构建的 API URL:', apiUrl);
-
-        console.log('Loading file content from:', apiUrl);
+        console.log('使用 HTTP API 获取文件预览');
 
         if (fileType === 'image' || fileType === 'video' || fileType === 'audio' || fileType === 'pdf') {
-          // 对于媒体文件，直接设置 URL
-          setFileUrl(apiUrl);
-          setFileContent(null);
-        } else if (fileType === 'text') {
-          // 对于文本文件，获取内容
-          const response = await fetch(apiUrl);
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          // 对于媒体文件，使用 HTTP API 获取预览
+          try {
+            // 使用 HTTP API 而不是 HTTPS API
+            const apiUrl = `http://localhost:8080/api/folder/${encodeURIComponent(folderId)}/preview?path=${encodeURIComponent(decodedFilePath)}`;
+            
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            // 获取内容类型
+            const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
+            
+            // 对于媒体文件，创建 blob URL
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            setFileUrl(url);
+            setFileContent(null);
+            
+            console.log('媒体文件预览成功:', contentType);
+          } catch (err) {
+            console.error('获取媒体文件预览失败:', err);
+            setError('获取文件预览失败: ' + (err instanceof Error ? err.message : String(err)));
+            setFileUrl(null);
+            setFileContent(null);
           }
-          const content = await response.text();
-          setFileContent(content);
-          setFileUrl(null);
+        } else if (fileType === 'text') {
+          // 对于文本文件，使用 HTTP API 获取内容
+          try {
+            const apiUrl = `http://localhost:8080/api/folder/${encodeURIComponent(folderId)}/preview?path=${encodeURIComponent(decodedFilePath)}`;
+            
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const content = await response.text();
+            setFileContent(content);
+            setFileUrl(null);
+            
+            console.log('文本文件内容获取成功');
+          } catch (err) {
+            console.error('获取文本文件内容失败:', err);
+            setError('获取文件内容失败: ' + (err instanceof Error ? err.message : String(err)));
+            setFileContent(null);
+            setFileUrl(null);
+          }
         } else {
           // 不支持的文件类型
           setError('不支持预览此类型的文件');

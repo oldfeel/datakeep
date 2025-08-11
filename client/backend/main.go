@@ -280,6 +280,37 @@ func StartServer() {
 		},
 	})
 
+	// 添加中间件来检测请求来源
+	app.Use(func(c *fiber.Ctx) error {
+		// 检测是否为本地请求
+		clientIP := c.IP()
+		userAgent := c.Get("User-Agent", "")
+		referer := c.Get("Referer", "")
+		origin := c.Get("Origin", "")
+
+		// 判断是否为本地请求
+		isLocalRequest := clientIP == "127.0.0.1" ||
+			clientIP == "localhost" ||
+			clientIP == "::1" ||
+			strings.Contains(userAgent, "Wails") ||
+			strings.Contains(referer, "wails.localhost") ||
+			strings.Contains(origin, "wails.localhost")
+
+		// 将判断结果存储在上下文中
+		c.Locals("isLocalRequest", isLocalRequest)
+		c.Locals("clientIP", clientIP)
+		c.Locals("userAgent", userAgent)
+
+		logger.Info("请求来源检测",
+			zap.String("path", c.Path()),
+			zap.String("clientIP", clientIP),
+			zap.String("userAgent", userAgent),
+			zap.Bool("isLocalRequest", isLocalRequest),
+		)
+
+		return c.Next()
+	})
+
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowHeaders: "*",
@@ -301,16 +332,23 @@ func StartServer() {
 
 	// Syncthing 代理路由
 	app.Get("/api/syncthing/events", syncthingEventsProxyHandler)
-	app.Get("/api/syncthing/discovery", syncthingDiscoveryProxyHandler)           // 新增设备发现代理接口
-	app.Get("/api/syncthing/deviceid", syncthingDeviceIdProxyHandler)             // 新增设备ID校验接口
-	app.Post("/api/syncthing/config/devices", syncthingConfigDevicesProxyHandler) // 新增添加设备接口
+	app.Get("/api/syncthing/discovery", syncthingDiscoveryProxyHandler)
+	app.Get("/api/syncthing/deviceid", syncthingDeviceIdProxyHandler)
+	app.Post("/api/syncthing/config/devices", syncthingConfigDevicesProxyHandler)
 
 	// 健康检查端点
 	app.Get("/health", func(c *fiber.Ctx) error {
+		isLocal := c.Locals("isLocalRequest").(bool)
+		clientIP := c.Locals("clientIP").(string)
+
 		return c.JSON(fiber.Map{
 			"status":   "ok",
 			"service":  "mydata-api",
 			"platform": "desktop",
+			"isLocal":  isLocal,
+			"clientIP": clientIP,
+			"protocol": c.Protocol(),
+			"port":     c.Port(),
 		})
 	})
 
@@ -327,8 +365,22 @@ func StartServer() {
 		logger.Fatal("自动生成证书失败", zap.Error(err))
 	}
 
+	// 启动 HTTP 服务（用于本机访问）
+	go func() {
+		logger.Info("启动 HTTP API 服务", zap.String("port", "8080"))
+		logger.Info("HTTP 服务器地址", zap.String("url", "http://localhost:8080"))
+		logger.Info("用途: 本机访问，Wails WebView")
+
+		if err := app.Listen(":8080"); err != nil {
+			logger.Fatal("HTTP API 服务启动失败", zap.Error(err))
+		}
+	}()
+
+	// 启动 HTTPS 服务（用于局域网设备访问）
 	logger.Info("启动 HTTPS API 服务", zap.String("port", "8443"))
-	logger.Info("服务器地址", zap.String("url", "https://localhost:8443"))
+	logger.Info("HTTPS 服务器地址", zap.String("url", "https://localhost:8443"))
+	logger.Info("用途: 局域网设备访问")
+	logger.Info("")
 	logger.Info("可用的 API 端点:")
 	logger.Info("  - GET    /api/folder/:folderId")
 	logger.Info("  - GET    /api/devices")
@@ -336,6 +388,10 @@ func StartServer() {
 	logger.Info("  - GET    /api/deviceid")
 	logger.Info("  - GET    /api/wifi")
 	logger.Info("  - GET    /health")
+	logger.Info("")
+	logger.Info("服务配置:")
+	logger.Info("  - HTTP  (本机访问): http://localhost:8080")
+	logger.Info("  - HTTPS (局域网):   https://localhost:8443")
 
 	if err := app.ListenTLS(":8443", certFile, keyFile); err != nil {
 		logger.Fatal("HTTPS API 服务启动失败", zap.Error(err))

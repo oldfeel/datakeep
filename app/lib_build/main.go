@@ -63,7 +63,7 @@ func getNDKHome() (string, error) {
 	if androidHome != "" {
 		ndkVersion := os.Getenv("NDK_VERSION")
 		if ndkVersion == "" {
-			ndkVersion = "29.0.13113456" // 默认版本
+			ndkVersion = "29.0.13846066" // 默认版本
 		}
 		ndkHome = filepath.Join(androidHome, "ndk", ndkVersion)
 		if _, err := os.Stat(ndkHome); err == nil {
@@ -73,12 +73,12 @@ func getNDKHome() (string, error) {
 
 	// 系统默认路径
 	if runtime.GOOS == "windows" {
-		defaultPath := "C:/Users/hyt59/AppData/Local/Android/Sdk/ndk/29.0.13113456"
+		defaultPath := "C:/Users/hyt59/AppData/Local/Android/Sdk/ndk/29.0.13846066"
 		if _, err := os.Stat(defaultPath); err == nil {
 			return defaultPath, nil
 		}
 	} else if runtime.GOOS == "linux" {
-		defaultPath := "/home/oldfeel/Android/Sdk/ndk/29.0.13113456"
+		defaultPath := "/home/oldfeel/Android/Sdk/ndk/29.0.13846066"
 		if _, err := os.Stat(defaultPath); err == nil {
 			return defaultPath, nil
 		}
