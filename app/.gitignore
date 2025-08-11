@@ -73,3 +73,7 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Android 编译生成的文件
+android/app/src/main/jniLibs/
+android/app/build/
