@@ -67,7 +67,7 @@ interface AddDeviceCardProps {
 }
 const AddDeviceCard: React.FC<AddDeviceCardProps> = ({ onPress }) => (
   <Card style={styles.deviceCardNew} onPress={onPress}>
-    <View style={[styles.deviceCardContentNew, { justifyContent: 'center', alignItems: 'center' }]}> 
+    <View style={[styles.deviceCardContentNew, { justifyContent: 'center', alignItems: 'center' }]}>
       <IconButton icon="plus" size={32} />
     </View>
   </Card>
@@ -168,7 +168,7 @@ export const HomeScreen: React.FC = () => {
       setIsLoading(true);
       const devicesData = await loadDevices();
       setDevices(devicesData);
-      
+
       // 默认选中第一个设备（通常是本机）
       if (devicesData.length > 0) {
         setSelectedDevice(devicesData[0]);
@@ -186,7 +186,7 @@ export const HomeScreen: React.FC = () => {
     try {
       console.log('开始加载设备列表...');
       const devicesData = await apiService.getDevices();
-      console.log('设备列表加载成功，设备数量:', devicesData.length);
+      console.log('设备列表加载成功，设备数量:', devicesData.length, devicesData);
       return devicesData as ExtendedDevice[];
     } catch (err) {
       console.error('Failed to load devices:', err);
@@ -218,7 +218,7 @@ export const HomeScreen: React.FC = () => {
   };
 
   const handleProfilePress = () => {
-    showSnackbar('个人中心功能开发中');
+    navigation.navigate('Profile');
   };
 
   const handleFolderPress = (folder: Folder) => {
@@ -238,7 +238,7 @@ export const HomeScreen: React.FC = () => {
   };
 
   const renderDevice = ({ item }: { item: ExtendedDevice }) => (
-    <Card 
+    <Card
       style={[
         styles.deviceCard,
         selectedDevice?.deviceID === item.deviceID && styles.selectedDeviceCard
@@ -277,8 +277,8 @@ export const HomeScreen: React.FC = () => {
         <Paragraph style={styles.folderPath}>{item.path}</Paragraph>
         <View style={styles.folderChips}>
           <Chip mode="outlined" style={styles.typeChip}>
-            {item.type === 'sendonly' ? '仅发送' : 
-             item.type === 'receiveonly' ? '仅接收' : '双向同步'}
+            {item.type === 'sendonly' ? '仅发送' :
+              item.type === 'receiveonly' ? '仅接收' : '双向同步'}
           </Chip>
           <Chip mode="outlined" style={styles.deviceCountChip}>
             {item.devices.length} 个设备
@@ -314,7 +314,7 @@ export const HomeScreen: React.FC = () => {
         </View>
       </View>
 
-      <ScrollView 
+      <ScrollView
         style={styles.scrollView}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -361,7 +361,7 @@ export const HomeScreen: React.FC = () => {
                 date={item.date}
                 count={item.count}
                 type={item.type}
-                onPress={() => {}}
+                onPress={() => { }}
               />
             )}
             keyExtractor={item => item.id}

@@ -10,18 +10,19 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * React Native Package for API Module
+ * React Native 包，注册 ApiModule
  */
 public class ApiPackage implements ReactPackage {
-    @Override
-    public List<ViewManager> createViewManagers(ReactApplicationContext reactContext) {
-        return Collections.emptyList();
-    }
-
+    
     @Override
     public List<NativeModule> createNativeModules(ReactApplicationContext reactContext) {
         List<NativeModule> modules = new ArrayList<>();
         modules.add(new ApiModule(reactContext));
         return modules;
+    }
+    
+    @Override
+    public List<ViewManager> createViewManagers(ReactApplicationContext reactContext) {
+        return Collections.emptyList();
     }
 } 

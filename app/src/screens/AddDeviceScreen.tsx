@@ -147,9 +147,12 @@ export const AddDeviceScreen: React.FC = () => {
         maxSendKbps: 0,
       };
 
-      // 这里可以调用 API 添加设备
-      // 暂时使用模拟成功
-      console.log('添加设备配置:', deviceConfig);
+      console.log('🌐 开始添加设备...');
+      console.log('📋 设备配置:', deviceConfig);
+
+      // 调用 API 添加设备
+      const addedDevice = await apiService.addDevice(deviceConfig);
+      console.log('✅ 设备添加成功:', addedDevice);
 
       // 显示成功消息
       setSnackbarMessage(`设备 ${deviceConfig.name || deviceConfig.deviceID} 添加成功`);
@@ -160,7 +163,7 @@ export const AddDeviceScreen: React.FC = () => {
         navigation.goBack();
       }, 1500);
     } catch (error) {
-      console.error('添加设备失败:', error);
+      console.error('❌ 添加设备失败:', error);
       setSnackbarMessage(`添加设备失败: ${error instanceof Error ? error.message : '未知错误'}`);
       setSnackbarVisible(true);
     } finally {

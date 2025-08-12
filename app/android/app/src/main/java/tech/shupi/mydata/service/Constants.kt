@@ -32,12 +32,36 @@ object Constants {
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
         val binaryFile = File(nativeLibDir, FILENAME_SYNCTHING_BINARY)
         
-        // 调试信息
-        android.util.Log.d("Constants", "Native library dir: $nativeLibDir")
-        android.util.Log.d("Constants", "Binary file path: ${binaryFile.absolutePath}")
-        android.util.Log.d("Constants", "Binary file exists: ${binaryFile.exists()}")
-        android.util.Log.d("Constants", "Binary file can read: ${binaryFile.canRead()}")
-        android.util.Log.d("Constants", "Binary file can execute: ${binaryFile.canExecute()}")
+        // 详细的调试信息
+        android.util.Log.i("Constants", "🔍 获取 Syncthing 二进制文件信息")
+        android.util.Log.i("Constants", "📁 原生库目录: $nativeLibDir")
+        android.util.Log.i("Constants", "📄 二进制文件路径: ${binaryFile.absolutePath}")
+        android.util.Log.i("Constants", "✅ 文件存在: ${binaryFile.exists()}")
+        
+        if (binaryFile.exists()) {
+            android.util.Log.i("Constants", "📊 文件大小: ${binaryFile.length()} 字节")
+            android.util.Log.i("Constants", "🔐 文件权限: ${binaryFile.canRead()}, ${binaryFile.canWrite()}, ${binaryFile.canExecute()}")
+            android.util.Log.i("Constants", "📖 可读: ${binaryFile.canRead()}")
+            android.util.Log.i("Constants", "⚡ 可执行: ${binaryFile.canExecute()}")
+            
+            // 检查文件类型
+            try {
+                val firstBytes = ByteArray(4)
+                val bytesRead = binaryFile.inputStream().use { input ->
+                    input.read(firstBytes, 0, 4)
+                }
+                val isElf = bytesRead >= 4 && firstBytes[0] == 0x7F.toByte() && 
+                           firstBytes[1] == 0x45.toByte() && firstBytes[2] == 0x4C.toByte() && 
+                           firstBytes[3] == 0x46.toByte()
+                android.util.Log.i("Constants", "🔍 文件类型: ${if (isElf) "ELF 二进制文件" else "未知文件类型"}")
+            } catch (e: Exception) {
+                android.util.Log.w("Constants", "⚠️ 无法检查文件类型", e)
+            }
+        } else {
+            android.util.Log.e("Constants", "❌ 二进制文件不存在！")
+            android.util.Log.e("Constants", "📁 请检查 jniLibs 目录配置")
+            android.util.Log.e("Constants", "📋 期望路径: ${binaryFile.absolutePath}")
+        }
         
         return binaryFile
     }

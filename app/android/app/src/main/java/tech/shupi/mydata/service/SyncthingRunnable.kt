@@ -63,14 +63,24 @@ class SyncthingRunnable(private val context: Context, private val command: Comma
     }
     
     fun run(returnStdOut: Boolean): String {
+        Log.i(TAG, "🚀 开始启动 Syncthing 原生二进制文件")
+        Log.i(TAG, "📁 二进制文件路径: ${syncthingBinary.absolutePath}")
+        Log.i(TAG, "🔧 命令类型: $command")
+        Log.i(TAG, "📋 完整命令: ${commandArray.joinToString(" ")}")
+        
         trimLogFile()
         var capturedStdOut = ""
         
         // 检查文件是否存在
         if (!syncthingBinary.exists()) {
-            Log.e(TAG, "Syncthing binary not found at: ${syncthingBinary.absolutePath}")
+            Log.e(TAG, "❌ Syncthing 二进制文件不存在: ${syncthingBinary.absolutePath}")
+            Log.e(TAG, "📁 请检查 jniLibs 目录是否正确配置")
             return ""
         }
+        
+        Log.i(TAG, "✅ Syncthing 二进制文件存在")
+        Log.i(TAG, "📊 文件大小: ${syncthingBinary.length()} 字节")
+        Log.i(TAG, "🔐 文件权限: 读=${syncthingBinary.canRead()}, 写=${syncthingBinary.canWrite()}, 执行=${syncthingBinary.canExecute()}")
         
         // 确保 Syncthing 可执行
         try {
@@ -97,8 +107,26 @@ class SyncthingRunnable(private val context: Context, private val command: Comma
             increaseInotifyWatches()
             
             val targetEnv = buildEnvironment()
+            Log.i(TAG, "🌍 环境变量设置完成，准备启动进程...")
+            Log.i(TAG, "🔧 关键环境变量:")
+            Log.i(TAG, "  - GO111MODULE: ${targetEnv["GO111MODULE"]}")
+            Log.i(TAG, "  - CGO_ENABLED: ${targetEnv["CGO_ENABLED"]}")
+            Log.i(TAG, "  - SYNCTHING_ANDROID: ${targetEnv["SYNCTHING_ANDROID"]}")
+            
             process = setupAndLaunch(targetEnv)
             syncthingProcess.set(process)
+            
+            Log.i(TAG, "✅ Syncthing 进程启动成功")
+            try {
+                val pidField = process.javaClass.getDeclaredField("pid")
+                pidField.isAccessible = true
+                val pid = pidField.getInt(process)
+                Log.i(TAG, "🆔 进程 ID: $pid")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ 无法获取进程 ID", e)
+                Log.i(TAG, "🆔 进程 ID: 未知")
+            }
+            Log.i(TAG, "📊 进程存活状态: ${process.isAlive}")
             
             var lInfo: Thread? = null
             var lWarn: Thread? = null
@@ -201,10 +229,19 @@ class SyncthingRunnable(private val context: Context, private val command: Comma
     }
     
     private fun setupAndLaunch(env: HashMap<String, String>): Process {
+        Log.i(TAG, "🔧 创建 ProcessBuilder...")
+        Log.i(TAG, "📋 命令数组: ${commandArray.joinToString(" ")}")
+        Log.i(TAG, "🌍 环境变量数量: ${env.size}")
+        
         val pb = ProcessBuilder(*commandArray)
         pb.environment().putAll(env)
         pb.redirectErrorStream(false)
-        return pb.start()
+        
+        Log.i(TAG, "🚀 启动进程...")
+        val process = pb.start()
+        Log.i(TAG, "✅ 进程启动完成")
+        
+        return process
     }
     
     private fun increaseInotifyWatches() {

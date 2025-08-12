@@ -109,6 +109,33 @@ class ApiService {
     }
   }
 
+  // 添加设备
+  async addDevice(deviceConfig: {
+    deviceID: string;
+    name: string;
+    addresses?: string[];
+    compression?: string;
+    introducer?: boolean;
+    autoAcceptFolders?: boolean;
+    untrusted?: boolean;
+    numConnections?: number;
+    maxRecvKbps?: number;
+    maxSendKbps?: number;
+  }): Promise<Device> {
+    try {
+      console.log('🌐 通过 Native Module 添加设备...');
+      console.log('📋 设备配置:', deviceConfig);
+      
+      const response = await ApiModule.addDevice(JSON.stringify(deviceConfig));
+      const data = JSON.parse(response);
+      console.log('✅ 设备添加成功');
+      return data.data;
+    } catch (error) {
+      console.error('❌ 添加设备失败:', error);
+      throw error;
+    }
+  }
+
   // 添加文件夹（暂未实现）
   async addFolder(folder: Omit<Folder, 'id'>): Promise<Folder> {
     throw new Error('添加文件夹功能暂未实现');

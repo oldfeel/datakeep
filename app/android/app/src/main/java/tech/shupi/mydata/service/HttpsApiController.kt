@@ -24,6 +24,8 @@ import java.security.PrivateKey
 import java.security.KeyFactory
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
+import java.net.NetworkInterface
+import java.net.Inet4Address
 
 /**
  * HTTPS API 服务器，提供与桌面版相同的 REST API 接口
@@ -38,9 +40,18 @@ class HttpsApiController(private val context: Context) {
     }
     
     // Syncthing API 配置 - 尝试从桌面端获取数据
-    private val syncthingApiBase = "http://192.168.2.6:8384" // 桌面端 Syncthing 地址
-    private val apiKey = getApiKeyFromConfig() // 从配置中获取
+    private val syncthingApiBase = "http://127.0.0.1:8384" // 本地 Syncthing 地址
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+    
+    // API Key 延迟初始化，避免构造函数失败
+    private var _apiKey: String? = null
+    private val apiKey: String
+        get() {
+            if (_apiKey == null) {
+                _apiKey = getApiKeyFromConfig()
+            }
+            return _apiKey!!
+        }
     
     private val gson = Gson()
     private var httpClient: OkHttpClient? = null
@@ -108,7 +119,7 @@ class HttpsApiController(private val context: Context) {
             
             Log.i(TAG, "✅ HTTP API 服务器启动成功！")
             Log.i(TAG, "📡 服务器地址: http://0.0.0.0:$PORT")
-            Log.i(TAG, "🌐 局域网访问: http://192.168.2.6:$PORT")
+            Log.i(TAG, "🌐 局域网访问: http://127.0.0.1:$PORT")
             Log.i(TAG, "📋 可用的 API 端点:")
             Log.i(TAG, "  - GET  /api/devices")
             Log.i(TAG, "  - GET  /api/device/{deviceId}/folders")
@@ -379,7 +390,7 @@ class HttpsApiController(private val context: Context) {
                 handleSyncthingDiscovery()
             }
             else -> {
-                Log.w(TAG, "❌ 未找到匹配的路由: $uri")
+                Log.w(TAG, "❌ 未找到匹配的路由: $method $uri")
                 fail(404, "Not Found")
             }
         }
@@ -397,31 +408,236 @@ class HttpsApiController(private val context: Context) {
             success(devices)
         } catch (e: Exception) {
             Log.e(TAG, "获取设备列表失败", e)
-            // 返回模拟数据
-            getMockDevices()
+            // 返回错误信息
+            fail(500, "获取设备列表失败: ${e.message}")
         }
     }
     
     /**
      * 从 Syncthing API 获取设备列表
+     * 使用与 Go 后端相同的接口: /rest/config/devices
      */
     private fun getDevicesFromSyncthing(): List<Map<String, Any>> {
-        val response = executeGetRequest("/rest/system/status")
-        val jsonObject = JsonParser.parseString(response).asJsonObject
+        Log.d(TAG, "=== getDevicesFromSyncthing 开始 ===")
         
-        val devices = mutableListOf<Map<String, Any>>()
+        try {
+            // 获取设备配置 - 使用与 Go 后端相同的接口
+            Log.d(TAG, "正在调用 Syncthing API: GET /rest/config/devices")
+            val response = executeGetRequest("/rest/config/devices")
+            Log.d(TAG, "API 响应长度: ${response.length} 字符")
+            
+            val jsonArray = JsonParser.parseString(response).asJsonArray
+            Log.d(TAG, "成功解析到 ${jsonArray.size()} 个设备")
+            
+            val devices = mutableListOf<Map<String, Any>>()
+            
+            // 获取本机设备ID
+            val localDeviceId = getLocalDeviceID()
+            Log.d(TAG, "本机设备ID: $localDeviceId")
+            
+            // 解析设备列表
+            for (i in 0 until jsonArray.size()) {
+                val device = jsonArray[i].asJsonObject
+                val deviceId = device.get("deviceID")?.asString ?: ""
+                val deviceName = device.get("name")?.asString ?: "Unknown Device"
+                
+                Log.d(TAG, "  [${i + 1}] DeviceID: $deviceId, Name: $deviceName")
+                
+                // 检查是否为本机设备
+                val isLocalDevice = localDeviceId.isNotEmpty() && deviceId == localDeviceId
+                
+                // 获取设备连接状态
+                val connectionInfo = getDeviceConnectionInfo(deviceId)
+                val isConnected = connectionInfo["connected"] as? Boolean ?: false
+                val connectionType = connectionInfo["type"] as? String ?: "unknown"
+                val clientVersion = connectionInfo["clientVersion"] as? String ?: ""
+                
+                // 获取设备地址
+                val addresses = getDeviceAddresses(deviceId, isLocalDevice)
+                
+                val deviceMap = mapOf(
+                    "id" to deviceId,
+                    "name" to deviceName,
+                    "address" to (addresses.firstOrNull() ?: "127.0.0.1"),
+                    "addresses" to addresses,
+                    "status" to (if (isConnected) "connected" else "disconnected"),
+                    "isLocal" to isLocalDevice,
+                    "connected" to isConnected,
+                    "connectionType" to connectionType,
+                    "clientVersion" to clientVersion
+                )
+                
+                devices.add(deviceMap)
+                Log.d(TAG, "  设备 $deviceName 更新: 连接状态=$isConnected, 类型=$connectionType, 地址=$addresses")
+            }
+            
+            Log.d(TAG, "=== getDevicesFromSyncthing 结束 ===")
+            return devices
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "获取设备列表失败", e)
+            Log.d(TAG, "=== getDevicesFromSyncthing 结束（出错）===")
+            // 抛出异常，让上层处理
+            throw e
+        }
+    }
+    
+    /**
+     * 获取设备连接信息
+     * 使用与 Go 后端相同的接口: /rest/system/connections
+     */
+    private fun getDeviceConnectionInfo(deviceId: String): Map<String, Any> {
+        return try {
+            Log.d(TAG, "正在获取设备 $deviceId 的连接信息")
+            val response = executeGetRequest("/rest/system/connections")
+            val jsonObject = JsonParser.parseString(response).asJsonObject
+            
+            val connections = jsonObject.get("connections")?.asJsonObject
+            if (connections != null && connections.has(deviceId)) {
+                val connection = connections.get(deviceId).asJsonObject
+                val connectionInfo = mapOf(
+                    "connected" to (connection.get("connected")?.asBoolean ?: false),
+                    "type" to (connection.get("type")?.asString ?: "unknown"),
+                    "clientVersion" to (connection.get("clientVersion")?.asString ?: ""),
+                    "address" to (connection.get("address")?.asString ?: ""),
+                    "isLocalNetwork" to (connection.get("isLocalNetwork")?.asBoolean ?: false),
+                    "crypto" to (connection.get("crypto")?.asString ?: "")
+                )
+                Log.d(TAG, "设备 $deviceId 连接信息: $connectionInfo")
+                return connectionInfo
+            }
+            
+            Log.d(TAG, "设备 $deviceId 未找到连接信息")
+            return mapOf(
+                "connected" to false,
+                "type" to "unknown",
+                "clientVersion" to "",
+                "address" to "",
+                "isLocalNetwork" to false,
+                "crypto" to ""
+            )
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "获取设备 $deviceId 连接信息失败", e)
+            return mapOf(
+                "connected" to false,
+                "type" to "unknown",
+                "clientVersion" to "",
+                "address" to "",
+                "isLocalNetwork" to false,
+                "crypto" to ""
+            )
+        }
+    }
+    
+    /**
+     * 获取设备地址列表
+     */
+    private fun getDeviceAddresses(deviceId: String, isLocalDevice: Boolean): List<String> {
+        val addresses = mutableListOf<String>()
         
-        // 添加本地设备
-        val localDevice = mapOf(
-            "id" to (jsonObject.get("myID")?.asString ?: "unknown"),
-            "name" to "MyDataApp",
-            "address" to "127.0.0.1:$SYNCTHING_PORT",
-            "status" to "connected",
-            "isLocal" to true
-        )
-        devices.add(localDevice)
+        try {
+            // 获取设备发现信息
+            Log.d(TAG, "正在获取设备 $deviceId 的发现信息")
+            val response = executeGetRequest("/rest/system/discovery")
+            val jsonObject = JsonParser.parseString(response).asJsonObject
+            
+            if (jsonObject.has(deviceId)) {
+                val deviceInfo = jsonObject.get(deviceId).asJsonObject
+                if (deviceInfo.has("addresses")) {
+                    val addressArray = deviceInfo.get("addresses").asJsonArray
+                    for (i in 0 until addressArray.size()) {
+                        val address = addressArray[i].asString
+                        if (!address.contains("relay://")) {
+                            addresses.add(address)
+                        }
+                    }
+                }
+            }
+            
+            // 为本机设备添加本地地址
+            if (isLocalDevice) {
+                val localAddresses = getLocalNetworkAddresses()
+                addresses.addAll(localAddresses)
+                Log.d(TAG, "为本机设备添加本地地址: $localAddresses")
+            }
+            
+            // 去重
+            val uniqueAddresses = addresses.distinct()
+            Log.d(TAG, "设备 $deviceId 地址列表: $uniqueAddresses")
+            return uniqueAddresses
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "获取设备 $deviceId 地址信息失败", e)
+            // 返回默认地址
+            if (isLocalDevice) {
+                return listOf("127.0.0.1")
+            }
+            return emptyList()
+        }
+    }
+    
+    /**
+     * 获取本地网络地址
+     */
+    private fun getLocalNetworkAddresses(): List<String> {
+        val addresses = mutableListOf<String>()
         
-        return devices
+        try {
+            // 获取本机网络接口地址
+            val networkInterfaces = NetworkInterface.getNetworkInterfaces()
+            while (networkInterfaces.hasMoreElements()) {
+                val networkInterface = networkInterfaces.nextElement()
+                
+                // 跳过回环接口和未启用的接口
+                if (networkInterface.isLoopback || !networkInterface.isUp) {
+                    continue
+                }
+                
+                val interfaceAddresses = networkInterface.inetAddresses
+                while (interfaceAddresses.hasMoreElements()) {
+                    val address = interfaceAddresses.nextElement()
+                    
+                    // 只获取 IPv4 地址
+                    if (address is Inet4Address && !address.isLoopbackAddress) {
+                        val hostAddress = address.hostAddress
+                        if (hostAddress != null && isPrivateIPAddress(hostAddress)) {
+                            addresses.add(hostAddress)
+                        }
+                    }
+                }
+            }
+            
+            Log.d(TAG, "本地网络地址: $addresses")
+            return addresses
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "获取本地网络地址失败", e)
+            return listOf("127.0.0.1")
+        }
+    }
+    
+    /**
+     * 判断是否为私有 IP 地址
+     */
+    private fun isPrivateIPAddress(ipAddress: String): Boolean {
+        return try {
+            val parts = ipAddress.split(".")
+            if (parts.size != 4) return false
+            
+            val first = parts[0].toInt()
+            val second = parts[1].toInt()
+            
+            // 私有 IP 地址范围
+            when {
+                first == 10 -> true
+                first == 172 && second in 16..31 -> true
+                first == 192 && second == 168 -> true
+                else -> false
+            }
+        } catch (e: Exception) {
+            false
+        }
     }
     
     /**
@@ -564,8 +780,8 @@ class HttpsApiController(private val context: Context) {
         
         // 检查 Syncthing 服务是否可用
         if (!isSyncthingServiceAvailable()) {
-            Log.w(TAG, "⚠️ Syncthing 服务不可用，直接返回模拟数据")
-            return getMockDiscoveryData()
+            Log.w(TAG, "⚠️ Syncthing 服务不可用")
+            return fail(503, "Syncthing 服务不可用")
         }
         
         return try {
@@ -578,9 +794,8 @@ class HttpsApiController(private val context: Context) {
             Log.e(TAG, "❌ 获取设备发现信息失败", e)
             Log.e(TAG, "🔍 异常详情: ${e.javaClass.simpleName} - ${e.message}")
             Log.e(TAG, "📚 异常堆栈: ${e.stackTraceToString()}")
-            // 返回模拟数据
-            Log.w(TAG, "🔄 返回模拟数据作为备用")
-            getMockDiscoveryData()
+            // 返回错误信息
+            return fail(500, "获取设备发现信息失败: ${e.message}")
         }
     }
     
@@ -594,7 +809,7 @@ class HttpsApiController(private val context: Context) {
         val client = getOrCreateHttpClient()
         val url = "$syncthingApiBase$endpoint"
         Log.d(TAG, "🌐 完整 URL: $url")
-        Log.d(TAG, "🔑 API Key: ${if (apiKey.isNotEmpty()) "已设置" else "未设置"}")
+        Log.d(TAG, "🔑 API Key: $apiKey")
         
         val request = Request.Builder()
             .url(url)
@@ -611,7 +826,57 @@ class HttpsApiController(private val context: Context) {
                 if (!response.isSuccessful) {
                     val errorBody = response.body?.string() ?: "无错误详情"
                     Log.e(TAG, "❌ HTTP 请求失败: ${response.code}")
-                    Log.e(TAG, "📄 错误响应体: $errorBody")
+                    Log.d(TAG, "📄 错误响应体: $errorBody")
+                    throw IOException("HTTP 请求失败: ${response.code} - $errorBody")
+                }
+                
+                val responseBody = response.body?.string()
+                Log.d(TAG, "✅ 请求成功，响应体长度: ${responseBody?.length ?: 0}")
+                Log.d(TAG, "📄 响应内容: $responseBody")
+                return responseBody ?: ""
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "💥 HTTP 请求执行失败", e)
+            Log.e(TAG, "🔍 具体错误: ${e.javaClass.simpleName} - ${e.message}")
+            throw e
+        }
+    }
+
+    /**
+     * 执行 HTTP POST 请求到 Syncthing API
+     */
+    private fun executePostRequest(endpoint: String, jsonBody: String): String {
+        Log.d(TAG, "🚀 开始执行 HTTP POST 请求")
+        Log.d(TAG, "🔗 请求端点: $endpoint")
+        Log.d(TAG, "📄 请求体: $jsonBody")
+        
+        val client = getOrCreateHttpClient()
+        val url = "$syncthingApiBase$endpoint"
+        Log.d(TAG, "🌐 完整 URL: $url")
+        Log.d(TAG, "🔑 API Key: $apiKey")
+        
+        val requestBody = RequestBody.create(
+            "application/json; charset=utf-8".toMediaType(),
+            jsonBody
+        )
+        
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("X-API-Key", apiKey)
+            .post(requestBody)
+            .build()
+        
+        Log.d(TAG, "📤 发送请求...")
+        
+        try {
+            client.newCall(request).execute().use { response ->
+                Log.d(TAG, "📥 收到响应，状态码: ${response.code}")
+                Log.d(TAG, "📋 响应头: ${response.headers}")
+                
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string() ?: "无错误详情"
+                    Log.e(TAG, "❌ HTTP 请求失败: ${response.code}")
+                    Log.d(TAG, "📄 错误响应体: $errorBody")
                     throw IOException("HTTP 请求失败: ${response.code} - $errorBody")
                 }
                 
@@ -708,20 +973,7 @@ class HttpsApiController(private val context: Context) {
         }
     }
     
-    /**
-     * 获取模拟设备发现数据
-     */
-    private fun getMockDiscoveryData(): String {
-        val discoveryData = mapOf(
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFG" to mapOf(
-                "addresses" to listOf("tcp://192.168.1.100:22000")
-            ),
-            "BCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGH" to mapOf(
-                "addresses" to listOf("tcp://192.168.1.101:22000")
-            )
-        )
-        return success(discoveryData)
-    }
+
     
     /**
      * 检查 Syncthing 服务是否可用
@@ -754,85 +1006,49 @@ class HttpsApiController(private val context: Context) {
     
     /**
      * 从 Syncthing 配置文件获取 API Key
+     * 如果获取失败，将抛出异常
      */
     private fun getApiKeyFromConfig(): String {
         Log.d(TAG, "🔍 尝试从 Syncthing 配置文件获取 API Key")
         
+        // 主要配置文件路径
+        val configPath = "/data/data/tech.shupi.mydata/files/config.xml"
+        
         try {
-            // 尝试从常见的配置文件路径读取
-            val configPaths = listOf(
-                "/data/data/tech.shupi.mydata/files/config.xml",
-                "/storage/emulated/0/Android/data/tech.shupi.mydata/files/config.xml",
-                "/sdcard/Android/data/tech.shupi.mydata/files/config.xml"
-            )
-            
-            for (configPath in configPaths) {
-                try {
-                    val file = File(configPath)
-                    if (file.exists()) {
-                        Log.d(TAG, "📁 找到配置文件: $configPath")
-                        val content = file.readText()
-                        
-                        // 简单的 XML 解析，查找 apikey 标签
-                        val apiKeyPattern = Regex("<apikey>([^<]+)</apikey>")
-                        val matchResult = apiKeyPattern.find(content)
-                        
-                        if (matchResult != null) {
-                            val apiKey = matchResult.groupValues[1]
-                            Log.d(TAG, "✅ 成功从配置文件获取 API Key: ${apiKey.take(8)}...")
-                            return apiKey
-                        } else {
-                            Log.w(TAG, "⚠️ 配置文件中未找到 apikey 标签")
-                        }
+            val file = File(configPath)
+            if (file.exists()) {
+                Log.d(TAG, "📁 找到配置文件: $configPath")
+                val content = file.readText()
+                
+                // 简单的 XML 解析，查找 apikey 标签
+                val apiKeyPattern = Regex("<apikey>([^<]+)</apikey>")
+                val matchResult = apiKeyPattern.find(content)
+                
+                if (matchResult != null) {
+                    val apiKey = matchResult.groupValues[1]
+                    if (apiKey.isNotEmpty()) {
+                        Log.d(TAG, "✅ 成功从配置文件获取 API Key: ${apiKey.take(8)}...")
+                        return apiKey
                     } else {
-                        Log.d(TAG, "❌ 配置文件不存在: $configPath")
+                        Log.w(TAG, "⚠️ 配置文件中的 API Key 为空")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "⚠️ 读取配置文件失败: $configPath", e)
+                } else {
+                    Log.w(TAG, "⚠️ 配置文件中未找到 apikey 标签")
                 }
+            } else {
+                Log.e(TAG, "❌ 配置文件不存在: $configPath")
             }
-            
-            Log.w(TAG, "⚠️ 未找到有效的 Syncthing 配置文件，使用默认 API Key")
-            return "default-api-key" // 使用默认值
-            
         } catch (e: Exception) {
-            Log.e(TAG, "💥 获取 API Key 失败", e)
-            return "default-api-key" // 使用默认值
+            Log.e(TAG, "⚠️ 读取配置文件失败: $configPath", e)
         }
+        
+        // 如果获取失败，抛出异常
+        val errorMessage = "无法从配置文件获取有效的 API Key: $configPath"
+        Log.e(TAG, "💥 $errorMessage")
+        throw IllegalStateException(errorMessage)
     }
     
-    /**
-     * 获取模拟设备数据
-     */
-    private fun getMockDevices(): String {
-        val devices = listOf(
-            mapOf(
-                "id" to "MOCK-DEVICE-1",
-                "name" to "本机",
-                "address" to "127.0.0.1:$SYNCTHING_PORT",
-                "status" to "connected",
-                "isLocal" to true,
-                "device_type" to "phone"
-            ),
-            mapOf(
-                "id" to "MOCK-DEVICE-2",
-                "name" to "电脑",
-                "address" to "192.168.2.100:22000",
-                "status" to "disconnected",
-                "isLocal" to false,
-                "device_type" to "pc"
-            ),
-            mapOf(
-                "id" to "MOCK-DEVICE-3",
-                "name" to "电视",
-                "address" to "192.168.2.101:22000",
-                "status" to "disconnected",
-                "isLocal" to false,
-                "device_type" to "tv"
-            )
-        )
-        return success(devices)
-    }
+
     
     /**
      * 发送成功响应
@@ -877,4 +1093,6 @@ class HttpsApiController(private val context: Context) {
         output.write(responseBytes)
         output.flush()
     }
+
+
 } 

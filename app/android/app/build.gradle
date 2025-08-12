@@ -105,6 +105,14 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
     }
+    
+    // 关键配置：使用传统打包方式，确保 libsyncthing.so 正确安装
+    // 否则基于 app bundles 的安装中，原生库不会出现在正确位置
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {

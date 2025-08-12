@@ -42,7 +42,7 @@ func main() {
 
 	// 运行应用
 	err := wails.Run(&options.App{
-		Title:             "MyData",
+		Title:             "我的数据",
 		Width:             1024,
 		Height:            768,
 		MinWidth:          800,

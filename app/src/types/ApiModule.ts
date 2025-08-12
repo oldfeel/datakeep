@@ -7,6 +7,7 @@ interface ApiModuleInterface {
   getLocalDeviceId(): Promise<string>;
   getWifiInfo(): Promise<string>;
   getNearbyDevices(): Promise<string>;
+  addDevice(deviceConfig: string): Promise<string>;
 }
 
 const { ApiModule } = NativeModules;

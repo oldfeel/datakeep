@@ -100,25 +100,31 @@ class SyncthingService : Service() {
      */
     private fun startSyncthing() {
         if (currentState == State.ACTIVE || currentState == State.STARTING) {
-            Log.w(TAG, "Syncthing 已经在运行或正在启动")
+            Log.w(TAG, "⚠️ Syncthing 已经在运行或正在启动")
             return
         }
 
-        Log.i(TAG, "启动 Syncthing")
+        Log.i(TAG, "🚀 开始启动 Syncthing 服务")
         updateState(State.STARTING)
         
         // 启动前台服务
         startForeground(NOTIFICATION_ID, createNotification("正在启动 Syncthing..."))
 
         try {
+            Log.i(TAG, "🔧 创建 SyncthingRunnable 实例...")
             // 创建并启动 SyncthingRunnable
             val runnable = SyncthingRunnable(this, SyncthingRunnable.Command.MAIN)
             syncthingRunnable.set(runnable)
             
+            Log.i(TAG, "🧵 创建并启动 Syncthing 线程...")
             syncthingThread = Thread(runnable).apply {
                 name = "SyncthingThread"
                 start()
             }
+            
+            Log.i(TAG, "✅ Syncthing 线程启动成功")
+            Log.i(TAG, "🆔 线程名称: ${syncthingThread?.name}")
+            Log.i(TAG, "📊 线程状态: ${syncthingThread?.state}")
             
             // 启动 HTTPS API 服务器
             startHttpsServer()
@@ -286,7 +292,7 @@ class SyncthingService : Service() {
             httpsApiController?.start()
             
             Log.i(TAG, "✅ HTTPS API 服务器启动成功！")
-            Log.i(TAG, "📡 服务器地址: https://192.168.2.6:8443")
+            Log.i(TAG, "📡 服务器地址: https://127.0.0.1:8443")
             Log.i(TAG, "🌐 可用端点: /api/devices, /api/device/*/folders, /api/folder/*")
             
         } catch (e: Exception) {

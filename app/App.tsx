@@ -14,6 +14,7 @@ import 'react-native-gesture-handler';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { AddDeviceScreen } from './src/screens/AddDeviceScreen';
 import AddFolderScreen from './src/screens/AddFolderScreen';
+import { ProfileScreen } from './src/screens/ProfileScreen';
 
 const Stack = createStackNavigator();
 
@@ -60,6 +61,13 @@ function App(): React.JSX.Element {
             component={AddDeviceScreen}
             options={{
               title: '添加设备',
+            }}
+          />
+          <Stack.Screen
+            name="Profile"
+            component={ProfileScreen}
+            options={{
+              headerShown: false, // 完全隐藏顶部导航栏，使用自定义导航栏
             }}
           />
         </Stack.Navigator>

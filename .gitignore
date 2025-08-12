@@ -8,3 +8,6 @@ client/mydata.db
 
 # 证书文件
 client/certs/
+
+# Wails 自动生成的文件
+client/frontend/wailsjs/
