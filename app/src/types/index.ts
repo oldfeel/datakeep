@@ -1,10 +1,32 @@
 // 设备类型定义
 export interface Device {
-  id: string;
+  deviceID: string;
   name: string;
-  address: string;
-  status: 'connected' | 'disconnected' | 'unknown';
-  isLocal: boolean;
+  addresses: string[];
+  compression: string;
+  certName: string;
+  introducer: boolean;
+  skipIntroductionRemovals: boolean;
+  introducedBy: string;
+  paused: boolean;
+  allowedNetworks: string[];
+  autoAcceptFolders: boolean;
+  maxSendKbps: number;
+  maxRecvKbps: number;
+  ignoredFolders: string[];
+  maxRequestKiB: number;
+  untrusted: boolean;
+  remoteGUIPort: number;
+  numConnections: number;
+  // 增强字段
+  connected?: boolean;
+  connectionType?: string;
+  clientVersion?: string;
+  inBytesTotal?: number;
+  outBytesTotal?: number;
+  isLocalNetwork?: boolean;
+  crypto?: string;
+  lanAddresses?: string[];
 }
 
 // 文件夹类型定义

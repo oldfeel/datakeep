@@ -27,18 +27,8 @@ import { Modal, Portal, Dialog, Button as PaperButton, TextInput, RadioButton, C
 
 // 扩展 Device 接口以匹配参考实现
 interface ExtendedDevice extends Device {
-  deviceID: string;
-  addresses: string[];
-  compression: string;
-  certName: string;
-  introducer: boolean;
-  connected: boolean;
-  connectionType: string;
-  clientVersion: string;
-  inBytesTotal: number;
-  outBytesTotal: number;
-  isLocalNetwork: boolean;
-  crypto: string;
+  // 这些字段已经在 Device 接口中定义，不需要重复
+  // 可以添加其他扩展字段
 }
 
 // 新设备卡片组件
@@ -196,8 +186,38 @@ export const HomeScreen: React.FC = () => {
         device.name
       );
       
-      console.log('有效设备数量:', validDevices.length);
-      return validDevices as ExtendedDevice[];
+      // 将本机设备排在第一位
+      console.log('排序前的设备列表:');
+      validDevices.forEach((device, index) => {
+        console.log(`设备 ${index}: ${device.name}, deviceID: ${device.deviceID}, isLocalNetwork: ${device.isLocalNetwork}`);
+      });
+      
+      const sortedDevices = validDevices.sort((a, b) => {
+        // 使用 connectionType 来判断本机设备（与Java后端逻辑一致）
+        const aIsLocal = a.connectionType === 'local' || a.deviceID === 'local';
+        const bIsLocal = b.connectionType === 'local' || b.deviceID === 'local';
+        
+        console.log(`比较: ${a.name}(connectionType: ${a.connectionType}, isLocal: ${aIsLocal}) vs ${b.name}(connectionType: ${b.connectionType}, isLocal: ${bIsLocal})`);
+        
+        if (aIsLocal && !bIsLocal) {
+          console.log(`${a.name} 是本机设备，排在前面`);
+          return -1; // a是本机，b不是，a排在前面
+        }
+        if (!aIsLocal && bIsLocal) {
+          console.log(`${b.name} 是本机设备，排在前面`);
+          return 1;  // a不是本机，b是，b排在前面
+        }
+        console.log('保持原有顺序');
+        return 0; // 都是本机或都不是本机，保持原有顺序
+      });
+      
+      console.log('排序后的设备列表:');
+      sortedDevices.forEach((device, index) => {
+        console.log(`设备 ${index}: ${device.name}, deviceID: ${device.deviceID}, isLocalNetwork: ${device.isLocalNetwork}`);
+      });
+      
+      console.log('有效设备数量:', sortedDevices.length);
+      return sortedDevices as ExtendedDevice[];
     } catch (err) {
       console.error('Failed to load devices:', err);
       return [];
@@ -236,7 +256,7 @@ export const HomeScreen: React.FC = () => {
   };
 
   const isLocalDevice = (device: ExtendedDevice) => {
-    return device.deviceID === 'local' || device.isLocal;
+    return device.deviceID === 'local' || device.isLocalNetwork;
   };
 
   const getConnectionStatus = (device: ExtendedDevice) => {
@@ -258,7 +278,7 @@ export const HomeScreen: React.FC = () => {
     >
       <Card.Content style={styles.deviceCardContent}>
         <Title style={styles.deviceTitle}>{item.name}</Title>
-        <Paragraph style={styles.deviceAddress}>{item.address}</Paragraph>
+        <Paragraph style={styles.deviceAddress}>{item.addresses.join(', ')}</Paragraph>
         <View style={styles.deviceChips}>
           <Chip
             mode="outlined"
@@ -340,14 +360,14 @@ export const HomeScreen: React.FC = () => {
               } else {
                 // 图标和副标题可根据实际数据调整
                 const icon = getDeviceIcon((item as any).device_type);
-                const subtitle = item.status === 'connected' ? '在线' : '离线';
+                const subtitle = item.connected ? '在线' : '离线';
                 return (
                   <DeviceCard
                     icon={icon}
                     title={item.name}
                     subtitle={subtitle}
                     onPress={() => handleDeviceSelect(item)}
-                    selected={selectedDevice?.id === item.id}
+                    selected={selectedDevice?.deviceID === item.deviceID}
                   />
                 );
               }
