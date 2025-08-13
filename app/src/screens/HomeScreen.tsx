@@ -187,7 +187,17 @@ export const HomeScreen: React.FC = () => {
       console.log('开始加载设备列表...');
       const devicesData = await apiService.getDevices();
       console.log('设备列表加载成功，设备数量:', devicesData.length, devicesData);
-      return devicesData as ExtendedDevice[];
+      
+      // 过滤掉无效的设备数据
+      const validDevices = devicesData.filter(device => 
+        device && 
+        typeof device === 'object' && 
+        device.deviceID && 
+        device.name
+      );
+      
+      console.log('有效设备数量:', validDevices.length);
+      return validDevices as ExtendedDevice[];
     } catch (err) {
       console.error('Failed to load devices:', err);
       return [];
@@ -323,9 +333,9 @@ export const HomeScreen: React.FC = () => {
         {/* 设备列表 */}
         <View style={styles.section}>
           <FlatList
-            data={[...devices, { isAddButton: true }]}
+            data={[...devices.filter(device => device != null), { isAddButton: true }]}
             renderItem={({ item }) => {
-              if ('isAddButton' in item) {
+              if (!item || 'isAddButton' in item) {
                 return <AddDeviceCard onPress={handleAddDevice} />;
               } else {
                 // 图标和副标题可根据实际数据调整
@@ -342,7 +352,12 @@ export const HomeScreen: React.FC = () => {
                 );
               }
             }}
-            keyExtractor={(item, index) => 'isAddButton' in item ? 'add-device-btn' : item.deviceID}
+            keyExtractor={(item, index) => {
+              if (!item || 'isAddButton' in item) {
+                return 'add-device-btn';
+              }
+              return item.deviceID || `device-${index}`;
+            }}
             horizontal
             showsHorizontalScrollIndicator={false}
             style={styles.deviceList}
@@ -353,18 +368,21 @@ export const HomeScreen: React.FC = () => {
         {/* 文件夹列表 */}
         <View style={styles.section}>
           <FlatList
-            data={testFolders}
-            renderItem={({ item }) => (
-              <FolderItem
-                icon={item.icon}
-                name={item.name}
-                date={item.date}
-                count={item.count}
-                type={item.type}
-                onPress={() => { }}
-              />
-            )}
-            keyExtractor={item => item.id}
+            data={testFolders.filter(folder => folder != null)}
+            renderItem={({ item }) => {
+              if (!item) return null;
+              return (
+                <FolderItem
+                  icon={item.icon}
+                  name={item.name}
+                  date={item.date}
+                  count={item.count}
+                  type={item.type}
+                  onPress={() => { }}
+                />
+              );
+            }}
+            keyExtractor={item => item?.id || `folder-${Math.random()}`}
           />
         </View>
       </ScrollView>
