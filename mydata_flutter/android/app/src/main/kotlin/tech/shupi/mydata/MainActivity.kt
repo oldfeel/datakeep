@@ -5,7 +5,7 @@ import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-// import tech.shupi.mydata.service.SyncthingService  // TODO: 待实现
+import tech.shupi.mydata.service.SyncthingService
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "tech.shupi.mydata/api"
@@ -41,8 +41,6 @@ class MainActivity: FlutterActivity() {
 
     private fun startSyncthingService() {
         Log.d(TAG, "启动 Syncthing 服务")
-        // TODO: 实现 SyncthingService 后取消注释
-        /*
         val intent = Intent(this, SyncthingService::class.java).apply {
             action = SyncthingService.ACTION_START
         }
@@ -51,24 +49,18 @@ class MainActivity: FlutterActivity() {
         } else {
             startService(intent)
         }
-        */
-        Log.w(TAG, "SyncthingService 尚未实现")
     }
 
     private fun stopSyncthingService() {
         Log.d(TAG, "停止 Syncthing 服务")
-        // TODO: 实现 SyncthingService 后取消注释
-        /*
         val intent = Intent(this, SyncthingService::class.java).apply {
             action = SyncthingService.ACTION_STOP
         }
         stopService(intent)
-        */
-        Log.w(TAG, "SyncthingService 尚未实现")
     }
 
     private fun getServiceStatus(): String {
-        // TODO: 实现服务状态查询
+        // 尝试获取服务状态（需要绑定服务才能获取）
         return "unknown"
     }
 }

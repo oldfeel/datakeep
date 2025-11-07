@@ -1,6 +1,8 @@
 module mydata
 
-go 1.23
+go 1.22.0
+
+toolchain go1.22.2
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0

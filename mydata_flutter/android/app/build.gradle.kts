@@ -42,3 +42,11 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // HTTP 客户端
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    
+    // JSON 处理
+    implementation("com.google.code.gson:gson:2.10.1")
+}

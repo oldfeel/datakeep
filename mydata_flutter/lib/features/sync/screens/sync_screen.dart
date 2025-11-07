@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../folders/providers/folder_provider.dart';
-import '../../devices/providers/device_provider.dart';
 import '../../../core/services/api_service.dart';
+import '../../../core/services/syncthing_service_manager.dart';
+import '../../../shared/widgets/service_control_widget.dart';
 
 class SyncScreen extends StatefulWidget {
   const SyncScreen({super.key});
@@ -142,11 +142,13 @@ class _SyncScreenState extends State<SyncScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 左侧：总体状态和同步进度
+                // 左侧：服务控制和总体状态
                 Expanded(
                   flex: 2,
                   child: Column(
                     children: [
+                      const ServiceControlWidget(),
+                      const SizedBox(height: 24),
                       _buildOverallStatus(),
                       const SizedBox(height: 24),
                       _buildSyncProgress(),
@@ -174,6 +176,9 @@ class _SyncScreenState extends State<SyncScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 服务控制组件
+          const ServiceControlWidget(),
+          const SizedBox(height: 16),
           _buildOverallStatus(),
           const SizedBox(height: 24),
           _buildSyncProgress(),
@@ -185,7 +190,8 @@ class _SyncScreenState extends State<SyncScreen> {
   }
 
   Widget _buildOverallStatus() {
-    final status = _syncStatus!['overall_status'] ?? 'unknown';
+    final serviceManager = Provider.of<SyncthingServiceManager>(context, listen: false);
+    final status = _syncStatus?['overall_status'] ?? (serviceManager.isRunning ? 'synced' : 'paused');
     final statusText = _getStatusText(status);
     final statusColor = _getStatusColor(status);
 

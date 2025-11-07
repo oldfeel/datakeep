@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../features/devices/providers/device_provider.dart';
+import '../../core/services/syncthing_service_manager.dart';
 import '../../features/folders/screens/folders_screen.dart';
 import '../../features/devices/screens/devices_screen.dart';
 import '../../features/sync/screens/sync_screen.dart';
+import 'service_control_widget.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
@@ -29,6 +31,7 @@ class _MainNavigationState extends State<MainNavigation> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<FolderProvider>().fetchFolders();
       context.read<DeviceProvider>().fetchDevices();
+      context.read<SyncthingServiceManager>().refresh();
     });
   }
 
@@ -90,6 +93,12 @@ class _MainNavigationState extends State<MainNavigation> {
                   child: ListView(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     children: [
+                      // 服务控制组件
+                      const Padding(
+                        padding: EdgeInsets.all(8.0),
+                        child: ServiceControlWidget(),
+                      ),
+                      const Divider(),
                       _buildDesktopNavItem(
                         icon: Icons.folder,
                         label: '文件夹管理',

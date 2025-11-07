@@ -98,6 +98,14 @@ type FolderInfo struct {
 
 // 函数实现
 func getConfigPath() string {
+	// 如果已经找到过配置路径，直接返回（线程安全）
+	mu.Lock()
+	defer mu.Unlock()
+
+	if configPath != "" {
+		return configPath
+	}
+
 	usr, _ := user.Current()
 	home := usr.HomeDir
 	if home == "" {
@@ -112,14 +120,15 @@ func getConfigPath() string {
 		"config.xml", // fallback
 	}
 	for _, p := range paths {
-		fmt.Println("尝试路径:", p)
 		if _, err := os.Stat(p); err == nil {
-			fmt.Printf("找到配置文件: %s\n", p)
-			return p
+			configPath = p
+			log.Printf("找到配置文件: %s", p)
+			return configPath
 		}
 	}
-	fmt.Printf("未找到配置文件，使用默认路径: config.xml\n")
-	return "config.xml"
+	configPath = "config.xml"
+	log.Printf("未找到配置文件，使用默认路径: config.xml")
+	return configPath
 }
 
 func getApiKeyFromConfig() string {
