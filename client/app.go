@@ -13,6 +13,8 @@ import (
 	goruntime "runtime"
 	"strings"
 
+	"mydata/backend"
+
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -119,33 +121,77 @@ func (a *App) Greet(name string) string {
 
 // GetFolders 返回所有文件夹列表
 func (a *App) GetFolders() ([]Folder, error) {
+	// 首先尝试从 Syncthing API 获取
 	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/config/folders", nil)
 	if err != nil {
-		return nil, err
+		return a.getFoldersFromConfig() // 失败时从 config.xml 读取
 	}
 	req.Header.Set("X-API-Key", getApiKeyFromConfig())
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		// Syncthing 不可用时，从 config.xml 读取
+		return a.getFoldersFromConfig()
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("syncthing api error: %s", resp.Status)
+		// API 错误时，从 config.xml 读取
+		return a.getFoldersFromConfig()
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return a.getFoldersFromConfig()
 	}
 
 	// 直接解析为文件夹数组
 	var folders []Folder
 	if err := json.Unmarshal(body, &folders); err != nil {
-		return nil, err
+		return a.getFoldersFromConfig()
 	}
+
+	// 如果从 API 获取到空列表，尝试从 config.xml 读取
+	if len(folders) == 0 {
+		return a.getFoldersFromConfig()
+	}
+
+	return folders, nil
+}
+
+// getFoldersFromConfig 从 config.xml 读取文件夹列表
+func (a *App) getFoldersFromConfig() ([]Folder, error) {
+	configPath := getConfigPath()
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("无法读取配置文件: %v", err)
+	}
+
+	type FolderXML struct {
+		ID    string `xml:"id,attr"`
+		Label string `xml:"label,attr"`
+		Path  string `xml:"path,attr"`
+	}
+	type Config struct {
+		Folders []FolderXML `xml:"folder"`
+	}
+
+	var cfg Config
+	if err := xml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("解析配置文件失败: %v", err)
+	}
+
+	// 转换为 Folder 格式
+	var folders []Folder
+	for _, f := range cfg.Folders {
+		folders = append(folders, Folder{
+			ID:    f.ID,
+			Label: f.Label,
+			Path:  f.Path,
+		})
+	}
+
 	return folders, nil
 }
 
@@ -163,6 +209,17 @@ func getConfigPath() string {
 	case "darwin":
 		return home + "/Library/Application Support/Syncthing/config.xml"
 	default: // linux, etc.
+		// 优先尝试新版路径，然后尝试旧版路径
+		paths := []string{
+			home + "/.local/state/syncthing/config.xml", // Linux 新版优先
+			home + "/.config/syncthing/config.xml",      // Linux 旧版
+		}
+		for _, p := range paths {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+		// 如果都不存在，返回默认路径
 		return home + "/.config/syncthing/config.xml"
 	}
 }
@@ -459,7 +516,7 @@ func (a *App) GetHTTPSFolderContents(folderID string, path string) (interface{},
 	if path != "" {
 		apiURL += "?path=" + url.QueryEscape(path)
 	}
-	
+
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
 		return nil, err
@@ -562,6 +619,30 @@ func (a *App) GetHTTPSSyncthingConfigDevices() (interface{}, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+// GetSyncthingStatus 获取 Syncthing 运行状态
+func (a *App) GetSyncthingStatus() (map[string]interface{}, error) {
+	mgr := backend.GetSyncthingManager()
+	status := map[string]interface{}{
+		"isRunning":      mgr.IsRunning(),
+		"configPath":     mgr.GetConfigPath(),
+		"dataPath":       mgr.GetDataPath(),
+		"executablePath": mgr.GetExecutablePath(),
+	}
+	return status, nil
+}
+
+// StartSyncthing 启动 Syncthing
+func (a *App) StartSyncthing() error {
+	mgr := backend.GetSyncthingManager()
+	return mgr.Start()
+}
+
+// StopSyncthing 停止 Syncthing
+func (a *App) StopSyncthing() error {
+	mgr := backend.GetSyncthingManager()
+	return mgr.Stop()
 }
 
 // GetHTTPSSyncthingDiscovery 通过 HTTPS API 获取 Syncthing 发现信息

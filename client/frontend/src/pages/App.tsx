@@ -57,6 +57,7 @@ import FolderDetail from './FolderDetail';
 import FilePreview from './FilePreview';
 import TestWailsHTTPS from './TestWailsHTTPS';
 import { API_CONFIG } from '../config/api';
+import { isWailsAvailable, safeWailsCall, waitForWails } from '../utils/wails';
 import { 
   GetHTTPSDevices, 
   GetHTTPSWifiInfo, 
@@ -199,10 +200,32 @@ class SyncthingEventService {
     this.isConnected = true;
     console.log('开始事件轮询...');
 
+    // 等待 Wails 运行时加载
+    const wailsReady = await waitForWails(3000);
+    if (!wailsReady) {
+      console.warn('Wails 运行时未加载，跳过事件轮询');
+      this.isConnected = false;
+      return;
+    }
+
     while (this.isConnected) {
       try {
         // 使用 Wails 绑定函数避免证书验证问题
-        const eventsData = await GetHTTPSSyncthingEvents(this.lastEventId, 60);
+        const eventsData = await safeWailsCall(
+          () => GetHTTPSSyncthingEvents(this.lastEventId, 60),
+          async () => {
+            // REST API 后备方案
+            const response = await fetch(`http://localhost:8080/api/events?since=${this.lastEventId}&timeout=60`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+          }
+        );
+        
+        if (!eventsData) {
+          console.warn('事件数据为空，等待重试...');
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          continue;
+        }
         
         // 将返回的数据转换为 SyncthingEvent 数组
         const events: SyncthingEvent[] = Array.isArray(eventsData) ? eventsData as SyncthingEvent[] : [];
@@ -463,7 +486,22 @@ function DeviceList({ devices, onDeviceClick, onAddDeviceClick }: {
 }
 
 function App() {
-  const [devices, setDevices] = useState<Device[]>([]);
+  // 初始化时至少显示本地设备
+  const [devices, setDevices] = useState<Device[]>([{
+    deviceID: 'local',
+    name: '本机设备',
+    addresses: [],
+    compression: '',
+    certName: '',
+    introducer: false,
+    connected: true,
+    connectionType: 'local',
+    clientVersion: 'local',
+    inBytesTotal: 0,
+    outBytesTotal: 0,
+    isLocalNetwork: true,
+    crypto: 'local'
+  }]);
   const [searchText, setSearchText] = useState('');
   const [eventService] = useState(() => new SyncthingEventService());
   const [isEventConnected, setIsEventConnected] = useState(false);
@@ -502,9 +540,21 @@ function App() {
   // 获取WiFi信息
   const getWifiInfo = useCallback(async () => {
     try {
-      const result = await GetHTTPSWifiInfo();
+      const result = await safeWailsCall(
+        () => GetHTTPSWifiInfo(),
+        async () => {
+          // REST API 后备方案
+          const response = await fetch('http://localhost:8080/api/wifi-info');
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          return data.code === 0 ? data : { code: 0, data: data.data || data };
+        }
+      );
+      
       if (result && typeof result === 'object' && 'code' in result && result.code === 0) {
         setWifiName(result.data.wifiName);
+      } else {
+        setWifiName('获取失败');
       }
     } catch (error) {
       console.error('获取WiFi信息失败:', error);
@@ -512,23 +562,113 @@ function App() {
     }
   }, []);
 
-  // 加载设备列表 - 使用 Wails 绑定调用 HTTPS API
+  // 加载设备列表 - 使用 Wails 绑定调用 HTTPS API，如果 Wails 不可用则使用 REST API
   const loadDevices = useCallback(async () => {
     try {
       console.log('开始加载设备列表...');
-      const result = await GetHTTPSDevices();
+      const result = await safeWailsCall(
+        () => GetHTTPSDevices(),
+        async () => {
+          // REST API 后备方案（仅在 Wails 桌面应用中可用，浏览器中会有 CORS 问题）
+          try {
+            const response = await fetch('http://localhost:8080/api/devices');
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            return data.code === 0 ? data : { code: 0, data: data.data || data };
+          } catch (fetchError: any) {
+            // CORS 错误或网络错误，在浏览器中这是正常的
+            const errorMessage = fetchError?.message || String(fetchError);
+            if (fetchError instanceof TypeError || 
+                errorMessage.includes('Failed to fetch') || 
+                errorMessage.includes('Load failed') ||
+                errorMessage.includes('CORS') ||
+                errorMessage.includes('access control') ||
+                errorMessage.includes('NetworkError')) {
+              // 静默处理，不显示错误
+              return null;
+            }
+            // 其他错误也静默处理
+            return null;
+          }
+        }
+      );
+      
+      if (!result) {
+        // 无法获取设备列表时，至少显示本地设备
+        const localDevice: Device = {
+          deviceID: 'local',
+          name: '本机设备',
+          addresses: [],
+          compression: '',
+          certName: '',
+          introducer: false,
+          connected: true,
+          connectionType: 'local',
+          clientVersion: 'local',
+          inBytesTotal: 0,
+          outBytesTotal: 0,
+          isLocalNetwork: true,
+          crypto: 'local'
+        };
+        console.log('无法获取设备列表，设置默认本地设备:', localDevice);
+        setDevices([localDevice]);
+        return [localDevice];
+      }
+      
       if (result && typeof result === 'object' && 'code' in result && result.code !== 0) {
         throw new Error(result.data || 'API 返回错误');
       }
       const devicesData = result?.data || [];
-      console.log('设备列表加载成功，设备数量:', devicesData.length);
       
+      // 确保本地设备在列表中
+      const hasLocalDevice = devicesData.some((d: Device) => 
+        d.deviceID === 'local' || 
+        d.connectionType === 'local' ||
+        d.clientVersion === 'local'
+      );
+      
+      if (!hasLocalDevice) {
+        const localDevice: Device = {
+          deviceID: 'local',
+          name: '本机设备',
+          addresses: [],
+          compression: '',
+          certName: '',
+          introducer: false,
+          connected: true,
+          connectionType: 'local',
+          clientVersion: 'local',
+          inBytesTotal: 0,
+          outBytesTotal: 0,
+          isLocalNetwork: true,
+          crypto: 'local'
+        };
+        devicesData.unshift(localDevice); // 添加到列表开头
+      }
+      
+      console.log('设备列表加载成功，设备数量:', devicesData.length);
       setDevices(devicesData);
       return devicesData;
     } catch (err) {
       console.error('Failed to load devices:', err);
-      setDevices([]);
-      throw err;
+      // 即使失败，也至少显示本地设备
+      const localDevice: Device = {
+        deviceID: 'local',
+        name: '本机设备',
+        addresses: [],
+        compression: '',
+        certName: '',
+        introducer: false,
+        connected: true,
+        connectionType: 'local',
+        clientVersion: 'local',
+        inBytesTotal: 0,
+        outBytesTotal: 0,
+        isLocalNetwork: true,
+        crypto: 'local'
+      };
+      setDevices([localDevice]);
+      return [localDevice];
     }
   }, []);
 
@@ -786,6 +926,16 @@ function App() {
     device.name.toLowerCase().includes(searchText.toLowerCase()) ||
     device.deviceID.toLowerCase().includes(searchText.toLowerCase())
   );
+  
+  // 调试：检查设备列表状态
+  useEffect(() => {
+    console.log('设备列表状态更新:', {
+      devicesCount: devices.length,
+      filteredCount: filteredDevices.length,
+      devices: devices.map(d => ({ id: d.deviceID, name: d.name })),
+      searchText
+    });
+  }, [devices, filteredDevices, searchText]);
 
   // 修正的设备添加相关函数
   const handleAddDeviceClick = async () => {

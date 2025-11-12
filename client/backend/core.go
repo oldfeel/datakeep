@@ -163,6 +163,12 @@ func loadAndIndex() {
 		log.Printf("从 Syncthing API 获取文件夹失败: %v，回退到 config.xml", err)
 		// 回退到从 config.xml 加载
 		loadFoldersFromConfig()
+		// 确保从 config.xml 加载成功
+		if len(folders) == 0 {
+			log.Printf("警告: 从 config.xml 加载后文件夹列表仍为空，请检查配置文件")
+		} else {
+			fmt.Printf("从 config.xml 成功加载 %d 个文件夹\n", len(folders))
+		}
 	} else {
 		folders = syncthingFolders
 		fmt.Printf("从 Syncthing API 获取到 %d 个同步文件夹:\n", len(folders))
@@ -296,6 +302,13 @@ func loadFoldersFromSyncthing() ([]FolderEntry, error) {
 
 // 从 config.xml 加载文件夹配置（回退方案）
 func loadFoldersFromConfig() {
+	// 确保 configPath 已设置
+	if configPath == "" {
+		configPath = getConfigPath()
+	}
+	
+	fmt.Printf("尝试从 config.xml 加载文件夹，路径: %s\n", configPath)
+	
 	// 解析 config.xml
 	f, err := os.Open(configPath)
 	if err != nil {
@@ -314,6 +327,11 @@ func loadFoldersFromConfig() {
 	fmt.Printf("从 config.xml 解析到 %d 个同步文件夹:\n", len(folders))
 	for _, folder := range folders {
 		log.Printf("同步文件夹: [%s] %s", folder.ID, folder.Path)
+	}
+	
+	// 如果解析后文件夹列表为空，记录警告
+	if len(folders) == 0 {
+		log.Printf("警告: config.xml 中没有找到文件夹配置")
 	}
 }
 

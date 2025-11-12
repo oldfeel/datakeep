@@ -50,6 +50,10 @@ export function GetHTTPSWifiInfo() {
   return window['go']['main']['App']['GetHTTPSWifiInfo']();
 }
 
+export function GetSyncthingStatus() {
+  return window['go']['main']['App']['GetSyncthingStatus']();
+}
+
 export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
 }
@@ -60,4 +64,12 @@ export function PostHTTPSAddDevice(arg1) {
 
 export function SelectFolder() {
   return window['go']['main']['App']['SelectFolder']();
+}
+
+export function StartSyncthing() {
+  return window['go']['main']['App']['StartSyncthing']();
+}
+
+export function StopSyncthing() {
+  return window['go']['main']['App']['StopSyncthing']();
 }

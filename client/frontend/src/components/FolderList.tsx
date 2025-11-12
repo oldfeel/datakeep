@@ -51,6 +51,11 @@ export default function FolderList({
         try {
             const response = await fetch('http://localhost:8080/api/devices');
             if (!response.ok) {
+                // 如果是 404 或 500+ 错误，可能是后端服务未启动，静默失败
+                if (response.status === 404 || response.status >= 500) {
+                    setAllDevices([]);
+                    return;
+                }
                 throw new Error(`API 请求失败: ${response.status}`);
             }
             const result = await response.json();
@@ -58,9 +63,19 @@ export default function FolderList({
                 throw new Error(result.data || 'API 返回错误');
             }
             setAllDevices(result.data || []);
-        } catch (error) {
-            console.error('获取设备列表失败:', error);
-            // 如果获取失败，不影响其他功能
+        } catch (error: any) {
+            // 网络错误或 CORS 错误，完全静默处理（在浏览器环境中这是正常的）
+            const errorMessage = error?.message || String(error);
+            if (error instanceof TypeError || 
+                errorMessage.includes('Failed to fetch') || 
+                errorMessage.includes('Load failed') ||
+                errorMessage.includes('CORS') ||
+                errorMessage.includes('access control') ||
+                errorMessage.includes('NetworkError')) {
+                // 完全静默，不显示任何警告或错误
+            }
+            // 如果获取失败，不影响其他功能，设置空数组
+            setAllDevices([]);
         }
     };
 

@@ -26,8 +26,14 @@ export function GetHTTPSSyncthingEvents(arg1:number,arg2:number):Promise<any>;
 
 export function GetHTTPSWifiInfo():Promise<any>;
 
+export function GetSyncthingStatus():Promise<Record<string, any>>;
+
 export function Greet(arg1:string):Promise<string>;
 
 export function PostHTTPSAddDevice(arg1:string):Promise<any>;
 
 export function SelectFolder():Promise<string>;
+
+export function StartSyncthing():Promise<void>;
+
+export function StopSyncthing():Promise<void>;
