@@ -3,13 +3,15 @@ import '../../core/models/folder.dart';
 
 class FolderCard extends StatelessWidget {
   final Folder folder;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
+  final VoidCallback? onTap;
   final bool isDesktop;
 
   const FolderCard({
     super.key,
     required this.folder,
-    required this.onDelete,
+    this.onDelete,
+    this.onTap,
     this.isDesktop = false,
   });
 
@@ -27,9 +29,7 @@ class FolderCard extends StatelessWidget {
     return Card(
       elevation: 2,
       child: InkWell(
-        onTap: () {
-          // TODO: 打开文件夹详情页面
-        },
+        onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -58,26 +58,27 @@ class FolderCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert),
-                    onSelected: (value) {
-                      if (value == 'delete') {
-                        onDelete();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: Row(
-                          children: [
-                            Icon(Icons.delete, color: Colors.red),
-                            SizedBox(width: 8),
-                            Text('删除'),
-                          ],
+                  if (onDelete != null)
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (value) {
+                        if (value == 'delete') {
+                          onDelete!();
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete, color: Colors.red),
+                              SizedBox(width: 8),
+                              Text('删除'),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -177,28 +178,28 @@ class FolderCard extends StatelessWidget {
             ),
           ],
         ),
-        trailing: PopupMenuButton<String>(
-          onSelected: (value) {
-            if (value == 'delete') {
-              onDelete();
-            }
-          },
-          itemBuilder: (context) => [
-            const PopupMenuItem(
-              value: 'delete',
-              child: Row(
-                children: [
-                  Icon(Icons.delete, color: Colors.red),
-                  SizedBox(width: 8),
-                  Text('删除'),
+        trailing: onDelete != null
+            ? PopupMenuButton<String>(
+                onSelected: (value) {
+                  if (value == 'delete') {
+                    onDelete!();
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('删除'),
+                      ],
+                    ),
+                  ),
                 ],
-              ),
-            ),
-          ],
-        ),
-        onTap: () {
-          // TODO: 打开文件夹详情页面
-        },
+              )
+            : null,
+        onTap: onTap,
       ),
     );
   }

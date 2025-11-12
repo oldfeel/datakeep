@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/device_provider.dart';
 import '../../../core/models/device.dart';
+import 'device_detail_screen.dart';
 
 class DevicesScreen extends StatelessWidget {
   const DevicesScreen({super.key});
@@ -14,6 +15,13 @@ class DevicesScreen extends StatelessWidget {
       appBar: isDesktop ? null : AppBar(
         title: const Text('设备管理'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: () {
+              _showAddDeviceDialog(context);
+            },
+            tooltip: '添加设备',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
@@ -93,6 +101,14 @@ class DevicesScreen extends StatelessWidget {
               const Spacer(),
               ElevatedButton.icon(
                 onPressed: () {
+                  _showAddDeviceDialog(context);
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('添加设备'),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () {
                   context.read<DeviceProvider>().fetchDevices();
                 },
                 icon: const Icon(Icons.refresh),
@@ -140,7 +156,11 @@ class DevicesScreen extends StatelessWidget {
       elevation: 2,
       child: InkWell(
         onTap: () {
-          // TODO: 打开设备详情页面
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => DeviceDetailScreen(deviceId: device.id),
+            ),
+          );
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(
@@ -229,7 +249,7 @@ class DevicesScreen extends StatelessWidget {
               const SizedBox(height: 12),
               // 其他信息
               Text(
-                '最后在线: ${_formatDateTime(device.lastSeen)}',
+                '最后在线: ${device.lastSeen != null ? _formatDateTime(device.lastSeen!) : '未知'}',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               if (device.folders.isNotEmpty) ...[
@@ -311,7 +331,7 @@ class DevicesScreen extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '最后在线: ${_formatDateTime(device.lastSeen)}',
+              '最后在线: ${device.lastSeen != null ? _formatDateTime(device.lastSeen!) : '未知'}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             if (device.folders.isNotEmpty) ...[
@@ -324,7 +344,11 @@ class DevicesScreen extends StatelessWidget {
           ],
         ),
         onTap: () {
-          // TODO: 打开设备详情页面
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => DeviceDetailScreen(deviceId: device.id),
+            ),
+          );
         },
       ),
     );
@@ -421,5 +445,80 @@ class DevicesScreen extends StatelessWidget {
     } else {
       return '刚刚';
     }
+  }
+
+  void _showAddDeviceDialog(BuildContext context) {
+    final deviceIdController = TextEditingController();
+    final nameController = TextEditingController();
+    final deviceProvider = context.read<DeviceProvider>();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('添加设备'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: deviceIdController,
+                decoration: const InputDecoration(
+                  labelText: '设备 ID',
+                  hintText: '请输入设备 ID（56位字符）',
+                  helperText: '可以在另一台设备的"操作 > 显示 ID"对话框中找到',
+                ),
+                maxLength: 56,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: '设备名称',
+                  hintText: '请输入设备名称（可选）',
+                  helperText: '如果留空，将使用设备通告的名称',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (deviceIdController.text.isNotEmpty) {
+                try {
+                  await deviceProvider.addDevice(
+                    deviceID: deviceIdController.text,
+                    name: nameController.text,
+                  );
+                  if (context.mounted) {
+                    Navigator.of(context).pop();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('设备添加成功'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('添加设备失败: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              }
+            },
+            child: const Text('添加'),
+          ),
+        ],
+      ),
+    );
   }
 }

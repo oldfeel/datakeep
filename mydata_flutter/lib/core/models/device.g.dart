@@ -7,23 +7,35 @@ part of 'device.dart';
 // **************************************************************************
 
 Device _$DeviceFromJson(Map<String, dynamic> json) => Device(
-  id: json['id'] as String,
+  id: json['deviceID'] as String,
   name: json['name'] as String,
-  type: json['type'] as String,
-  isLocal: json['isLocal'] as bool,
-  status: json['status'] as String,
-  lastSeen: DateTime.parse(json['lastSeen'] as String),
-  version: json['version'] as String,
-  folders: (json['folders'] as List<dynamic>).map((e) => e as String).toList(),
+  addresses: (json['addresses'] as List<dynamic>?)
+      ?.map((e) => e as String)
+      .toList(),
+  compression: json['compression'] as String?,
+  certName: json['certName'] as String?,
+  introducer: json['introducer'] as bool? ?? false,
+  connected: json['connected'] as bool? ?? false,
+  connectionType: json['connectionType'] as String?,
+  version: json['clientVersion'] as String?,
+  inBytesTotal: (json['inBytesTotal'] as num?)?.toInt(),
+  outBytesTotal: (json['outBytesTotal'] as num?)?.toInt(),
+  isLocalNetwork: json['isLocalNetwork'] as bool? ?? false,
+  crypto: json['crypto'] as String?,
 );
 
 Map<String, dynamic> _$DeviceToJson(Device instance) => <String, dynamic>{
-  'id': instance.id,
+  'deviceID': instance.id,
   'name': instance.name,
-  'type': instance.type,
-  'isLocal': instance.isLocal,
-  'status': instance.status,
-  'lastSeen': instance.lastSeen.toIso8601String(),
-  'version': instance.version,
-  'folders': instance.folders,
+  'addresses': instance.addresses,
+  'compression': instance.compression,
+  'certName': instance.certName,
+  'introducer': instance.introducer,
+  'connected': instance.connected,
+  'connectionType': instance.connectionType,
+  'clientVersion': instance.version,
+  'inBytesTotal': instance.inBytesTotal,
+  'outBytesTotal': instance.outBytesTotal,
+  'isLocalNetwork': instance.isLocalNetwork,
+  'crypto': instance.crypto,
 };

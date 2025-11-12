@@ -17,11 +17,12 @@ class DeviceProvider with ChangeNotifier {
     orElse: () => Device(
       id: 'local',
       name: '本地设备',
-      type: 'desktop',
-      isLocal: true,
-      status: 'online',
+      connectionType: 'local',
+      version: 'local',
+      connected: true,
+      isLocalNetwork: true,
+      crypto: 'local',
       lastSeen: DateTime.now(),
-      version: '1.0.0',
       folders: [],
     ),
   );
@@ -37,6 +38,52 @@ class DeviceProvider with ChangeNotifier {
       _devices = devices;
     } catch (e) {
       _error = e.toString();
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // 添加设备
+  Future<void> addDevice({
+    required String deviceID,
+    required String name,
+  }) async {
+    try {
+      _isLoading = true;
+      _error = null;
+      notifyListeners();
+
+      await ApiService.addDevice(
+        deviceID: deviceID,
+        name: name,
+      );
+      
+      // 刷新设备列表
+      await fetchDevices();
+    } catch (e) {
+      _error = e.toString();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // 删除设备
+  Future<void> removeDevice(String deviceId) async {
+    try {
+      _isLoading = true;
+      _error = null;
+      notifyListeners();
+
+      await ApiService.removeDevice(deviceId);
+      
+      // 刷新设备列表
+      await fetchDevices();
+    } catch (e) {
+      _error = e.toString();
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();

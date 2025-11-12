@@ -30,6 +30,7 @@ class FolderProvider with ChangeNotifier {
 
   // 创建文件夹
   Future<void> createFolder({
+    required String id,
     required String name,
     required String path,
   }) async {
@@ -39,6 +40,7 @@ class FolderProvider with ChangeNotifier {
       notifyListeners();
 
       final newFolder = await ApiService.createFolder(
+        id: id,
         name: name,
         path: path,
       );

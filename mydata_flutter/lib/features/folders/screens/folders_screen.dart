@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/folder_provider.dart';
 import '../../../core/models/folder.dart';
 import '../../../shared/widgets/folder_card.dart';
+import 'folder_detail_screen.dart';
 
 class FoldersScreen extends StatelessWidget {
   const FoldersScreen({super.key});
@@ -152,6 +153,16 @@ class FoldersScreen extends StatelessWidget {
                 onDelete: () {
                   _showDeleteDialog(context, folder);
                 },
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => FolderDetailScreen(
+                        deviceId: folder.deviceId,
+                        folderId: folder.id,
+                      ),
+                    ),
+                  );
+                },
                 isDesktop: true,
               );
             },
@@ -173,6 +184,16 @@ class FoldersScreen extends StatelessWidget {
           onDelete: () {
             _showDeleteDialog(context, folder);
           },
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => FolderDetailScreen(
+                  deviceId: folder.deviceId,
+                  folderId: folder.id,
+                ),
+              ),
+            );
+          },
           isDesktop: false,
         );
       },
@@ -180,6 +201,7 @@ class FoldersScreen extends StatelessWidget {
   }
 
   void _showAddFolderDialog(BuildContext context) {
+    final idController = TextEditingController();
     final nameController = TextEditingController();
     final pathController = TextEditingController();
 
@@ -187,25 +209,35 @@ class FoldersScreen extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('添加同步文件夹'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: '文件夹名称',
-                hintText: '请输入文件夹名称',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: idController,
+                decoration: const InputDecoration(
+                  labelText: '文件夹 ID',
+                  hintText: '请输入文件夹 ID（唯一标识）',
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: pathController,
-              decoration: const InputDecoration(
-                labelText: '文件夹路径',
-                hintText: '请输入文件夹路径',
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: '文件夹名称',
+                  hintText: '请输入文件夹名称',
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 16),
+              TextField(
+                controller: pathController,
+                decoration: const InputDecoration(
+                  labelText: '文件夹路径',
+                  hintText: '请输入文件夹路径',
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -214,11 +246,14 @@ class FoldersScreen extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () {
-              if (nameController.text.isNotEmpty && pathController.text.isNotEmpty) {
+              if (idController.text.isNotEmpty &&
+                  nameController.text.isNotEmpty &&
+                  pathController.text.isNotEmpty) {
                 context.read<FolderProvider>().createFolder(
-                  name: nameController.text,
-                  path: pathController.text,
-                );
+                      id: idController.text,
+                      name: nameController.text,
+                      path: pathController.text,
+                    );
                 Navigator.of(context).pop();
               }
             },

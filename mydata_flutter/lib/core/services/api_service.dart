@@ -1,14 +1,28 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:flutter/foundation.dart';
 import '../models/folder.dart';
 import '../models/device.dart';
 import 'native_service.dart';
 
-/// API 服务，调用 Android HTTPS API 服务器
+/// API 服务，调用后端 API 服务器
 class ApiService {
-  static String _baseUrl = 'https://127.0.0.1:8443/api';
+  static String _baseUrl = 'https://localhost:8443/api';
   static bool _initialized = false;
+  
+  // 创建支持自签名证书的 HTTP 客户端
+  static http.Client _createHttpClient() {
+    final httpClient = HttpClient();
+    httpClient.badCertificateCallback = (X509Certificate cert, String host, int port) {
+      // 允许 localhost 的自签名证书
+      return host == 'localhost' || host == '127.0.0.1';
+    };
+    return IOClient(httpClient);
+  }
+  
+  static final http.Client _httpClient = _createHttpClient();
 
   /// 初始化 API 服务，获取基础 URL
   static Future<void> initialize() async {
@@ -32,33 +46,41 @@ class ApiService {
       final uri = Uri.parse('$_baseUrl$endpoint');
       debugPrint('API GET: $uri');
       
-      final response = await http.get(uri).timeout(
-        const Duration(seconds: 10),
+      final response = await _httpClient.get(uri).timeout(
+        const Duration(seconds: 5),
         onTimeout: () {
-          throw Exception('请求超时');
+          throw Exception('请求超时：后端服务可能未启动，请先启动 client 后端服务');
         },
       );
 
       debugPrint('API 响应状态: ${response.statusCode}');
-      debugPrint('API 响应体: ${response.body}');
+      if (response.statusCode != 200) {
+        debugPrint('API 响应体: ${response.body}');
+      }
 
       if (response.statusCode == 200) {
         final jsonData = json.decode(response.body);
         
-        // 检查响应格式：{"success": true, "data": ...}
-        if (jsonData is Map<String, dynamic> && jsonData['success'] == true) {
-          final data = jsonData['data'];
-          // data 可能是数组或对象
-          if (data is List) {
-            return {'list': data};
-          } else if (data is Map<String, dynamic>) {
-            return data;
+        // 处理 client 后端响应格式：{"code": 0, "data": ...}
+        if (jsonData is Map<String, dynamic>) {
+          if (jsonData.containsKey('code') && jsonData['code'] == 0) {
+            return jsonData;
+          } else if (jsonData.containsKey('success') && jsonData['success'] == true) {
+            // Android API 格式
+            final data = jsonData['data'];
+            if (data is List) {
+              return {'list': data};
+            } else if (data is Map<String, dynamic>) {
+              return data;
+            } else {
+              return {'list': []};
+            }
           } else {
-            return {'list': []};
+            return jsonData;
           }
         } else if (jsonData is List) {
           // 如果直接返回数组，包装成标准格式
-          return {'list': jsonData};
+          return {'code': 0, 'data': jsonData};
         } else {
           return jsonData as Map<String, dynamic>;
         }
@@ -67,6 +89,13 @@ class ApiService {
       }
     } catch (e) {
       debugPrint('API 请求失败: $e');
+      // 如果是连接被拒绝，提供更友好的错误信息
+      final errorStr = e.toString();
+      if (errorStr.contains('连接被拒绝') || 
+          errorStr.contains('Connection refused') ||
+          errorStr.contains('SocketException')) {
+        throw Exception('无法连接到后端服务 (localhost:8443)\n\n请先启动后端服务：\ncd mydata_flutter/backend/cmd && go run main.go');
+      }
       rethrow;
     }
   }
@@ -83,7 +112,7 @@ class ApiService {
       debugPrint('API POST: $uri');
       debugPrint('API 请求体: ${json.encode(body)}');
       
-      final response = await http.post(
+      final response = await _httpClient.post(
         uri,
         headers: {'Content-Type': 'application/json'},
         body: json.encode(body),
@@ -117,80 +146,103 @@ class ApiService {
   /// 获取所有设备
   static Future<List<Device>> getDevices() async {
     try {
-      final data = await _get('/devices');
+      final response = await _get('/devices');
       
-      // 处理响应格式：可能是 {"list": [...]} 或直接是数组
+      // 处理 client 后端响应格式：{"code": 0, "data": [...]}
       List<dynamic> deviceList;
-      if (data.containsKey('list')) {
-        deviceList = data['list'] as List<dynamic>;
+      if (response.containsKey('code') && response['code'] == 0) {
+        deviceList = response['data'] as List<dynamic>? ?? [];
+      } else if (response.containsKey('list')) {
+        deviceList = response['list'] as List<dynamic>;
+      } else if (response.containsKey('data')) {
+        deviceList = response['data'] is List 
+            ? response['data'] as List<dynamic>
+            : [response['data']];
       } else {
-        // 如果返回的是单个对象，尝试转换为列表
-        deviceList = [data];
+        deviceList = [];
       }
       
-      return deviceList.map((json) {
-        // 适配 Android API 返回的数据格式
-        return Device(
-          id: json['id'] ?? '',
-          name: json['name'] ?? 'Unknown Device',
-          type: _getDeviceType(json),
-          isLocal: json['isLocal'] ?? false,
-          status: json['status'] ?? (json['connected'] == true ? 'online' : 'offline'),
-          lastSeen: DateTime.now(), // Android API 可能不返回此字段
-          version: json['clientVersion'] ?? '',
-          folders: List<String>.from(json['folders'] ?? []),
-        );
-      }).toList();
+      // 确保本地设备在列表中
+      final hasLocalDevice = deviceList.any((d) => 
+        d['deviceID'] == 'local' || 
+        d['connectionType'] == 'local' ||
+        d['clientVersion'] == 'local'
+      );
+      
+      if (!hasLocalDevice) {
+        deviceList.insert(0, {
+          'deviceID': 'local',
+          'name': '本机设备',
+          'addresses': [],
+          'compression': '',
+          'certName': '',
+          'introducer': false,
+          'connected': true,
+          'connectionType': 'local',
+          'clientVersion': 'local',
+          'inBytesTotal': 0,
+          'outBytesTotal': 0,
+          'isLocalNetwork': true,
+          'crypto': 'local'
+        });
+      }
+      
+      return deviceList.map((json) => Device.fromJson(json)).toList();
     } catch (e) {
       debugPrint('获取设备列表失败: $e');
-      throw Exception('获取设备列表失败: $e');
-    }
-  }
-
-  /// 根据设备信息推断设备类型
-  static String _getDeviceType(Map<String, dynamic> json) {
-    final name = (json['name'] ?? '').toLowerCase();
-    if (name.contains('android') || name.contains('mobile')) {
-      return 'mobile';
-    } else if (name.contains('server')) {
-      return 'server';
-    } else {
-      return 'desktop';
+      // 失败时至少返回本地设备
+      return [Device(
+        id: 'local',
+        name: '本机设备',
+        addresses: [],
+        connected: true,
+        connectionType: 'local',
+        version: 'local',
+        isLocalNetwork: true,
+        crypto: 'local',
+      )];
     }
   }
 
   /// 获取设备文件夹
   static Future<List<Folder>> getDeviceFolders(String deviceId) async {
     try {
-      final data = await _get('/device/$deviceId/folders');
+      final response = await _get('/device/$deviceId/folders');
       
+      // 处理 client 后端响应格式
       List<dynamic> folderList;
-      if (data.containsKey('list')) {
-        folderList = data['list'] as List<dynamic>;
+      if (response.containsKey('code') && response['code'] == 0) {
+        folderList = response['data'] as List<dynamic>? ?? [];
+      } else if (response.containsKey('list')) {
+        folderList = response['list'] as List<dynamic>;
+      } else if (response.containsKey('data')) {
+        folderList = response['data'] is List 
+            ? response['data'] as List<dynamic>
+            : [response['data']];
       } else {
-        folderList = [data];
+        folderList = [];
       }
       
       return folderList.map((json) {
-        // 适配 Android API 返回的数据格式
         return Folder(
           id: json['id'] ?? '',
           name: json['label'] ?? json['name'] ?? 'Unknown Folder',
           path: json['path'] ?? '',
           deviceId: deviceId,
-          isLocal: true, // 从设备获取的文件夹都是本地的
-          createdAt: DateTime.now(), // Android API 可能不返回此字段
-          updatedAt: DateTime.now(), // Android API 可能不返回此字段
-          status: 'synced', // 默认状态
-          fileCount: 0, // 需要单独获取
-          totalSize: 0, // 需要单独获取
+          isLocal: deviceId == 'local',
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+          status: 'synced',
+          fileCount: 0,
+          totalSize: 0,
         );
       }).toList();
     } catch (e) {
       debugPrint('获取设备文件夹失败: $e');
-      throw Exception('获取设备文件夹失败: $e');
+      return [];
     }
   }
+
 
   /// 获取所有文件夹
   static Future<List<Folder>> getFolders() async {
@@ -208,31 +260,44 @@ class ApiService {
   /// 获取本地设备 ID
   static Future<String> getLocalDeviceId() async {
     try {
-      final data = await _get('/local-device-id');
-      return data['deviceId'] ?? '';
+      final data = await _get('/deviceid');
+      if (data.containsKey('code') && data['code'] == 0) {
+        return data['data']?['deviceID'] ?? '';
+      }
+      return data['deviceID'] ?? '';
     } catch (e) {
       debugPrint('获取本地设备 ID 失败: $e');
+      final errorStr = e.toString();
+      if (errorStr.contains('连接被拒绝') || 
+          errorStr.contains('Connection refused')) {
+        throw Exception('无法连接到后端服务\n\n请先启动 client 后端服务：\ncd client && go run main.go');
+      }
       throw Exception('获取本地设备 ID 失败: $e');
     }
   }
 
   /// 创建文件夹
   static Future<Folder> createFolder({
+    required String id,
     required String name,
     required String path,
+    List<String>? sharedDevices,
   }) async {
     try {
-      final data = await _post('/folders', {
-        'name': name,
+      final data = await _post('/device/local/folders', {
+        'id': id,
+        'label': name,
         'path': path,
+        'type': 'sendreceive',
+        if (sharedDevices != null) 'sharedDevices': sharedDevices,
       });
       
-      // 适配 Android API 返回的数据格式
+      // 适配 client 后端返回的数据格式
       return Folder(
-        id: data['id'] ?? '',
+        id: data['id'] ?? id,
         name: data['label'] ?? data['name'] ?? name,
         path: data['path'] ?? path,
-        deviceId: await getLocalDeviceId(),
+        deviceId: 'local',
         isLocal: true,
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
@@ -246,17 +311,6 @@ class ApiService {
     }
   }
 
-  /// 删除文件夹
-  static Future<void> deleteFolder(String folderId) async {
-    try {
-      await http.delete(
-        Uri.parse('$_baseUrl/folders/$folderId'),
-      ).timeout(const Duration(seconds: 10));
-    } catch (e) {
-      debugPrint('删除文件夹失败: $e');
-      throw Exception('删除文件夹失败: $e');
-    }
-  }
 
   /// 获取同步状态
   static Future<Map<String, dynamic>> getSyncStatus() async {
@@ -269,13 +323,28 @@ class ApiService {
   }
 
   /// 获取文件夹文件列表
-  static Future<List<Map<String, dynamic>>> getFolderFiles(String folderId) async {
+  static Future<List<Map<String, dynamic>>> getFolderFiles(
+    String folderId, {
+    String? path,
+  }) async {
     try {
-      final data = await _get('/folder/$folderId/files');
+      String endpoint = '/folder/${Uri.encodeComponent(folderId)}';
+      if (path != null && path.isNotEmpty) {
+        endpoint += '?path=${Uri.encodeComponent(path)}';
+      }
       
+      final response = await _get(endpoint);
+      
+      // 处理 client 后端响应格式
       List<dynamic> fileList;
-      if (data.containsKey('list')) {
-        fileList = data['list'] as List<dynamic>;
+      if (response.containsKey('code') && response['code'] == 0) {
+        fileList = response['data'] as List<dynamic>? ?? [];
+      } else if (response.containsKey('list')) {
+        fileList = response['list'] as List<dynamic>;
+      } else if (response.containsKey('data')) {
+        fileList = response['data'] is List 
+            ? response['data'] as List<dynamic>
+            : [response['data']];
       } else {
         fileList = [];
       }
@@ -283,7 +352,224 @@ class ApiService {
       return fileList.cast<Map<String, dynamic>>();
     } catch (e) {
       debugPrint('获取文件夹文件列表失败: $e');
-      throw Exception('获取文件夹文件列表失败: $e');
+      return [];
+    }
+  }
+
+  /// 添加设备
+  static Future<void> addDevice({
+    required String deviceID,
+    required String name,
+  }) async {
+    try {
+      await _post('/syncthing/config/devices', {
+        'deviceID': deviceID.replaceAll(RegExp(r'[\s-]'), ''),
+        'name': name,
+        'addresses': ['dynamic'],
+        'compression': 'metadata',
+        'introducer': false,
+        'autoAcceptFolders': false,
+        'untrusted': false,
+        'numConnections': 0,
+        'maxRecvKbps': 0,
+        'maxSendKbps': 0,
+      });
+    } catch (e) {
+      debugPrint('添加设备失败: $e');
+      throw Exception('添加设备失败: $e');
+    }
+  }
+
+
+  /// 获取 WiFi 信息
+  static Future<Map<String, dynamic>> getWifiInfo() async {
+    try {
+      return await _get('/wifi-info');
+    } catch (e) {
+      debugPrint('获取WiFi信息失败: $e');
+      return {'wifiName': '获取失败'};
+    }
+  }
+
+  /// 获取 Syncthing 事件
+  static Future<List<Map<String, dynamic>>> getSyncthingEvents({
+    int since = 0,
+    int timeout = 60,
+  }) async {
+    try {
+      final response = await _get('/syncthing/events?since=$since&timeout=$timeout');
+      
+      // Syncthing 事件 API 直接返回数组
+      if (response is List) {
+        return (response as List).map((e) => e as Map<String, dynamic>).toList().cast<Map<String, dynamic>>();
+      } else if (response is Map<String, dynamic>) {
+        if (response.containsKey('data') && response['data'] is List) {
+          final dataList = response['data'] as List;
+          return dataList.map((e) => e as Map<String, dynamic>).toList().cast<Map<String, dynamic>>();
+        } else if (response.containsKey('code') && response['code'] == 0 && response['data'] is List) {
+          final dataList = response['data'] as List;
+          return dataList.map((e) => e as Map<String, dynamic>).toList().cast<Map<String, dynamic>>();
+        }
+      }
+      return [];
+    } catch (e) {
+      debugPrint('获取 Syncthing 事件失败: $e');
+      return [];
+    }
+  }
+
+  /// 获取设备发现信息
+  static Future<Map<String, dynamic>> getDiscovery() async {
+    try {
+      return await _get('/syncthing/discovery');
+    } catch (e) {
+      debugPrint('获取设备发现信息失败: $e');
+      return {};
+    }
+  }
+
+  /// 验证设备 ID
+  static Future<bool> validateDeviceId(String deviceId) async {
+    try {
+      final response = await _get('/syncthing/deviceid?id=${Uri.encodeComponent(deviceId)}');
+      return !response.containsKey('error');
+    } catch (e) {
+      debugPrint('验证设备 ID 失败: $e');
+      return false;
+    }
+  }
+
+  /// 文件预览
+  static Future<http.Response> previewFile(
+    String folderId,
+    String filePath,
+  ) async {
+    await initialize();
+    
+    final uri = Uri.parse('$_baseUrl/folder/${Uri.encodeComponent(folderId)}/preview?path=${Uri.encodeComponent(filePath)}');
+    return await _httpClient.get(uri);
+  }
+
+  /// 更新文件夹
+  static Future<Folder> updateFolder({
+    required String folderId,
+    required String name,
+    required String path,
+    List<String>? sharedDevices,
+  }) async {
+    try {
+      final data = await _put('/device/local/folders/${Uri.encodeComponent(folderId)}', {
+        'id': folderId,
+        'label': name,
+        'path': path,
+        if (sharedDevices != null) 'sharedDevices': sharedDevices,
+      });
+      
+      return Folder(
+        id: data['id'] ?? folderId,
+        name: data['label'] ?? data['name'] ?? name,
+        path: data['path'] ?? path,
+        deviceId: 'local',
+        isLocal: true,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+        status: 'synced',
+        fileCount: 0,
+        totalSize: 0,
+      );
+    } catch (e) {
+      debugPrint('更新文件夹失败: $e');
+      throw Exception('更新文件夹失败: $e');
+    }
+  }
+
+  /// 执行 PUT 请求
+  static Future<Map<String, dynamic>> _put(
+    String endpoint,
+    Map<String, dynamic> body,
+  ) async {
+    await initialize();
+    
+    try {
+      final uri = Uri.parse('$_baseUrl$endpoint');
+      debugPrint('API PUT: $uri');
+      debugPrint('API 请求体: ${json.encode(body)}');
+      
+      final response = await _httpClient.put(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode(body),
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw Exception('请求超时');
+        },
+      );
+
+      debugPrint('API 响应状态: ${response.statusCode}');
+      debugPrint('API 响应体: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final jsonData = json.decode(response.body);
+        
+        if (jsonData is Map<String, dynamic> && jsonData['code'] == 0) {
+          return jsonData;
+        } else {
+          return jsonData as Map<String, dynamic>;
+        }
+      } else {
+        throw Exception('HTTP 错误: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('API 请求失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 执行 DELETE 请求
+  static Future<void> _delete(String endpoint) async {
+    await initialize();
+    
+    try {
+      final uri = Uri.parse('$_baseUrl$endpoint');
+      debugPrint('API DELETE: $uri');
+      
+      final response = await _httpClient.delete(uri).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw Exception('请求超时');
+        },
+      );
+
+      debugPrint('API 响应状态: ${response.statusCode}');
+      debugPrint('API 响应体: ${response.body}');
+
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        throw Exception('HTTP 错误: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('API 请求失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 删除文件夹（使用正确的端点）
+  static Future<void> deleteFolder(String folderId) async {
+    try {
+      await _delete('/device/local/folders/${Uri.encodeComponent(folderId)}');
+    } catch (e) {
+      debugPrint('删除文件夹失败: $e');
+      throw Exception('删除文件夹失败: $e');
+    }
+  }
+
+  /// 删除设备
+  static Future<void> removeDevice(String deviceId) async {
+    try {
+      await _delete('/device/${Uri.encodeComponent(deviceId)}');
+    } catch (e) {
+      debugPrint('删除设备失败: $e');
+      throw Exception('删除设备失败: $e');
     }
   }
 }
