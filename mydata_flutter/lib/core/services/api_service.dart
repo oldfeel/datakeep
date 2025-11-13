@@ -163,11 +163,12 @@ class ApiService {
       }
       
       // 确保本地设备在列表中
-      final hasLocalDevice = deviceList.any((d) => 
-        d['deviceID'] == 'local' || 
-        d['connectionType'] == 'local' ||
-        d['clientVersion'] == 'local'
-      );
+      final hasLocalDevice = deviceList.any((d) {
+        if (d is! Map<String, dynamic>) return false;
+        return d['deviceID'] == 'local' || 
+               d['connectionType'] == 'local' ||
+               d['clientVersion'] == 'local';
+      });
       
       if (!hasLocalDevice) {
         deviceList.insert(0, {
@@ -187,7 +188,11 @@ class ApiService {
         });
       }
       
-      return deviceList.map((json) => Device.fromJson(json)).toList();
+      // 过滤并转换设备数据，确保每个元素都是 Map
+      return deviceList
+          .where((item) => item is Map<String, dynamic>)
+          .map((json) => Device.fromJson(json as Map<String, dynamic>))
+          .toList();
     } catch (e) {
       debugPrint('获取设备列表失败: $e');
       // 失败时至少返回本地设备
@@ -207,7 +212,9 @@ class ApiService {
   /// 获取设备文件夹
   static Future<List<Folder>> getDeviceFolders(String deviceId) async {
     try {
-      final response = await _get('/device/$deviceId/folders');
+      // 如果 deviceId 为空，使用 'local' 作为默认值
+      final validDeviceId = deviceId.isEmpty ? 'local' : deviceId;
+      final response = await _get('/device/$validDeviceId/folders');
       
       // 处理 client 后端响应格式
       List<dynamic> folderList;
@@ -261,10 +268,14 @@ class ApiService {
   static Future<String> getLocalDeviceId() async {
     try {
       final data = await _get('/deviceid');
+      String deviceId = '';
       if (data.containsKey('code') && data['code'] == 0) {
-        return data['data']?['deviceID'] ?? '';
+        deviceId = data['data']?['deviceID'] ?? '';
+      } else {
+        deviceId = data['deviceID'] ?? '';
       }
-      return data['deviceID'] ?? '';
+      // 如果获取失败或为空，返回 'local' 作为默认值
+      return deviceId.isNotEmpty ? deviceId : 'local';
     } catch (e) {
       debugPrint('获取本地设备 ID 失败: $e');
       final errorStr = e.toString();

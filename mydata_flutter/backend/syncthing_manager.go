@@ -63,7 +63,7 @@ func NewSyncthingManager() *SyncthingManager {
 func getSyncthingExecutablePath() string {
 	projectRoot := getProjectRoot()
 
-	// 查找 bin/syncthing
+	// 1. 优先查找 mydata_flutter/bin/syncthing
 	syncthingPath := filepath.Join(projectRoot, "bin", "syncthing")
 	if info, err := os.Stat(syncthingPath); err == nil {
 		if runtime.GOOS != "windows" {
@@ -75,18 +75,30 @@ func getSyncthingExecutablePath() string {
 		}
 	}
 
-	// 如果项目目录下没有，尝试使用系统 PATH 中的 syncthing
+	// 2. 查找 mydata_flutter/syncthing（直接放在项目根目录）
+	syncthingPath2 := filepath.Join(projectRoot, "syncthing")
+	if info, err := os.Stat(syncthingPath2); err == nil {
+		if runtime.GOOS != "windows" {
+			if info.Mode().Perm()&0111 != 0 {
+				return syncthingPath2
+			}
+		} else {
+			return syncthingPath2
+		}
+	}
+
+	// 3. 如果项目目录下没有，尝试使用系统 PATH 中的 syncthing
 	if path, err := exec.LookPath("syncthing"); err == nil {
 		return path
 	}
 
-	// 如果都找不到，返回 bin 目录下的路径（即使不存在，让用户知道需要编译）
+	// 4. 如果都找不到，返回 bin 目录下的路径（即使不存在，让用户知道需要编译）
 	return syncthingPath
 }
 
 // getProjectRoot 获取项目根目录
 func getProjectRoot() string {
-	// 从当前工作目录向上查找，直到找到包含 bin 目录的目录
+	// 从当前工作目录向上查找，直到找到包含 bin/syncthing 或 syncthing 文件的目录
 	wd, err := os.Getwd()
 	if err != nil {
 		wd = "."
@@ -94,13 +106,19 @@ func getProjectRoot() string {
 
 	dir := wd
 	for {
+		// 检查 bin/syncthing
 		binDir := filepath.Join(dir, "bin")
 		if info, err := os.Stat(binDir); err == nil && info.IsDir() {
-			// 检查 bin 目录下是否有 syncthing 文件
 			syncthingPath := filepath.Join(binDir, "syncthing")
 			if _, err := os.Stat(syncthingPath); err == nil {
 				return dir
 			}
+		}
+
+		// 检查根目录下的 syncthing 文件
+		syncthingPath := filepath.Join(dir, "syncthing")
+		if info, err := os.Stat(syncthingPath); err == nil && !info.IsDir() {
+			return dir
 		}
 
 		parent := filepath.Dir(dir)

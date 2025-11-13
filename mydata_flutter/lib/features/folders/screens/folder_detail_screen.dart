@@ -251,6 +251,14 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                         padding: const EdgeInsets.all(24),
                         child: Row(
                           children: [
+                            IconButton(
+                              icon: const Icon(Icons.arrow_back),
+                              onPressed: () {
+                                Navigator.of(context).pop();
+                              },
+                              tooltip: '返回',
+                            ),
+                            const SizedBox(width: 8),
                             Text(
                               _folderInfo?.name ?? '文件夹详情',
                               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
@@ -310,7 +318,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         children: [
           IconButton(
             icon: const Icon(Icons.home),
-            onPressed: () {
+            onPressed: _currentPath.isEmpty ? null : () {
               setState(() {
                 _currentPath = [];
               });
