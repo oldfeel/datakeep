@@ -356,7 +356,7 @@ func createSyncthingFolder(folder FolderEntry) error {
 	}
 
 	// 构建 syncthing API URL
-	syncthingURL := "http://127.0.0.1:8384/rest/config/folders"
+	syncthingURL := "https://127.0.0.1:8384/rest/config/folders"
 
 	// 创建请求
 	req, err := http.NewRequest("POST", syncthingURL, bytes.NewBuffer(jsonData))
@@ -444,7 +444,7 @@ func updateFolderHandler(c *fiber.Ctx) error {
 // 调用 syncthing API 更新文件夹
 func updateSyncthingFolder(folderID string, folder FolderEntry) error {
 	// 1. 获取当前文件夹完整配置
-	syncthingURL := fmt.Sprintf("http://127.0.0.1:8384/rest/config/folders/%s", folderID)
+	syncthingURL := fmt.Sprintf("https://127.0.0.1:8384/rest/config/folders/%s", folderID)
 	req, err := http.NewRequest("GET", syncthingURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create GET request: %v", err)
@@ -556,7 +556,7 @@ func updateFolderSharingHandler(c *fiber.Ctx) error {
 // 调用 syncthing API 更新文件夹共享配置
 func updateSyncthingFolderSharing(folderID string, sharedDevices []string) error {
 	// 1. 获取当前文件夹完整配置
-	syncthingURL := fmt.Sprintf("http://127.0.0.1:8384/rest/config/folders/%s", folderID)
+	syncthingURL := fmt.Sprintf("https://127.0.0.1:8384/rest/config/folders/%s", folderID)
 	req, err := http.NewRequest("GET", syncthingURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create GET request: %v", err)
@@ -719,7 +719,7 @@ func syncthingEventsProxyHandler(c *fiber.Ctx) error {
 	events := c.Query("events", "")
 
 	// 构建 syncthing API URL
-	syncthingURL := "http://127.0.0.1:8384/rest/events"
+	syncthingURL := "https://127.0.0.1:8384/rest/events"
 	params := url.Values{}
 	params.Set("since", since)
 	params.Set("timeout", timeout)
@@ -771,7 +771,7 @@ func syncthingEventsProxyHandler(c *fiber.Ctx) error {
 // 代理 syncthing 设备发现接口，解决跨域问题
 func syncthingDiscoveryProxyHandler(c *fiber.Ctx) error {
 	// 构建 syncthing API URL
-	syncthingURL := "http://127.0.0.1:8384/rest/system/discovery"
+	syncthingURL := "https://127.0.0.1:8384/rest/system/discovery"
 
 	// 创建请求
 	req, err := http.NewRequest("GET", syncthingURL, nil)
@@ -816,7 +816,7 @@ func syncthingDeviceIdProxyHandler(c *fiber.Ctx) error {
 	}
 
 	// 构建 syncthing API URL
-	syncthingURL := fmt.Sprintf("http://127.0.0.1:8384/rest/svc/deviceid?id=%s", url.QueryEscape(id))
+	syncthingURL := fmt.Sprintf("https://127.0.0.1:8384/rest/svc/deviceid?id=%s", url.QueryEscape(id))
 
 	// 创建请求
 	req, err := http.NewRequest("GET", syncthingURL, nil)
@@ -855,7 +855,7 @@ func syncthingDeviceIdProxyHandler(c *fiber.Ctx) error {
 // 代理 syncthing 设备配置接口（支持 GET 和 POST），解决跨域问题
 func syncthingConfigDevicesProxyHandler(c *fiber.Ctx) error {
 	// 构建 syncthing API URL
-	syncthingURL := "http://127.0.0.1:8384/rest/config/devices"
+	syncthingURL := "https://127.0.0.1:8384/rest/config/devices"
 
 	// 获取请求方法和请求体
 	method := c.Method()
@@ -909,7 +909,7 @@ func getDevicesFromSyncthing() ([]Device, error) {
 
 	// 获取设备配置
 	fmt.Printf("正在调用 Syncthing API: GET /rest/config/devices\n")
-	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/config/devices", nil)
+	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/config/devices", nil)
 	if err != nil {
 		fmt.Printf("创建请求失败: %v\n", err)
 		return nil, err
@@ -917,7 +917,7 @@ func getDevicesFromSyncthing() ([]Device, error) {
 	req.Header.Set("X-API-Key", getApiKeyFromConfig())
 	fmt.Printf("API Key: %s\n", getApiKeyFromConfig())
 
-	// 创建跳过证书验证的 HTTP 客户端
+	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
@@ -1083,7 +1083,7 @@ func getDeviceConnections() (map[string]ConnectionInfo, error) {
 	}
 	req.Header.Set("X-API-Key", getApiKeyFromConfig())
 
-	// 创建跳过证书验证的 HTTP 客户端
+	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
@@ -1133,7 +1133,7 @@ func getDeviceConnections() (map[string]ConnectionInfo, error) {
 }
 
 func getSystemStatus() (map[string]interface{}, error) {
-	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/system/status", nil)
+	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/system/status", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1164,7 +1164,7 @@ func getSystemStatus() (map[string]interface{}, error) {
 }
 
 func getDeviceDiscovery() (map[string]interface{}, error) {
-	req, err := http.NewRequest("GET", "http://127.0.0.1:8384/rest/system/discovery", nil)
+	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/system/discovery", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1262,7 +1262,7 @@ func deleteFolderHandler(c *fiber.Ctx) error {
 // 调用 syncthing API 删除文件夹
 func deleteSyncthingFolder(folderID string) error {
 	// 构建 syncthing API URL
-	syncthingURL := fmt.Sprintf("http://127.0.0.1:8384/rest/config/folders/%s", folderID)
+	syncthingURL := fmt.Sprintf("https://127.0.0.1:8384/rest/config/folders/%s", folderID)
 
 	// 创建请求
 	req, err := http.NewRequest("DELETE", syncthingURL, nil)
@@ -1299,7 +1299,7 @@ func reloadFoldersFromSyncthing() error {
 	fmt.Printf("=== 开始重新加载文件夹列表 ===\n")
 
 	// 构建 syncthing API URL
-	syncthingURL := "http://127.0.0.1:8384/rest/config/folders"
+	syncthingURL := "https://127.0.0.1:8384/rest/config/folders"
 	fmt.Printf("Syncthing API URL: %s\n", syncthingURL)
 
 	// 创建请求
@@ -1372,7 +1372,7 @@ func getLocalDeviceID() (string, error) {
 	}
 	req.Header.Set("X-API-Key", getApiKeyFromConfig())
 
-	// 创建跳过证书验证的 HTTP 客户端
+	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
@@ -1416,7 +1416,7 @@ func getLocalDeviceIDHandler(c *fiber.Ctx) error {
 	}
 	req.Header.Set("X-API-Key", getApiKeyFromConfig())
 
-	// 创建跳过证书验证的 HTTP 客户端
+	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
@@ -1487,7 +1487,7 @@ func removeDeviceHandler(c *fiber.Ctx) error {
 // 调用 Syncthing API 移除设备
 func removeSyncthingDevice(deviceID string) error {
 	// 构建 syncthing API URL
-	syncthingURL := fmt.Sprintf("http://127.0.0.1:8384/rest/config/devices/%s", deviceID)
+	syncthingURL := fmt.Sprintf("https://127.0.0.1:8384/rest/config/devices/%s", deviceID)
 
 	// 创建 DELETE 请求
 	req, err := http.NewRequest("DELETE", syncthingURL, nil)

@@ -3,6 +3,7 @@ package backend
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -130,7 +131,7 @@ func syncEventsToDB() {
 	for {
 		logger.Debug("准备请求 Syncthing 事件", zap.Int("lastEventID", lastEventID))
 		// 构建 Syncthing 事件 API URL
-		eventsURL := "http://127.0.0.1:8384/rest/events?since=" + fmt.Sprint(lastEventID) + "&timeout=30"
+		eventsURL := "https://127.0.0.1:8384/rest/events?since=" + fmt.Sprint(lastEventID) + "&timeout=30"
 		req, err := http.NewRequest("GET", eventsURL, nil)
 		if err != nil {
 			logger.Error("创建事件请求失败", zap.Error(err))
@@ -140,7 +141,11 @@ func syncEventsToDB() {
 		if apiKey != "" {
 			req.Header.Set("X-API-Key", apiKey)
 		}
-		client := &http.Client{Timeout: 35 * time.Second}
+		// 创建 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		client := &http.Client{Transport: tr, Timeout: 35 * time.Second}
 		logger.Debug("开始请求 Syncthing 事件", zap.String("url", eventsURL))
 		resp, err := client.Do(req)
 		if err != nil {

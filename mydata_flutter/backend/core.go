@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -385,13 +386,13 @@ func expandPath(path string) string {
 
 // 检查 Syncthing 是否正在运行
 func isSyncthingRunning() bool {
-	logger.Info("检查 Syncthing 状态", zap.String("url", "http://127.0.0.1:8384/rest/system/status"))
+	logger.Info("检查 Syncthing 状态", zap.String("url", "https://127.0.0.1:8384/rest/system/status"))
 
 	// 使用 context 控制超时
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", "http://127.0.0.1:8384/rest/system/status", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://127.0.0.1:8384/rest/system/status", nil)
 	if err != nil {
 		logger.Error("创建请求失败", zap.Error(err))
 		return false
@@ -412,8 +413,11 @@ func isSyncthingRunning() bool {
 		logger.Info("未找到 API Key，使用无认证请求")
 	}
 
-	// 创建 HTTP 客户端（不使用全局超时，使用 context）
-	client := &http.Client{}
+	// 创建 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
 
 	logger.Info("发送 HTTP 请求...")
 	startTime := time.Now()
@@ -445,7 +449,7 @@ func isSyncthingRunning() bool {
 // 从 Syncthing API 加载文件夹配置
 func loadFoldersFromSyncthing() ([]FolderEntry, error) {
 	// 构建 syncthing API URL
-	syncthingURL := "http://127.0.0.1:8384/rest/config/folders"
+	syncthingURL := "https://127.0.0.1:8384/rest/config/folders"
 	log.Printf("尝试连接 Syncthing API: %s", syncthingURL)
 
 	// 创建请求
@@ -467,8 +471,13 @@ func loadFoldersFromSyncthing() ([]FolderEntry, error) {
 	}
 
 	// 发送请求（设置较短的超时，避免长时间等待）
+	// 创建 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
 	client := &http.Client{
-		Timeout: 3 * time.Second, // 缩短超时时间到 3 秒
+		Transport: tr,
+		Timeout:   3 * time.Second, // 缩短超时时间到 3 秒
 	}
 	log.Printf("发送 HTTP 请求到 Syncthing API（超时: 3秒）...")
 	startTime := time.Now()

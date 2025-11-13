@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
@@ -349,7 +350,11 @@ func (sm *SyncthingManager) WaitForAPI(timeout time.Duration) error {
 		}
 
 		// 尝试连接 API
-		resp, err := http.Get("http://127.0.0.1:8384/rest/system/status")
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		client := &http.Client{Transport: tr}
+		resp, err := client.Get("https://127.0.0.1:8384/rest/system/status")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
