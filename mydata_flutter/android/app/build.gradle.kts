@@ -38,10 +38,11 @@ android {
         }
     }
     
-    // 确保 jniLibs 目录中的原生库被正确打包
+    // 关键配置：使用传统打包方式，确保 libsyncthing.so 正确安装
+    // 否则基于 app bundles 的安装中，原生库不会出现在正确位置
     packaging {
         jniLibs {
-            keepDebugSymbols += "**/libsyncthing.so"
+            useLegacyPackaging = true
         }
     }
     

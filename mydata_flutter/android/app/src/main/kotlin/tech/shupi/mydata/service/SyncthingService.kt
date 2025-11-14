@@ -111,6 +111,44 @@ class SyncthingService : Service() {
         startForeground(NOTIFICATION_ID, createNotification("正在启动 Syncthing..."))
 
         try {
+            // 检查配置文件是否存在，如果不存在则先生成
+            val configFile = Constants.getConfigFile(this)
+            if (!configFile.exists()) {
+                Log.i(TAG, "📝 配置文件不存在，先运行 -generate 命令生成配置...")
+                updateNotification("正在生成配置文件...")
+                
+                val generateRunnable = SyncthingRunnable(this, SyncthingRunnable.Command.GENERATE)
+                
+                // 使用 run(returnStdOut=true) 同步执行并等待完成
+                try {
+                    Log.i(TAG, "🔄 执行 -generate 命令...")
+                    val output = generateRunnable.run(true) // 同步执行，返回输出
+                    Log.i(TAG, "📤 -generate 命令输出: $output")
+                    
+                    // 等待配置文件生成（最多等待 10 秒，每 200ms 检查一次）
+                    var waited = 0
+                    val maxWait = 10000 // 10 秒
+                    val checkInterval = 200 // 200ms
+                    
+                    while (!configFile.exists() && waited < maxWait) {
+                        Thread.sleep(checkInterval.toLong())
+                        waited += checkInterval
+                    }
+                    
+                    if (configFile.exists()) {
+                        Log.i(TAG, "✅ 配置文件生成成功: ${configFile.absolutePath} (等待时间: ${waited}ms)")
+                    } else {
+                        Log.e(TAG, "❌ 配置文件生成失败，等待超时: ${configFile.absolutePath}")
+                        Log.e(TAG, "⚠️ 将继续启动 Syncthing，它可能会自动生成配置文件")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ 执行 -generate 命令失败", e)
+                    Log.w(TAG, "⚠️ 将继续启动 Syncthing，它可能会自动生成配置文件")
+                }
+            } else {
+                Log.i(TAG, "✅ 配置文件已存在: ${configFile.absolutePath}")
+            }
+            
             Log.i(TAG, "🔧 创建 SyncthingRunnable 实例...")
             // 创建并启动 SyncthingRunnable
             val runnable = SyncthingRunnable(this, SyncthingRunnable.Command.MAIN)
@@ -125,6 +163,28 @@ class SyncthingService : Service() {
             Log.i(TAG, "✅ Syncthing 线程启动成功")
             Log.i(TAG, "🆔 线程名称: ${syncthingThread?.name}")
             Log.i(TAG, "📊 线程状态: ${syncthingThread?.state}")
+            
+            // 如果配置文件还不存在，等待 Syncthing 启动后生成（最多等待 15 秒）
+            if (!configFile.exists()) {
+                Log.i(TAG, "⏳ 等待 Syncthing 启动并生成配置文件...")
+                var waited = 0
+                val maxWait = 15000 // 15 秒
+                val checkInterval = 500 // 500ms
+                
+                while (!configFile.exists() && waited < maxWait) {
+                    Thread.sleep(checkInterval.toLong())
+                    waited += checkInterval
+                    if (waited % 2000 == 0) {
+                        Log.d(TAG, "⏳ 仍在等待配置文件生成... (已等待 ${waited}ms)")
+                    }
+                }
+                
+                if (configFile.exists()) {
+                    Log.i(TAG, "✅ Syncthing 已生成配置文件: ${configFile.absolutePath} (等待时间: ${waited}ms)")
+                } else {
+                    Log.w(TAG, "⚠️ 等待超时，配置文件仍未生成，但继续运行")
+                }
+            }
             
             // 启动 HTTPS API 服务器
             startHttpsServer()

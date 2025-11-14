@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../features/devices/providers/device_provider.dart';
+import '../../features/home/screens/home_screen.dart';
 import '../../features/folders/screens/folders_screen.dart';
 import '../../features/devices/screens/devices_screen.dart';
 import '../../features/sync/screens/sync_screen.dart';
@@ -17,6 +18,7 @@ class _MainNavigationState extends State<MainNavigation> {
   int _currentIndex = 0;
 
   final List<Widget> _screens = [
+    const HomeScreen(), // 首页：设备 tab + 文件夹列表
     const FoldersScreen(),
     const DevicesScreen(),
     const SyncScreen(),
@@ -40,7 +42,8 @@ class _MainNavigationState extends State<MainNavigation> {
     if (isDesktop) {
       return _buildDesktopLayout();
     } else {
-      return _buildMobileLayout();
+      // 移动端只显示首页（设备 tab + 文件夹列表）
+      return const HomeScreen();
     }
   }
 

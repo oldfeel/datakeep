@@ -71,6 +71,18 @@ class FolderProvider with ChangeNotifier {
     }
   }
 
+  // 获取指定设备的文件夹
+  Future<List<Folder>> getDeviceFolders(String deviceId) async {
+    try {
+      final folders = await ApiService.getDeviceFolders(deviceId);
+      return folders;
+    } catch (e) {
+      _error = e.toString();
+      notifyListeners();
+      rethrow;
+    }
+  }
+
   // 清除错误
   void clearError() {
     _error = null;

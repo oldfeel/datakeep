@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/folder_provider.dart';
+import '../../devices/providers/device_provider.dart';
+import '../../devices/screens/devices_screen.dart';
 import '../../../core/models/folder.dart';
+import '../../../core/models/device.dart';
 import '../../../shared/widgets/folder_card.dart';
 import 'folder_detail_screen.dart';
 
@@ -174,29 +177,142 @@ class FoldersScreen extends StatelessWidget {
 
   // 移动端列表布局
   Widget _buildMobileLayout(BuildContext context, FolderProvider folderProvider) {
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: folderProvider.folders.length,
-      itemBuilder: (context, index) {
-        final folder = folderProvider.folders[index];
-        return FolderCard(
-          folder: folder,
-          onDelete: () {
-            _showDeleteDialog(context, folder);
-          },
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (context) => FolderDetailScreen(
-                  deviceId: folder.deviceId,
-                  folderId: folder.id,
-                ),
+    return Column(
+      children: [
+        // 顶部设备列表（类似 tab）
+        _buildDeviceTabBar(context),
+        // 文件夹列表
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: folderProvider.folders.length,
+            itemBuilder: (context, index) {
+              final folder = folderProvider.folders[index];
+              return FolderCard(
+                folder: folder,
+                onDelete: () {
+                  _showDeleteDialog(context, folder);
+                },
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => FolderDetailScreen(
+                        deviceId: folder.deviceId,
+                        folderId: folder.id,
+                      ),
+                    ),
+                  );
+                },
+                isDesktop: false,
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  // 构建设备 Tab 栏
+  Widget _buildDeviceTabBar(BuildContext context) {
+    return Consumer<DeviceProvider>(
+      builder: (context, deviceProvider, child) {
+        return Container(
+          height: 60,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
               ),
-            );
-          },
-          isDesktop: false,
+            ],
+          ),
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            itemCount: deviceProvider.devices.length + 1, // +1 用于添加设备按钮
+            itemBuilder: (context, index) {
+              // 最后一个按钮是添加设备
+              if (index == deviceProvider.devices.length) {
+                return _buildAddDeviceChip(context);
+              }
+              
+              final device = deviceProvider.devices[index];
+              return _buildDeviceChip(context, device);
+            },
+          ),
         );
       },
+    );
+  }
+
+  // 构建设备 Chip
+  Widget _buildDeviceChip(BuildContext context, Device device) {
+    final isLocal = device.isLocal;
+    
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      child: Chip(
+        avatar: CircleAvatar(
+          backgroundColor: isLocal 
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.secondary,
+          radius: 12,
+          child: Icon(
+            isLocal ? Icons.computer : Icons.phone_android,
+            size: 16,
+            color: Colors.white,
+          ),
+        ),
+        label: Text(
+          device.name,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+        ),
+        onDeleted: null,
+        deleteIcon: null,
+      ),
+    );
+  }
+
+  // 构建添加设备 Chip
+  Widget _buildAddDeviceChip(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      child: ActionChip(
+        avatar: CircleAvatar(
+          backgroundColor: Theme.of(context).colorScheme.primary,
+          radius: 12,
+          child: const Icon(
+            Icons.add,
+            size: 16,
+            color: Colors.white,
+          ),
+        ),
+        label: const Text(
+          '添加设备',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+        ),
+        onPressed: () {
+          // 调用 DevicesScreen 的添加设备对话框
+          DevicesScreen.showAddDeviceDialog(context);
+        },
+      ),
     );
   }
 

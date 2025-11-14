@@ -39,8 +39,8 @@ class HttpsApiController(private val context: Context) {
         private const val SYNCTHING_PORT = 8384 // Syncthing 默认端口
     }
     
-    // Syncthing API 配置 - 尝试从桌面端获取数据
-    private val syncthingApiBase = "http://127.0.0.1:8384" // 本地 Syncthing 地址
+    // Syncthing API 配置 - 使用 HTTPS（Syncthing 默认支持 HTTPS，即使配置了 tls="false"）
+    private val syncthingApiBase = "https://127.0.0.1:8384" // 本地 Syncthing 地址
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     
     // API Key 延迟初始化，避免构造函数失败
@@ -1009,32 +1009,55 @@ class HttpsApiController(private val context: Context) {
     private fun getApiKeyFromConfig(): String {
         Log.d(TAG, "🔍 尝试从 Syncthing 配置文件获取 API Key")
         
-        // 主要配置文件路径
-        val configPath = "/data/data/tech.shupi.mydata/files/config.xml"
+        // 使用 context.filesDir 动态获取配置文件路径（与 SyncthingRunnable 保持一致）
+        val configFile = Constants.getConfigFile(context)
+        val configPath = configFile.absolutePath
+        
+        Log.d(TAG, "📁 配置文件路径: $configPath")
+        Log.d(TAG, "📁 filesDir: ${context.filesDir.absolutePath}")
+        
+        // 如果配置文件不存在，等待一段时间让 Syncthing 生成
+        if (!configFile.exists()) {
+            Log.w(TAG, "⚠️ 配置文件不存在，等待 Syncthing 生成...")
+            // 等待最多 10 秒，每 500ms 检查一次
+            var waited = 0
+            val maxWait = 10000 // 10 秒
+            val checkInterval = 500 // 500ms
+            
+            while (!configFile.exists() && waited < maxWait) {
+                Thread.sleep(checkInterval.toLong())
+                waited += checkInterval
+            }
+            
+            if (!configFile.exists()) {
+                Log.e(TAG, "❌ 等待超时，配置文件仍未生成: $configPath")
+                val errorMessage = "无法从配置文件获取有效的 API Key: $configPath (配置文件不存在，Syncthing 可能未启动)"
+                Log.e(TAG, "💥 $errorMessage")
+                throw IllegalStateException(errorMessage)
+            }
+            
+            Log.i(TAG, "✅ 配置文件已生成: $configPath")
+        }
         
         try {
-            val file = File(configPath)
-            if (file.exists()) {
-                Log.d(TAG, "📁 找到配置文件: $configPath")
-                val content = file.readText()
-                
-                // 简单的 XML 解析，查找 apikey 标签
-                val apiKeyPattern = Regex("<apikey>([^<]+)</apikey>")
-                val matchResult = apiKeyPattern.find(content)
-                
-                if (matchResult != null) {
-                    val apiKey = matchResult.groupValues[1]
-                    if (apiKey.isNotEmpty()) {
-                        Log.d(TAG, "✅ 成功从配置文件获取 API Key: ${apiKey.take(8)}...")
-                        return apiKey
-                    } else {
-                        Log.w(TAG, "⚠️ 配置文件中的 API Key 为空")
-                    }
+            val content = configFile.readText()
+            Log.d(TAG, "📄 配置文件内容长度: ${content.length} 字符")
+            
+            // 简单的 XML 解析，查找 apikey 标签
+            val apiKeyPattern = Regex("<apikey>([^<]+)</apikey>")
+            val matchResult = apiKeyPattern.find(content)
+            
+            if (matchResult != null) {
+                val apiKey = matchResult.groupValues[1]
+                if (apiKey.isNotEmpty()) {
+                    Log.d(TAG, "✅ 成功从配置文件获取 API Key: ${apiKey.take(8)}...")
+                    return apiKey
                 } else {
-                    Log.w(TAG, "⚠️ 配置文件中未找到 apikey 标签")
+                    Log.w(TAG, "⚠️ 配置文件中的 API Key 为空")
                 }
             } else {
-                Log.e(TAG, "❌ 配置文件不存在: $configPath")
+                Log.w(TAG, "⚠️ 配置文件中未找到 apikey 标签")
+                Log.d(TAG, "📄 配置文件内容预览: ${content.take(500)}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "⚠️ 读取配置文件失败: $configPath", e)

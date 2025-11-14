@@ -432,10 +432,102 @@ class ApiService {
   /// 获取设备发现信息
   static Future<Map<String, dynamic>> getDiscovery() async {
     try {
-      return await _get('/syncthing/discovery');
+      final response = await _get('/syncthing/discovery');
+      
+      // 处理不同的响应格式
+      // 1. 如果响应包含 code 和 data，提取 data
+      if (response.containsKey('code') && response.containsKey('data')) {
+        final data = response['data'];
+        if (data is Map<String, dynamic>) {
+          return data;
+        }
+      }
+      // 2. 如果响应包含 success 和 data，提取 data
+      if (response.containsKey('success') && response.containsKey('data')) {
+        final data = response['data'];
+        if (data is Map<String, dynamic>) {
+          return data;
+        }
+      }
+      // 3. 如果响应本身就是设备发现数据（key 是设备 ID）
+      // 检查是否有常见的包装字段，如果没有，直接返回
+      if (!response.containsKey('code') && 
+          !response.containsKey('success') && 
+          !response.containsKey('error')) {
+        return response;
+      }
+      
+      debugPrint('无法解析 discovery 响应格式: $response');
+      return {};
     } catch (e) {
       debugPrint('获取设备发现信息失败: $e');
       return {};
+    }
+  }
+
+  /// 获取局域网发现的设备 ID 列表（带名称）
+  static Future<List<Map<String, String>>> getDiscoveredDevices() async {
+    try {
+      final discovery = await getDiscovery();
+      debugPrint('Discovery 数据: $discovery');
+      
+      // 获取已配置的设备列表，用于匹配设备名称
+      Map<String, String> deviceNameMap = {};
+      try {
+        final configuredDevices = await getDevices();
+        for (var device in configuredDevices) {
+          // 移除连字符和空格进行匹配
+          final cleanId = device.id.replaceAll(RegExp(r'[\s-]'), '');
+          deviceNameMap[cleanId] = device.name;
+        }
+      } catch (e) {
+        debugPrint('获取已配置设备列表失败（用于匹配名称）: $e');
+      }
+      
+      // discovery 格式应该是: { "deviceID1": {...}, "deviceID2": {...} }
+      // 过滤掉非设备 ID 的 key（如 "code", "success", "error", "data" 等）
+      final discoveredDevices = <Map<String, String>>[];
+      
+      for (final deviceId in discovery.keys) {
+        // 排除常见的响应字段
+        if (deviceId == 'code' || 
+            deviceId == 'success' || 
+            deviceId == 'error' || 
+            deviceId == 'data' || 
+            deviceId == 'message') {
+          continue;
+        }
+        // 设备 ID 通常是较长的字符串（至少 20 个字符）
+        if (deviceId.length < 20) {
+          continue;
+        }
+        
+        // 尝试从已配置的设备中查找名称
+        final cleanId = deviceId.replaceAll(RegExp(r'[\s-]'), '');
+        final deviceName = deviceNameMap[cleanId] ?? deviceId;
+        
+        discoveredDevices.add({
+          'id': deviceId,
+          'name': deviceName,
+        });
+      }
+      
+      debugPrint('发现的设备列表（带名称）: $discoveredDevices');
+      return discoveredDevices;
+    } catch (e) {
+      debugPrint('获取发现的设备列表失败: $e');
+      return [];
+    }
+  }
+
+  /// 获取局域网发现的设备 ID 列表（仅ID，保持向后兼容）
+  static Future<List<String>> getDiscoveredDeviceIds() async {
+    try {
+      final devices = await getDiscoveredDevices();
+      return devices.map((d) => d['id']!).toList();
+    } catch (e) {
+      debugPrint('获取发现的设备 ID 列表失败: $e');
+      return [];
     }
   }
 
