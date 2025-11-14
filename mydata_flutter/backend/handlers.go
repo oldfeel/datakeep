@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/zap"
 )
 
 type ConnectionInfo struct {
@@ -905,17 +906,30 @@ func syncthingConfigDevicesProxyHandler(c *fiber.Ctx) error {
 
 // Syncthing 相关 API 调用
 func getDevicesFromSyncthing() ([]Device, error) {
-	fmt.Printf("=== getDevicesFromSyncthing 开始 ===\n")
+	logger.Info("=== getDevicesFromSyncthing 开始 ===")
+
+	// 获取 API Key
+	apiKey := getApiKeyFromConfig()
+	if apiKey == "" {
+		logger.Error("错误: API Key 为空")
+		return nil, fmt.Errorf("API Key is empty")
+	}
+	// 打印 API Key 的前 10 个字符用于调试
+	keyPreview := apiKey
+	if len(keyPreview) > 10 {
+		keyPreview = keyPreview[:10] + "..."
+	}
+	logger.Info("使用的 API Key", zap.String("preview", keyPreview), zap.Int("length", len(apiKey)))
 
 	// 获取设备配置
-	fmt.Printf("正在调用 Syncthing API: GET /rest/config/devices\n")
+	logger.Info("正在调用 Syncthing API", zap.String("method", "GET"), zap.String("path", "/rest/config/devices"))
 	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/config/devices", nil)
 	if err != nil {
-		fmt.Printf("创建请求失败: %v\n", err)
+		logger.Error("创建请求失败", zap.Error(err))
 		return nil, err
 	}
-	req.Header.Set("X-API-Key", getApiKeyFromConfig())
-	fmt.Printf("API Key: %s\n", getApiKeyFromConfig())
+	req.Header.Set("X-API-Key", apiKey)
+	logger.Info("请求详情", zap.String("url", req.URL.String()), zap.String("apiKeyPreview", keyPreview))
 
 	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
 	tr := &http.Transport{
@@ -923,35 +937,55 @@ func getDevicesFromSyncthing() ([]Device, error) {
 	}
 	client := &http.Client{Transport: tr}
 
+	logger.Info("发送 HTTP 请求...")
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("HTTP 请求失败: %v\n", err)
+		logger.Error("HTTP 请求失败", zap.Error(err))
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("HTTP 响应状态码: %d\n", resp.StatusCode)
+	logger.Info("HTTP 响应", zap.Int("statusCode", resp.StatusCode), zap.String("status", resp.Status))
+	logger.Info("响应头信息", zap.Any("headers", resp.Header))
+
 	if resp.StatusCode != 200 {
-		fmt.Printf("Syncthing API 错误: %s\n", resp.Status)
+		// 读取响应体以获取详细错误信息
+		body, readErr := ioutil.ReadAll(resp.Body)
+		if readErr != nil {
+			logger.Error("读取错误响应体失败", zap.Error(readErr))
+		} else {
+			logger.Error("错误响应体内容", zap.String("body", string(body)))
+		}
+		logger.Error("Syncthing API 错误", zap.String("status", resp.Status))
 		return nil, fmt.Errorf("syncthing api error: %s", resp.Status)
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("读取响应体失败: %v\n", err)
+		logger.Error("读取响应体失败", zap.Error(err))
 		return nil, err
 	}
-	fmt.Printf("响应体长度: %d 字节\n", len(body))
+	logger.Info("响应体", zap.Int("length", len(body)))
+	if len(body) > 0 && len(body) < 1000 {
+		// 如果响应体不太长，打印完整内容用于调试
+		logger.Info("响应体内容", zap.String("body", string(body)))
+	} else if len(body) > 0 {
+		// 如果响应体很长，只打印前 500 个字符
+		bodyPreview := string(body)
+		if len(bodyPreview) > 500 {
+			bodyPreview = bodyPreview[:500] + "..."
+		}
+		logger.Info("响应体内容预览", zap.String("preview", bodyPreview))
+	}
 
 	var devices []Device
 	if err := json.Unmarshal(body, &devices); err != nil {
-		fmt.Printf("JSON 解析失败: %v\n", err)
-		fmt.Printf("响应体内容: %s\n", string(body))
+		logger.Error("JSON 解析失败", zap.Error(err), zap.String("body", string(body)))
 		return nil, err
 	}
-	fmt.Printf("成功解析到 %d 个设备:\n", len(devices))
+	logger.Info("成功解析设备列表", zap.Int("count", len(devices)))
 	for i, device := range devices {
-		fmt.Printf("  [%d] DeviceID: %s, Name: %s, Addresses: %v\n", i+1, device.DeviceID, device.Name, device.Addresses)
+		logger.Info("设备信息", zap.Int("index", i+1), zap.String("deviceID", device.DeviceID), zap.String("name", device.Name), zap.Any("addresses", device.Addresses))
 	}
 
 	// 获取设备连接状态
@@ -960,7 +994,7 @@ func getDevicesFromSyncthing() ([]Device, error) {
 	if err != nil {
 		fmt.Printf("获取设备连接状态失败: %v\n", err)
 		fmt.Printf("继续返回设备列表（不包含连接信息）\n")
-		fmt.Printf("=== getDevicesFromSyncthing 结束 ===\n")
+		logger.Info("=== getDevicesFromSyncthing 结束 ===")
 		return devices, nil
 	}
 
@@ -1070,18 +1104,31 @@ func getDevicesFromSyncthing() ([]Device, error) {
 			device.Name, filteredAddresses, devices[i].Connected, devices[i].ConnectionType, devices[i].IsLocalNetwork)
 	}
 
-	fmt.Printf("=== getDevicesFromSyncthing 结束 ===\n")
+	logger.Info("=== getDevicesFromSyncthing 结束 ===")
 	return devices, nil
 }
 
 func getDeviceConnections() (map[string]ConnectionInfo, error) {
 	fmt.Printf("正在调用 Syncthing API: GET /rest/system/connections\n")
+
+	// 获取 API Key
+	apiKey := getApiKeyFromConfig()
+	if apiKey == "" {
+		fmt.Printf("错误: API Key 为空\n")
+		return nil, fmt.Errorf("API Key is empty")
+	}
+	keyPreview := apiKey
+	if len(keyPreview) > 10 {
+		keyPreview = keyPreview[:10] + "..."
+	}
+	fmt.Printf("使用的 API Key (预览): %s (长度: %d)\n", keyPreview, len(apiKey))
+
 	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/system/connections", nil)
 	if err != nil {
 		fmt.Printf("创建连接状态请求失败: %v\n", err)
 		return nil, err
 	}
-	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+	req.Header.Set("X-API-Key", apiKey)
 
 	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
 	tr := &http.Transport{
@@ -1098,6 +1145,13 @@ func getDeviceConnections() (map[string]ConnectionInfo, error) {
 
 	fmt.Printf("连接状态 HTTP 响应状态码: %d\n", resp.StatusCode)
 	if resp.StatusCode != 200 {
+		// 读取响应体以获取详细错误信息
+		body, readErr := ioutil.ReadAll(resp.Body)
+		if readErr != nil {
+			fmt.Printf("读取错误响应体失败: %v\n", readErr)
+		} else {
+			fmt.Printf("错误响应体内容: %s\n", string(body))
+		}
 		fmt.Printf("Syncthing 连接状态 API 错误: %s\n", resp.Status)
 		return nil, fmt.Errorf("syncthing connections api error: %s", resp.Status)
 	}
@@ -1133,13 +1187,24 @@ func getDeviceConnections() (map[string]ConnectionInfo, error) {
 }
 
 func getSystemStatus() (map[string]interface{}, error) {
+	// 获取 API Key
+	apiKey := getApiKeyFromConfig()
+	if apiKey == "" {
+		fmt.Printf("错误: API Key 为空\n")
+		return nil, fmt.Errorf("API Key is empty")
+	}
+
 	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/system/status", nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+	req.Header.Set("X-API-Key", apiKey)
 
-	client := &http.Client{}
+	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -1147,6 +1212,11 @@ func getSystemStatus() (map[string]interface{}, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		// 读取响应体以获取详细错误信息
+		body, readErr := ioutil.ReadAll(resp.Body)
+		if readErr == nil {
+			fmt.Printf("getSystemStatus 错误响应体: %s\n", string(body))
+		}
 		return nil, fmt.Errorf("system status api error: %s", resp.Status)
 	}
 
@@ -1164,13 +1234,24 @@ func getSystemStatus() (map[string]interface{}, error) {
 }
 
 func getDeviceDiscovery() (map[string]interface{}, error) {
+	// 获取 API Key
+	apiKey := getApiKeyFromConfig()
+	if apiKey == "" {
+		fmt.Printf("错误: API Key 为空\n")
+		return nil, fmt.Errorf("API Key is empty")
+	}
+
 	req, err := http.NewRequest("GET", "https://127.0.0.1:8384/rest/system/discovery", nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-API-Key", getApiKeyFromConfig())
+	req.Header.Set("X-API-Key", apiKey)
 
-	client := &http.Client{}
+	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -1178,6 +1259,11 @@ func getDeviceDiscovery() (map[string]interface{}, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		// 读取响应体以获取详细错误信息
+		body, readErr := ioutil.ReadAll(resp.Body)
+		if readErr == nil {
+			fmt.Printf("getDeviceDiscovery 错误响应体: %s\n", string(body))
+		}
 		return nil, fmt.Errorf("device discovery api error: %s", resp.Status)
 	}
 

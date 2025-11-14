@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -108,6 +109,75 @@ func fileExists(path string) bool {
 }
 
 // getConfigPath 使用与 Syncthing 相同的逻辑查找配置文件路径
+// getSyncthingHomeFromProcess 从运行的 Syncthing 进程获取 -home 参数
+func getSyncthingHomeFromProcess() string {
+	logger.Info("尝试从运行的 Syncthing 进程获取 -home 参数...")
+
+	// 查找 syncthing 进程（可能有多个，取第一个）
+	cmd := exec.Command("pgrep", "-f", "syncthing.*-home")
+	output, err := cmd.Output()
+	if err != nil {
+		logger.Info("未找到运行中的 Syncthing 进程（带 -home 参数）", zap.Error(err))
+		return ""
+	}
+
+	// 解析进程 ID（pgrep 可能返回多个 PID，用换行符分隔）
+	pidLines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(pidLines) == 0 || pidLines[0] == "" {
+		logger.Info("未找到 Syncthing 进程 ID")
+		return ""
+	}
+	logger.Info("找到 Syncthing 进程", zap.Int("totalPids", len(pidLines)), zap.Strings("pids", pidLines))
+
+	// 遍历所有进程 ID，尝试读取命令行参数（因为有些进程可能已经结束）
+	for _, pid := range pidLines {
+		pid = strings.TrimSpace(pid)
+		if pid == "" {
+			continue
+		}
+
+		logger.Info("尝试读取进程命令行参数", zap.String("pid", pid))
+
+		// 读取进程的命令行参数
+		cmdlinePath := filepath.Join("/proc", pid, "cmdline")
+		cmdlineData, err := ioutil.ReadFile(cmdlinePath)
+		if err != nil {
+			logger.Warn("无法读取进程命令行参数", zap.String("pid", pid), zap.String("path", cmdlinePath), zap.Error(err))
+			continue // 尝试下一个进程
+		}
+
+		// cmdline 文件使用 \0 分隔参数
+		args := strings.Split(string(cmdlineData), "\x00")
+		logger.Info("Syncthing 进程命令行参数", zap.String("pid", pid), zap.Any("args", args))
+
+		// 查找 -home 参数
+		for i, arg := range args {
+			if arg == "-home" && i+1 < len(args) {
+				homePath := args[i+1]
+				logger.Info("找到 -home 参数", zap.String("pid", pid), zap.String("path", homePath))
+
+				// 确保路径是绝对路径
+				if filepath.IsAbs(homePath) {
+					logger.Info("使用绝对路径", zap.String("path", homePath))
+					return homePath
+				}
+				// 如果是相对路径，尝试转换为绝对路径
+				if absPath, err := filepath.Abs(homePath); err == nil {
+					logger.Info("将相对路径转换为绝对路径", zap.String("original", homePath), zap.String("absolute", absPath))
+					return absPath
+				}
+				logger.Warn("无法转换相对路径为绝对路径", zap.String("path", homePath))
+				return homePath
+			}
+		}
+
+		logger.Info("进程参数中未找到 -home", zap.String("pid", pid))
+	}
+
+	logger.Info("所有进程参数中都未找到 -home")
+	return ""
+}
+
 // 参考: syncthing/lib/locations/locations.go 的 unixConfigDir 函数
 func getConfigPath() string {
 	// 如果已经找到过配置路径，验证它是否存在
@@ -130,43 +200,89 @@ func getConfigPath() string {
 		home = os.Getenv("HOME")
 	}
 
-	// 使用与 Syncthing 完全相同的逻辑（参考 unixConfigDir）
-	// 1. 如果设置了 $XDG_CONFIG_HOME，检查 $XDG_CONFIG_HOME/syncthing/config.xml
+	// 使用与 Syncthing 完全相同的逻辑（参考 unixConfigDir，syncthing/lib/locations/locations.go:212-237）
+	// 但需要优先检查实际运行的 Syncthing 使用的路径（如果通过 -home 参数指定）
+	logger.Info("开始查找配置文件路径（按照 Syncthing 源码逻辑）", zap.String("home", home))
+
+	// 0. 优先检查：如果 SyncthingManager 已初始化，使用它记录的 configPath
+	// 这样可以确保读取的是实际启动 Syncthing 时使用的配置文件路径
+	logger.Info("步骤 0: 检查 SyncthingManager 的 configPath...")
+	if manager := GetSyncthingManager(); manager != nil {
+		syncthingHome := manager.GetConfigPath()
+		if syncthingHome != "" {
+			candidate := filepath.Join(syncthingHome, "config.xml")
+			logger.Info("检查 SyncthingManager 路径", zap.String("candidate", candidate), zap.String("syncthingHome", syncthingHome))
+			if fileExists(candidate) {
+				configPath = candidate
+				logger.Info("✓ 找到配置文件（从 SyncthingManager 获取）", zap.String("path", candidate))
+				return configPath
+			} else {
+				logger.Info("✗ SyncthingManager 路径的配置文件不存在", zap.String("path", candidate))
+			}
+		} else {
+			logger.Info("✗ SyncthingManager 的 configPath 为空")
+		}
+	} else {
+		logger.Info("✗ SyncthingManager 未初始化")
+	}
+
+	// 1. Legacy: 如果设置了 $XDG_CONFIG_HOME，检查 $XDG_CONFIG_HOME/syncthing/config.xml
+	// 注意：Syncthing 源码中这个检查会检查文件是否存在
+	logger.Info("步骤 1: 检查 $XDG_CONFIG_HOME/syncthing/config.xml...")
 	xdgConfigHome := os.Getenv("XDG_CONFIG_HOME")
 	if xdgConfigHome != "" {
 		candidate := filepath.Join(xdgConfigHome, "syncthing", "config.xml")
+		logger.Info("检查 XDG_CONFIG_HOME 路径", zap.String("XDG_CONFIG_HOME", xdgConfigHome), zap.String("candidate", candidate))
 		if fileExists(candidate) {
 			configPath = candidate
-			logger.Info("找到配置文件（XDG_CONFIG_HOME）", zap.String("path", candidate))
+			logger.Info("✓ 找到配置文件（XDG_CONFIG_HOME）", zap.String("path", candidate))
 			return configPath
+		} else {
+			logger.Info("✗ XDG_CONFIG_HOME 路径的配置文件不存在", zap.String("path", candidate))
 		}
+	} else {
+		logger.Info("✗ XDG_CONFIG_HOME 未设置")
 	}
 
-	// 2. Legacy: 检查 ~/.config/syncthing/config.xml（旧版，优先使用）
+	// 2. Legacy: 检查 ~/.config/syncthing/config.xml（旧版路径，如果存在则优先使用）
+	logger.Info("步骤 2: 检查 ~/.config/syncthing/config.xml（Legacy）...")
 	candidate := filepath.Join(home, ".config", "syncthing", "config.xml")
+	logger.Info("检查 Legacy 路径", zap.String("candidate", candidate))
 	if fileExists(candidate) {
 		configPath = candidate
-		logger.Info("找到配置文件（Legacy）", zap.String("path", candidate))
+		logger.Info("✓ 找到配置文件（Legacy）", zap.String("path", candidate))
 		return configPath
+	} else {
+		logger.Info("✗ Legacy 路径的配置文件不存在", zap.String("path", candidate))
 	}
 
-	// 3. 如果 XDG_STATE_HOME 是绝对路径，使用 $XDG_STATE_HOME/syncthing
+	// 3. 如果 XDG_STATE_HOME 是绝对路径，使用 $XDG_STATE_HOME/syncthing/config.xml
+	logger.Info("步骤 3: 检查 $XDG_STATE_HOME/syncthing/config.xml...")
 	xdgStateHome := os.Getenv("XDG_STATE_HOME")
 	if filepath.IsAbs(xdgStateHome) {
 		candidate := filepath.Join(xdgStateHome, "syncthing", "config.xml")
+		logger.Info("检查 XDG_STATE_HOME 路径", zap.String("XDG_STATE_HOME", xdgStateHome), zap.String("candidate", candidate))
 		if fileExists(candidate) {
 			configPath = candidate
-			logger.Info("找到配置文件（XDG_STATE_HOME）", zap.String("path", candidate))
+			logger.Info("✓ 找到配置文件（XDG_STATE_HOME）", zap.String("path", candidate))
 			return configPath
+		} else {
+			logger.Info("✗ XDG_STATE_HOME 路径的配置文件不存在", zap.String("path", candidate))
 		}
+	} else {
+		logger.Info("✗ XDG_STATE_HOME 未设置或不是绝对路径", zap.String("XDG_STATE_HOME", xdgStateHome))
 	}
 
-	// 4. 默认使用 ~/.local/state/syncthing/config.xml
+	// 4. 默认使用 ~/.local/state/syncthing/config.xml（新版路径）
+	logger.Info("步骤 4: 检查 ~/.local/state/syncthing/config.xml（默认路径）...")
 	candidate = filepath.Join(home, ".local", "state", "syncthing", "config.xml")
+	logger.Info("检查默认路径", zap.String("candidate", candidate))
 	if fileExists(candidate) {
 		configPath = candidate
-		logger.Info("找到配置文件（默认）", zap.String("path", candidate))
+		logger.Info("✓ 找到配置文件（默认）", zap.String("path", candidate))
 		return configPath
+	} else {
+		logger.Info("✗ 默认路径的配置文件不存在", zap.String("path", candidate))
 	}
 
 	// 5. Windows 和 macOS 的路径（如果是在这些平台上）
@@ -232,7 +348,12 @@ func getApiKeyFromConfig() string {
 		logger.Info("配置文件中未找到 API Key")
 		return ""
 	}
-	logger.Info("成功获取 API Key", zap.Int("length", len(cfg.Gui.APIKey)))
+	// 打印 API Key 的前 10 个字符用于调试（不打印完整 key 以保护安全）
+	keyPreview := cfg.Gui.APIKey
+	if len(keyPreview) > 10 {
+		keyPreview = keyPreview[:10] + "..."
+	}
+	logger.Info("成功获取 API Key", zap.Int("length", len(cfg.Gui.APIKey)), zap.String("preview", keyPreview))
 	return cfg.Gui.APIKey
 }
 
