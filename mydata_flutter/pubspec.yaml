@@ -66,6 +66,9 @@ dependencies:
   
   # JSON 处理
   json_annotation: ^4.8.1
+  
+  # 二维码扫描（Android/iOS）
+  mobile_scanner: ^5.2.3
 
 dev_dependencies:
   flutter_test:

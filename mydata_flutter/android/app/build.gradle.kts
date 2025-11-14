@@ -37,6 +37,20 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+    
+    // 确保 jniLibs 目录中的原生库被正确打包
+    packaging {
+        jniLibs {
+            keepDebugSymbols += "**/libsyncthing.so"
+        }
+    }
+    
+    // 明确指定 sourceSets，确保 jniLibs 被包含
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/jniLibs")
+        }
+    }
 }
 
 flutter {

@@ -1,6 +1,7 @@
 package tech.shupi.mydata
 
 import android.content.Intent
+import android.os.Bundle
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -10,6 +11,13 @@ import tech.shupi.mydata.service.SyncthingService
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "tech.shupi.mydata/api"
     private val TAG = "MainActivity"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Log.d(TAG, "onCreate - 自动启动 Syncthing 服务")
+        // 应用启动时自动启动 Syncthing 服务
+        startSyncthingService()
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -40,14 +48,19 @@ class MainActivity: FlutterActivity() {
     }
 
     private fun startSyncthingService() {
-        Log.d(TAG, "启动 Syncthing 服务")
-        val intent = Intent(this, SyncthingService::class.java).apply {
-            action = SyncthingService.ACTION_START
-        }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+        try {
+            Log.i(TAG, "🚀 启动 Syncthing 服务")
+            val intent = Intent(this, SyncthingService::class.java).apply {
+                action = SyncthingService.ACTION_START
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            Log.i(TAG, "✅ Syncthing 服务启动请求已发送")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 启动 Syncthing 服务失败", e)
         }
     }
 
