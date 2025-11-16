@@ -6,6 +6,7 @@ part 'device.g.dart';
 class Device {
   @JsonKey(name: 'deviceID')
   final String id;
+  @JsonKey(name: 'name', defaultValue: '未知设备')
   final String name;
   final List<String>? addresses;
   final String? compression;
@@ -47,7 +48,22 @@ class Device {
     this.folders = const [],
   });
 
-  factory Device.fromJson(Map<String, dynamic> json) => _$DeviceFromJson(json);
+  factory Device.fromJson(Map<String, dynamic> json) {
+    // 确保必需字段不为 null
+    final deviceID = json['deviceID']?.toString();
+    if (deviceID == null || deviceID.isEmpty) {
+      throw FormatException('Device JSON missing required field: deviceID', json);
+    }
+    
+    final name = json['name']?.toString() ?? '未知设备';
+    
+    // 创建清理后的 JSON
+    final cleanedJson = Map<String, dynamic>.from(json);
+    cleanedJson['deviceID'] = deviceID;
+    cleanedJson['name'] = name;
+    
+    return _$DeviceFromJson(cleanedJson);
+  }
   Map<String, dynamic> toJson() => _$DeviceToJson(this);
 
   // 判断是否为本机设备

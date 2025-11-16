@@ -14,11 +14,9 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import tech.shupi.mydata.MainActivity
-import java.util.concurrent.atomic.AtomicReference
 
 /**
- * 前台服务，用于运行 Syncthing 原生二进制文件
- * 参考 syncthing-android 的实现
+ * 前台服务，用于管理 gomobile backend（Syncthing + HTTPS API 服务器）
  */
 class SyncthingService : Service() {
 
@@ -47,12 +45,10 @@ class SyncthingService : Service() {
     }
 
     private var currentState = State.INIT
-    private val syncthingRunnable = AtomicReference<SyncthingRunnable>()
-    private var syncthingThread: Thread? = null
     private val binder = SyncthingServiceBinder()
     
-    // HTTPS API 服务器
-    private var httpsApiController: HttpsApiController? = null
+    // gomobile backend 服务
+    private var backendService: BackendService? = null
 
     /**
      * 服务绑定器
@@ -96,137 +92,64 @@ class SyncthingService : Service() {
     }
 
     /**
-     * 启动 Syncthing
+     * 启动 Syncthing 和 HTTPS API 服务器（使用 gomobile backend）
      */
     private fun startSyncthing() {
         if (currentState == State.ACTIVE || currentState == State.STARTING) {
-            Log.w(TAG, "⚠️ Syncthing 已经在运行或正在启动")
+            Log.w(TAG, "⚠️ 服务已经在运行或正在启动")
             return
         }
 
-        Log.i(TAG, "🚀 开始启动 Syncthing 服务")
+        Log.i(TAG, "🚀 开始启动服务（使用 gomobile backend）")
         updateState(State.STARTING)
         
         // 启动前台服务
-        startForeground(NOTIFICATION_ID, createNotification("正在启动 Syncthing..."))
+        startForeground(NOTIFICATION_ID, createNotification("正在启动服务..."))
 
         try {
-            // 检查配置文件是否存在，如果不存在则先生成
-            val configFile = Constants.getConfigFile(this)
-            if (!configFile.exists()) {
-                Log.i(TAG, "📝 配置文件不存在，先运行 -generate 命令生成配置...")
-                updateNotification("正在生成配置文件...")
-                
-                val generateRunnable = SyncthingRunnable(this, SyncthingRunnable.Command.GENERATE)
-                
-                // 使用 run(returnStdOut=true) 同步执行并等待完成
-                try {
-                    Log.i(TAG, "🔄 执行 -generate 命令...")
-                    val output = generateRunnable.run(true) // 同步执行，返回输出
-                    Log.i(TAG, "📤 -generate 命令输出: $output")
-                    
-                    // 等待配置文件生成（最多等待 10 秒，每 200ms 检查一次）
-                    var waited = 0
-                    val maxWait = 10000 // 10 秒
-                    val checkInterval = 200 // 200ms
-                    
-                    while (!configFile.exists() && waited < maxWait) {
-                        Thread.sleep(checkInterval.toLong())
-                        waited += checkInterval
-                    }
-                    
-                    if (configFile.exists()) {
-                        Log.i(TAG, "✅ 配置文件生成成功: ${configFile.absolutePath} (等待时间: ${waited}ms)")
-                    } else {
-                        Log.e(TAG, "❌ 配置文件生成失败，等待超时: ${configFile.absolutePath}")
-                        Log.e(TAG, "⚠️ 将继续启动 Syncthing，它可能会自动生成配置文件")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ 执行 -generate 命令失败", e)
-                    Log.w(TAG, "⚠️ 将继续启动 Syncthing，它可能会自动生成配置文件")
-                }
+            // 使用 gomobile backend
+            backendService = BackendService(this)
+            val error = backendService!!.start()
+            
+            if (error.isEmpty()) {
+                Log.i(TAG, "✅ Backend 服务启动成功")
+                updateState(State.ACTIVE)
+                updateNotification("服务正在运行")
             } else {
-                Log.i(TAG, "✅ 配置文件已存在: ${configFile.absolutePath}")
+                Log.e(TAG, "❌ Backend 服务启动失败: $error")
+                updateState(State.ERROR)
+                updateNotification("服务启动失败: $error")
             }
-            
-            Log.i(TAG, "🔧 创建 SyncthingRunnable 实例...")
-            // 创建并启动 SyncthingRunnable
-            val runnable = SyncthingRunnable(this, SyncthingRunnable.Command.MAIN)
-            syncthingRunnable.set(runnable)
-            
-            Log.i(TAG, "🧵 创建并启动 Syncthing 线程...")
-            syncthingThread = Thread(runnable).apply {
-                name = "SyncthingThread"
-                start()
-            }
-            
-            Log.i(TAG, "✅ Syncthing 线程启动成功")
-            Log.i(TAG, "🆔 线程名称: ${syncthingThread?.name}")
-            Log.i(TAG, "📊 线程状态: ${syncthingThread?.state}")
-            
-            // 如果配置文件还不存在，等待 Syncthing 启动后生成（最多等待 15 秒）
-            if (!configFile.exists()) {
-                Log.i(TAG, "⏳ 等待 Syncthing 启动并生成配置文件...")
-                var waited = 0
-                val maxWait = 15000 // 15 秒
-                val checkInterval = 500 // 500ms
-                
-                while (!configFile.exists() && waited < maxWait) {
-                    Thread.sleep(checkInterval.toLong())
-                    waited += checkInterval
-                    if (waited % 2000 == 0) {
-                        Log.d(TAG, "⏳ 仍在等待配置文件生成... (已等待 ${waited}ms)")
-                    }
-                }
-                
-                if (configFile.exists()) {
-                    Log.i(TAG, "✅ Syncthing 已生成配置文件: ${configFile.absolutePath} (等待时间: ${waited}ms)")
-                } else {
-                    Log.w(TAG, "⚠️ 等待超时，配置文件仍未生成，但继续运行")
-                }
-            }
-            
-            // 启动 HTTPS API 服务器
-            startHttpsServer()
-            
-            // 更新状态为运行中
-            updateState(State.ACTIVE)
-            updateNotification("Syncthing 正在运行")
-            
         } catch (e: Exception) {
-            Log.e(TAG, "启动 Syncthing 失败", e)
+            Log.e(TAG, "❌ 启动服务失败", e)
             updateState(State.ERROR)
-            updateNotification("Syncthing 启动失败")
+            updateNotification("服务启动失败: ${e.message}")
         }
     }
 
     /**
-     * 停止 Syncthing
+     * 停止 Syncthing 和 HTTPS API 服务器
      */
     private fun stopSyncthing() {
-        Log.i(TAG, "停止 Syncthing")
+        Log.i(TAG, "停止服务")
         updateState(State.STOPPING)
-        updateNotification("正在停止 Syncthing...")
+        updateNotification("正在停止服务...")
 
         try {
-            // 停止 Syncthing 进程
-            syncthingRunnable.get()?.killSyncthing()
-            
-            // 等待线程结束
-            syncthingThread?.join(5000) // 最多等待5秒
-            
-            syncthingRunnable.set(null)
-            syncthingThread = null
-            
-            updateState(State.STOPPED)
-            
+            if (backendService != null) {
+                val error = backendService!!.stop()
+                if (error.isEmpty()) {
+                    Log.i(TAG, "✅ Backend 服务停止成功")
+                } else {
+                    Log.e(TAG, "❌ Backend 服务停止失败: $error")
+                }
+                backendService = null
+                updateState(State.STOPPED)
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "停止 Syncthing 失败", e)
+            Log.e(TAG, "停止服务失败", e)
             updateState(State.ERROR)
         } finally {
-            // 停止 HTTPS 服务器
-            stopHttpsServer()
-            
             // 停止前台服务
             stopForeground(true)
             stopSelf()
@@ -234,10 +157,10 @@ class SyncthingService : Service() {
     }
 
     /**
-     * 重启 Syncthing
+     * 重启服务
      */
     private fun restartSyncthing() {
-        Log.i(TAG, "重启 Syncthing")
+        Log.i(TAG, "重启服务")
         stopSyncthing()
         
         // 延迟启动，确保完全停止
@@ -321,9 +244,9 @@ class SyncthingService : Service() {
     fun isRunning(): Boolean = currentState == State.ACTIVE
 
     /**
-     * 获取 Syncthing 进程信息
+     * 获取服务状态信息
      */
-    fun getSyncthingInfo(): String {
+    fun getServiceInfo(): String {
         return when (currentState) {
             State.INIT -> "未启动"
             State.STARTING -> "正在启动..."
@@ -331,53 +254,6 @@ class SyncthingService : Service() {
             State.STOPPING -> "正在停止..."
             State.STOPPED -> "已停止"
             State.ERROR -> "错误状态"
-        }
-    }
-    
-    /**
-     * 启动 HTTPS API 服务器
-     */
-    private fun startHttpsServer() {
-        Log.d(TAG, "🚀 开始启动 HTTPS API 服务器...")
-        
-        try {
-            if (httpsApiController != null) {
-                Log.w(TAG, "⚠️ HTTPS 服务器已经在运行")
-                return
-            }
-            
-            Log.d(TAG, "🔧 创建 HttpsApiController 实例...")
-            // 创建并启动 HTTPS 服务器
-            httpsApiController = HttpsApiController(this)
-            Log.d(TAG, "✅ HttpsApiController 实例创建成功")
-            
-            Log.d(TAG, "🚀 调用 HttpsApiController.start()...")
-            httpsApiController?.start()
-            
-            Log.i(TAG, "✅ HTTPS API 服务器启动成功！")
-            Log.i(TAG, "📡 服务器地址: https://127.0.0.1:8443")
-            Log.i(TAG, "🌐 可用端点: /api/devices, /api/device/*/folders, /api/folder/*")
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ 启动 HTTPS 服务器失败", e)
-            Log.e(TAG, "错误详情: ${e.message}")
-            Log.e(TAG, "堆栈跟踪:")
-            e.printStackTrace()
-        }
-    }
-    
-    /**
-     * 停止 HTTPS API 服务器
-     */
-    private fun stopHttpsServer() {
-        try {
-            if (httpsApiController != null) {
-                httpsApiController?.stop()
-                httpsApiController = null
-                Log.i(TAG, "HTTPS API 服务器已停止")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "停止 HTTPS 服务器失败", e)
         }
     }
 }

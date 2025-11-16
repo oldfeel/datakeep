@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # MyData Flutter Android 客户端启动脚本
-# 用途：启动 Go 后端服务，然后启动 Flutter Android 应用
-# 注意：Android 应用需要通过局域网访问后端服务
+# 用途：启动 Flutter Android 应用
+# 注意：Android 应用使用 AAR 中的 Go backend，无需在 PC 上启动后端服务
 
 set -e
 
@@ -43,69 +43,9 @@ if ! command -v adb &> /dev/null; then
     echo "  - 或从 https://developer.android.com/studio/releases/platform-tools 下载"
 fi
 
-# 检查后端服务是否已经在运行
-echo -e "${YELLOW}🔍 检查后端服务状态...${NC}"
-if curl -k -s https://localhost:8443/api/health > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ 后端服务已在运行${NC}"
-    BACKEND_RUNNING=true
-else
-    echo -e "${YELLOW}⚠️  后端服务未运行，准备启动...${NC}"
-    BACKEND_RUNNING=false
-fi
-
-# 启动后端服务（如果未运行）
-if [ "$BACKEND_RUNNING" = false ]; then
-    echo -e "\n${BLUE}🔧 启动 Go 后端服务...${NC}"
-    cd backend/cmd
-    
-    # 检查是否有编译好的可执行文件
-    if [ -f "mydata_backend" ]; then
-        echo -e "${YELLOW}使用已编译的可执行文件...${NC}"
-        ./mydata_backend &
-        BACKEND_PID=$!
-    else
-        echo -e "${YELLOW}编译并运行后端服务...${NC}"
-        go run main.go &
-        BACKEND_PID=$!
-    fi
-    
-    cd ../..
-    
-    # 等待后端服务启动
-    echo -e "${YELLOW}⏳ 等待后端服务启动...${NC}"
-    for i in {1..30}; do
-        if curl -k -s https://localhost:8443/api/health > /dev/null 2>&1; then
-            echo -e "${GREEN}✅ 后端服务已启动${NC}"
-            break
-        fi
-        if [ $i -eq 30 ]; then
-            echo -e "${RED}❌ 后端服务启动超时${NC}"
-            kill $BACKEND_PID 2>/dev/null || true
-            exit 1
-        fi
-        sleep 1
-    done
-    
-    # 设置退出时清理后端进程
-    trap "echo -e '\n${YELLOW}🛑 停止后端服务...${NC}'; kill $BACKEND_PID 2>/dev/null || true; exit" INT TERM
-fi
-
-# 获取本机 IP 地址（用于 Android 设备访问）
-echo -e "\n${BLUE}🌐 获取本机 IP 地址...${NC}"
-LOCAL_IP=$(hostname -I | awk '{print $1}')
-if [ -z "$LOCAL_IP" ]; then
-    # 尝试其他方法获取 IP
-    LOCAL_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $7; exit}' || echo "")
-fi
-
-if [ -z "$LOCAL_IP" ]; then
-    echo -e "${YELLOW}⚠️  无法自动获取 IP 地址${NC}"
-    echo "请手动设置 Android 应用的 API 地址为: https://<你的IP>:8443/api"
-else
-    echo -e "${GREEN}✅ 本机 IP 地址: $LOCAL_IP${NC}"
-    echo -e "${YELLOW}📱 Android 应用将使用: https://$LOCAL_IP:8443/api${NC}"
-    echo -e "${YELLOW}   如果 Android 设备无法连接，请检查防火墙设置${NC}"
-fi
+# 提示：Android 应用使用 AAR 中的 Go backend
+echo -e "${GREEN}ℹ️  Android 应用使用 AAR 中的 Go backend${NC}"
+echo -e "${YELLOW}   后端服务将在应用内自动启动，无需在 PC 上启动${NC}"
 
 # 检查并安装 Flutter 依赖
 echo -e "\n${BLUE}📦 检查 Flutter 依赖...${NC}"
@@ -134,10 +74,6 @@ if command -v adb &> /dev/null; then
         read -p "是否继续尝试启动应用？(y/n) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            if [ "$BACKEND_RUNNING" = false ]; then
-                echo -e "${YELLOW}🛑 停止后端服务...${NC}"
-                kill $BACKEND_PID 2>/dev/null || true
-            fi
             exit 1
         fi
     else
@@ -151,8 +87,8 @@ fi
 
 # 启动 Flutter Android 应用
 echo -e "\n${BLUE}🚀 启动 Flutter Android 应用...${NC}"
-echo -e "${YELLOW}提示: 按 Ctrl+C 可同时停止前端和后端服务${NC}"
-echo -e "${YELLOW}注意: Android 应用需要通过局域网访问后端 (https://$LOCAL_IP:8443/api)${NC}"
+echo -e "${YELLOW}提示: 按 Ctrl+C 可停止应用${NC}"
+echo -e "${YELLOW}注意: Android 应用使用 AAR 中的 Go backend，后端服务在应用内运行${NC}"
 echo ""
 
 # 使用 flutter run 启动 Android 应用
@@ -172,11 +108,5 @@ else
     # 如果没有检测到设备，让 Flutter 自动选择或提示用户
     echo -e "${YELLOW}未检测到设备，让 Flutter 自动选择或提示选择设备${NC}"
     flutter run
-fi
-
-# 如果后端是我们启动的，退出时清理
-if [ "$BACKEND_RUNNING" = false ]; then
-    echo -e "\n${YELLOW}🛑 停止后端服务...${NC}"
-    kill $BACKEND_PID 2>/dev/null || true
 fi
 

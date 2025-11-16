@@ -8,7 +8,7 @@ part of 'device.dart';
 
 Device _$DeviceFromJson(Map<String, dynamic> json) => Device(
   id: json['deviceID'] as String,
-  name: json['name'] as String,
+  name: json['name'] as String? ?? '未知设备',
   addresses: (json['addresses'] as List<dynamic>?)
       ?.map((e) => e as String)
       .toList(),

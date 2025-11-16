@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
@@ -41,14 +42,43 @@ type DiscoveryInfo struct {
 	Addresses []string `json:"addresses"`
 }
 
+// 全局变量：存储从 Android 原生代码获取的本机 IP 地址
+var androidLocalIPs []string
+var androidLocalIPsMutex sync.Mutex
+
+// SetLocalNetworkIPs 设置本机局域网 IP 地址（从 Android 原生代码调用）
+func SetLocalNetworkIPs(ips []string) {
+	androidLocalIPsMutex.Lock()
+	defer androidLocalIPsMutex.Unlock()
+	androidLocalIPs = ips
+}
+
+// GetLocalNetworkIPs 获取本机局域网 IP 地址（供外部调用）
+func GetLocalNetworkIPs() []string {
+	androidLocalIPsMutex.Lock()
+	defer androidLocalIPsMutex.Unlock()
+	if len(androidLocalIPs) > 0 {
+		return androidLocalIPs
+	}
+	return []string{}
+}
+
 // 获取本机局域网IP地址
 func getLocalNetworkIPs() ([]string, error) {
+	// 优先使用从 Android 原生代码获取的 IP
+	androidIPs := GetLocalNetworkIPs()
+	if len(androidIPs) > 0 {
+		return androidIPs, nil
+	}
+
+	// 如果 Android IP 不可用，尝试使用 Go 的方法（在 Android 上可能会失败）
 	var localIPs []string
 
 	// 获取所有网络接口
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return nil, err
+		// 在 Android 上，这可能会因为权限问题失败，返回空列表而不是错误
+		return []string{}, nil
 	}
 
 	for _, iface := range interfaces {

@@ -58,10 +58,19 @@ flutter {
     source = "../.."
 }
 
+repositories {
+    flatDir {
+        dirs("libs")
+    }
+}
+
 dependencies {
     // HTTP 客户端
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
     // JSON 处理
     implementation("com.google.code.gson:gson:2.10.1")
+    
+    // Backend Go 绑定 (gomobile AAR)
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 }

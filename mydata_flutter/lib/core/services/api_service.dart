@@ -49,7 +49,7 @@ class ApiService {
       final response = await _httpClient.get(uri).timeout(
         const Duration(seconds: 5),
         onTimeout: () {
-          throw Exception('请求超时：后端服务可能未启动，请先启动 client 后端服务');
+          throw Exception('请求超时：后端服务可能未启动，请确保应用已启动后端服务');
         },
       );
 
@@ -94,7 +94,8 @@ class ApiService {
       if (errorStr.contains('连接被拒绝') || 
           errorStr.contains('Connection refused') ||
           errorStr.contains('SocketException')) {
-        throw Exception('无法连接到后端服务 (localhost:8443)\n\n请先启动后端服务：\ncd mydata_flutter/backend/cmd && go run main.go');
+        // Android 端使用 AAR 中的 backend，后端服务会在应用内自动启动
+        throw Exception('无法连接到后端服务 (localhost:8443)\n\n请确保应用已启动后端服务（通过 SyncthingService）');
       }
       rethrow;
     }
@@ -189,10 +190,29 @@ class ApiService {
       }
       
       // 过滤并转换设备数据，确保每个元素都是 Map
-      return deviceList
-          .where((item) => item is Map<String, dynamic>)
-          .map((json) => Device.fromJson(json as Map<String, dynamic>))
-          .toList();
+      // Device.fromJson 已经处理了 null 值安全检查
+      final devices = <Device>[];
+      for (final item in deviceList) {
+        if (item is! Map<String, dynamic>) continue;
+        
+        try {
+          // 确保 addresses 是 List（如果存在）
+          final json = Map<String, dynamic>.from(item);
+          if (json['addresses'] != null && json['addresses'] is! List) {
+            json['addresses'] = [];
+          }
+          
+          final device = Device.fromJson(json);
+          devices.add(device);
+        } catch (e) {
+          debugPrint('解析设备失败，跳过: $e');
+          debugPrint('设备数据: $item');
+          // 跳过无效的设备数据，继续处理其他设备
+          continue;
+        }
+      }
+      
+      return devices;
     } catch (e) {
       debugPrint('获取设备列表失败: $e');
       // 失败时至少返回本地设备
@@ -281,7 +301,7 @@ class ApiService {
       final errorStr = e.toString();
       if (errorStr.contains('连接被拒绝') || 
           errorStr.contains('Connection refused')) {
-        throw Exception('无法连接到后端服务\n\n请先启动 client 后端服务：\ncd client && go run main.go');
+        throw Exception('无法连接到后端服务\n\n请确保应用已启动后端服务（通过 SyncthingService）');
       }
       throw Exception('获取本地设备 ID 失败: $e');
     }

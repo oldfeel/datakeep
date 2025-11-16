@@ -26,6 +26,8 @@ type SyncthingManager struct {
 	dataPath   string
 	exePath    string
 	logFile    *os.File
+	// customExePath 允许设置自定义的可执行文件路径（用于 Android 等平台）
+	customExePath string
 }
 
 var (
@@ -62,6 +64,13 @@ func NewSyncthingManager() *SyncthingManager {
 
 // getSyncthingExecutablePath 获取 Syncthing 可执行文件路径
 func getSyncthingExecutablePath() string {
+	// 检查是否有自定义路径（通过 SetSyncthingPath 设置）
+	if syncthingManager != nil && syncthingManager.customExePath != "" {
+		if _, err := os.Stat(syncthingManager.customExePath); err == nil {
+			return syncthingManager.customExePath
+		}
+	}
+
 	projectRoot := getProjectRoot()
 
 	// 1. 优先查找 mydata_flutter/bin/syncthing
@@ -159,6 +168,15 @@ func getProjectRoot() string {
 
 // getSyncthingPaths 获取 Syncthing 配置和数据目录
 func getSyncthingPaths() (configPath, dataPath string) {
+	// 检查是否设置了 Android 数据目录
+	dataDir := os.Getenv("MYDATA_DATA_DIR")
+	if dataDir != "" {
+		// Android 环境：使用应用数据目录
+		configPath = dataDir
+		dataPath = dataDir
+		return configPath, dataPath
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
@@ -337,7 +355,29 @@ func (sm *SyncthingManager) GetDataPath() string {
 
 // GetExecutablePath 获取可执行文件路径
 func (sm *SyncthingManager) GetExecutablePath() string {
+	if sm.customExePath != "" {
+		return sm.customExePath
+	}
 	return sm.exePath
+}
+
+// SetExecutablePath 设置自定义的可执行文件路径（用于 Android 等平台）
+func (sm *SyncthingManager) SetExecutablePath(path string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.customExePath = path
+	// 如果路径已设置，更新 exePath
+	if path != "" {
+		sm.exePath = path
+	}
+}
+
+// SetDataPaths 设置配置和数据目录路径（用于 Android 等平台）
+func (sm *SyncthingManager) SetDataPaths(configPath, dataPath string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.configPath = configPath
+	sm.dataPath = dataPath
 }
 
 // WaitForAPI 等待 Syncthing API 就绪

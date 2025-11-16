@@ -79,10 +79,16 @@ func ensureCert(certFile, keyFile string) error {
 }
 
 func initZapLogger() *zap.Logger {
-	logDir := "logs"
+	// 获取数据目录（Android 环境）
+	dataDir := os.Getenv("MYDATA_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "." // 默认当前目录
+	}
+
+	logDir := filepath.Join(dataDir, "logs")
 	logFile := filepath.Join(logDir, "app.log")
 	if _, err := os.Stat(logDir); os.IsNotExist(err) {
-		os.Mkdir(logDir, 0755)
+		os.MkdirAll(logDir, 0755)
 	}
 	ljWriter := &lumberjack.Logger{
 		Filename:   logFile,
@@ -241,9 +247,17 @@ func StartServer() {
 	logger = initZapLogger()
 	logger.Info("zap + lumberjack 日志系统初始化完成")
 
+	// 获取数据目录（Android 环境）
+	dataDir := os.Getenv("MYDATA_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "." // 默认当前目录
+	}
+	logger.Info("数据目录", zap.String("path", dataDir))
+
 	// 1. 初始化 GORM 数据库
 	var err error
-	db, err = gorm.Open(sqlite.Open("mydata.db"), &gorm.Config{})
+	dbPath := filepath.Join(dataDir, "mydata.db")
+	db, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
 		logger.Fatal("failed to connect database", zap.Error(err))
 	}
@@ -363,11 +377,12 @@ func StartServer() {
 	})
 
 	// 自动生成证书
-	certFile := filepath.Join("certs", "cert.pem")
-	keyFile := filepath.Join("certs", "key.pem")
+	certDir := filepath.Join(dataDir, "certs")
+	certFile := filepath.Join(certDir, "cert.pem")
+	keyFile := filepath.Join(certDir, "key.pem")
 
 	// 创建证书目录
-	if err := os.MkdirAll("certs", 0755); err != nil {
+	if err := os.MkdirAll(certDir, 0755); err != nil {
 		logger.Fatal("创建证书目录失败", zap.Error(err))
 	}
 
