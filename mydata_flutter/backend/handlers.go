@@ -404,8 +404,13 @@ func createSyncthingFolder(folder FolderEntry) error {
 		req.Header.Set("X-API-Key", apiKey)
 	}
 
+	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
 	// 发送请求
-	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request to syncthing: %v", err)
@@ -741,159 +746,11 @@ func folderFilesHandler(c *fiber.Ctx) error {
 	return success(c, files)
 }
 
-// 代理 syncthing 事件接口，解决跨域问题
-func syncthingEventsProxyHandler(c *fiber.Ctx) error {
-	// 获取查询参数
-	since := c.Query("since", "0")
-	timeout := c.Query("timeout", "60")
-	limit := c.Query("limit", "")
-	events := c.Query("events", "")
-
+// proxySyncthingRequest 通用的 Syncthing API 代理请求方法
+// 处理所有对 Syncthing API 的请求，包括证书验证、API Key 认证等
+func proxySyncthingRequest(c *fiber.Ctx, syncthingPath string, method string, body io.Reader, headers map[string]string) error {
 	// 构建 syncthing API URL
-	syncthingURL := "https://127.0.0.1:8384/rest/events"
-	params := url.Values{}
-	params.Set("since", since)
-	params.Set("timeout", timeout)
-	if limit != "" {
-		params.Set("limit", limit)
-	}
-	if events != "" {
-		params.Set("events", events)
-	}
-
-	if len(params) > 0 {
-		syncthingURL += "?" + params.Encode()
-	}
-
-	// 创建请求
-	req, err := http.NewRequest("GET", syncthingURL, nil)
-	if err != nil {
-		return fail(c, 1005, "Failed to create request: "+err.Error())
-	}
-
-	// 添加 API Key 认证（如果需要）
-	apiKey := getApiKeyFromConfig()
-	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
-	}
-
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fail(c, 1006, "Failed to request syncthing: "+err.Error())
-	}
-	defer resp.Body.Close()
-
-	// 读取响应
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return fail(c, 1007, "Failed to read response: "+err.Error())
-	}
-
-	// 设置响应头
-	c.Set("Content-Type", "application/json")
-	c.Status(resp.StatusCode)
-
-	// 返回响应
-	return c.Send(body)
-}
-
-// 代理 syncthing 设备发现接口，解决跨域问题
-func syncthingDiscoveryProxyHandler(c *fiber.Ctx) error {
-	// 构建 syncthing API URL
-	syncthingURL := "https://127.0.0.1:8384/rest/system/discovery"
-
-	// 创建请求
-	req, err := http.NewRequest("GET", syncthingURL, nil)
-	if err != nil {
-		return fail(c, 1005, "Failed to create request: "+err.Error())
-	}
-
-	// 添加 API Key 认证（如果需要）
-	apiKey := getApiKeyFromConfig()
-	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
-	}
-
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fail(c, 1006, "Failed to request syncthing: "+err.Error())
-	}
-	defer resp.Body.Close()
-
-	// 读取响应
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return fail(c, 1007, "Failed to read response: "+err.Error())
-	}
-
-	// 设置响应头
-	c.Set("Content-Type", "application/json")
-	c.Status(resp.StatusCode)
-
-	// 返回响应
-	return c.Send(body)
-}
-
-// 代理 syncthing 设备 ID 验证接口，解决跨域问题
-func syncthingDeviceIdProxyHandler(c *fiber.Ctx) error {
-	// 获取查询参数
-	id := c.Query("id")
-	if id == "" {
-		return fail(c, 1002, "Missing id parameter")
-	}
-
-	// 构建 syncthing API URL
-	syncthingURL := fmt.Sprintf("https://127.0.0.1:8384/rest/svc/deviceid?id=%s", url.QueryEscape(id))
-
-	// 创建请求
-	req, err := http.NewRequest("GET", syncthingURL, nil)
-	if err != nil {
-		return fail(c, 1005, "Failed to create request: "+err.Error())
-	}
-
-	// 添加 API Key 认证（如果需要）
-	apiKey := getApiKeyFromConfig()
-	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
-	}
-
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fail(c, 1006, "Failed to request syncthing: "+err.Error())
-	}
-	defer resp.Body.Close()
-
-	// 读取响应
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return fail(c, 1007, "Failed to read response: "+err.Error())
-	}
-
-	// 设置响应头
-	c.Set("Content-Type", "application/json")
-	c.Status(resp.StatusCode)
-
-	// 返回响应
-	return c.Send(body)
-}
-
-// 代理 syncthing 设备配置接口（支持 GET 和 POST），解决跨域问题
-func syncthingConfigDevicesProxyHandler(c *fiber.Ctx) error {
-	// 构建 syncthing API URL
-	syncthingURL := "https://127.0.0.1:8384/rest/config/devices"
-
-	// 获取请求方法和请求体
-	method := c.Method()
-	var body io.Reader
-	if method == "POST" {
-		body = bytes.NewReader(c.Body())
-	}
+	syncthingURL := "https://127.0.0.1:8384" + syncthingPath
 
 	// 创建请求
 	req, err := http.NewRequest(method, syncthingURL, body)
@@ -901,19 +758,24 @@ func syncthingConfigDevicesProxyHandler(c *fiber.Ctx) error {
 		return fail(c, 1005, "Failed to create request: "+err.Error())
 	}
 
-	// 添加 API Key 认证（如果需要）
+	// 添加 API Key 认证
 	apiKey := getApiKeyFromConfig()
 	if apiKey != "" {
 		req.Header.Set("X-API-Key", apiKey)
 	}
 
-	// 复制请求头
-	if method == "POST" {
-		req.Header.Set("Content-Type", "application/json")
+	// 添加自定义请求头
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 
+	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
 	// 发送请求
-	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fail(c, 1006, "Failed to request syncthing: "+err.Error())
@@ -932,6 +794,76 @@ func syncthingConfigDevicesProxyHandler(c *fiber.Ctx) error {
 
 	// 返回响应
 	return c.Send(respBody)
+}
+
+// 代理 syncthing 事件接口，解决跨域问题
+func syncthingEventsProxyHandler(c *fiber.Ctx) error {
+	// 获取查询参数
+	since := c.Query("since", "0")
+	timeout := c.Query("timeout", "60")
+	limit := c.Query("limit", "")
+	events := c.Query("events", "")
+
+	// 构建查询参数
+	params := url.Values{}
+	params.Set("since", since)
+	params.Set("timeout", timeout)
+	if limit != "" {
+		params.Set("limit", limit)
+	}
+	if events != "" {
+		params.Set("events", events)
+	}
+
+	// 构建带查询参数的路径
+	path := "/rest/events"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	return proxySyncthingRequest(c, path, "GET", nil, nil)
+}
+
+// 代理 syncthing 设备发现接口，解决跨域问题
+func syncthingDiscoveryProxyHandler(c *fiber.Ctx) error {
+	// 使用通用代理方法
+	err := proxySyncthingRequest(c, "/rest/system/discovery", "GET", nil, nil)
+	if err != nil {
+		return err
+	}
+
+	// 记录响应内容用于调试（如果需要）
+	// 注意：由于 proxySyncthingRequest 已经发送了响应，这里无法再读取响应体
+	// 如果需要调试日志，可以在 proxySyncthingRequest 中添加回调参数
+	return nil
+}
+
+// 代理 syncthing 设备 ID 验证接口，解决跨域问题
+func syncthingDeviceIdProxyHandler(c *fiber.Ctx) error {
+	// 获取查询参数
+	id := c.Query("id")
+	if id == "" {
+		return fail(c, 1002, "Missing id parameter")
+	}
+
+	// 构建带查询参数的路径
+	path := fmt.Sprintf("/rest/svc/deviceid?id=%s", url.QueryEscape(id))
+	return proxySyncthingRequest(c, path, "GET", nil, nil)
+}
+
+// 代理 syncthing 设备配置接口（支持 GET 和 POST），解决跨域问题
+func syncthingConfigDevicesProxyHandler(c *fiber.Ctx) error {
+	// 获取请求方法和请求体
+	method := c.Method()
+	var body io.Reader
+	headers := make(map[string]string)
+
+	if method == "POST" {
+		body = bytes.NewReader(c.Body())
+		headers["Content-Type"] = "application/json"
+	}
+
+	return proxySyncthingRequest(c, "/rest/config/devices", method, body, headers)
 }
 
 // Syncthing 相关 API 调用
@@ -1302,11 +1234,26 @@ func getDeviceDiscovery() (map[string]interface{}, error) {
 		return nil, err
 	}
 
+	// 记录响应内容用于调试
+	if len(body) > 0 && len(body) < 2000 {
+		fmt.Printf("getDeviceDiscovery 响应体: %s\n", string(body))
+	} else if len(body) > 0 {
+		bodyPreview := string(body)
+		if len(bodyPreview) > 500 {
+			bodyPreview = bodyPreview[:500] + "..."
+		}
+		fmt.Printf("getDeviceDiscovery 响应体预览: %s (总长度: %d)\n", bodyPreview, len(body))
+	} else {
+		fmt.Printf("getDeviceDiscovery 返回空响应\n")
+	}
+
 	var discovery map[string]interface{}
 	if err := json.Unmarshal(body, &discovery); err != nil {
+		fmt.Printf("getDeviceDiscovery JSON 解析失败: %v, 响应体: %s\n", err, string(body))
 		return nil, err
 	}
 
+	fmt.Printf("getDeviceDiscovery 解析成功，设备数量: %d\n", len(discovery))
 	return discovery, nil
 }
 
@@ -1392,8 +1339,13 @@ func deleteSyncthingFolder(folderID string) error {
 		req.Header.Set("X-API-Key", apiKey)
 	}
 
+	// 使用 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
 	// 发送请求
-	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request to syncthing: %v", err)
