@@ -33,8 +33,81 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
+# 第一步：编译生成可执行文件
+echo -e "\n${BLUE}📦 第一步：编译生成可执行文件${NC}"
+echo "=============================="
+
+# 确保使用正确的 Go 版本
+export PATH=/usr/local/go/bin:$PATH
+
+# 检查 backend 是否已编译
+BACKEND_BINARY="$SCRIPT_DIR/bin/mydata_backend"
+if [ ! -f "$BACKEND_BINARY" ]; then
+    echo -e "${YELLOW}Backend 未编译，开始编译...${NC}"
+    
+    # 检查 backend 目录
+    if [ ! -d "$SCRIPT_DIR/backend" ]; then
+        echo -e "${RED}❌ backend 目录不存在${NC}"
+        exit 1
+    fi
+    
+    # 编译 backend
+    cd "$SCRIPT_DIR/backend"
+    go build -o cmd/mydata_backend ./cmd
+    if [ -f "cmd/mydata_backend" ]; then
+        mkdir -p "$SCRIPT_DIR/bin"
+        cp cmd/mydata_backend "$BACKEND_BINARY"
+        chmod +x "$BACKEND_BINARY"
+        echo -e "${GREEN}✅ Backend 编译成功: $BACKEND_BINARY${NC}"
+    else
+        echo -e "${RED}❌ Backend 编译失败${NC}"
+        exit 1
+    fi
+    cd "$SCRIPT_DIR"
+else
+    echo -e "${GREEN}✅ Backend 已编译: $BACKEND_BINARY${NC}"
+fi
+
+# 检查 Syncthing 是否已编译
+SYNCTHING_BINARY="$SCRIPT_DIR/bin/syncthing"
+SYNCTHING_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/syncthing"
+
+if [ ! -f "$SYNCTHING_BINARY" ]; then
+    echo -e "${YELLOW}Syncthing 未编译，开始编译...${NC}"
+    
+    # 检查 syncthing 目录
+    if [ ! -d "$SYNCTHING_DIR" ]; then
+        echo -e "${RED}❌ Syncthing 目录不存在: $SYNCTHING_DIR${NC}"
+        exit 1
+    fi
+    
+    # 编译 Syncthing
+    cd "$SYNCTHING_DIR"
+    if [ ! -f "build.go" ]; then
+        echo -e "${RED}❌ build.go 不存在${NC}"
+        exit 1
+    fi
+    
+    mkdir -p "$SCRIPT_DIR/bin"
+    go run build.go -version "v1.28.1-mydata" -no-upgrade build syncthing
+    
+    if [ -f "syncthing" ]; then
+        mv syncthing "$SYNCTHING_BINARY"
+        chmod +x "$SYNCTHING_BINARY"
+        echo -e "${GREEN}✅ Syncthing 编译成功: $SYNCTHING_BINARY${NC}"
+    else
+        echo -e "${RED}❌ Syncthing 编译失败${NC}"
+        exit 1
+    fi
+    cd "$SCRIPT_DIR"
+else
+    echo -e "${GREEN}✅ Syncthing 已编译: $SYNCTHING_BINARY${NC}"
+fi
+
+echo -e "${GREEN}✅ 可执行文件准备完成${NC}"
+
 # 检查后端服务是否已经在运行
-echo -e "${YELLOW}🔍 检查后端服务状态...${NC}"
+echo -e "\n${YELLOW}🔍 检查后端服务状态...${NC}"
 if curl -k -s https://localhost:8443/api/health > /dev/null 2>&1; then
     echo -e "${GREEN}✅ 后端服务已在运行${NC}"
     BACKEND_RUNNING=true
@@ -46,20 +119,16 @@ fi
 # 启动后端服务（如果未运行）
 if [ "$BACKEND_RUNNING" = false ]; then
     echo -e "\n${BLUE}🔧 启动 Go 后端服务...${NC}"
-    cd backend/cmd
     
-    # 检查是否有编译好的可执行文件
-    if [ -f "mydata_backend" ]; then
-        echo -e "${YELLOW}使用已编译的可执行文件...${NC}"
-        ./mydata_backend &
+    # 使用 bin 目录下的可执行文件
+    if [ -f "$BACKEND_BINARY" ]; then
+        echo -e "${GREEN}使用已编译的可执行文件: $BACKEND_BINARY${NC}"
+        "$BACKEND_BINARY" &
         BACKEND_PID=$!
     else
-        echo -e "${YELLOW}编译并运行后端服务...${NC}"
-        go run main.go &
-        BACKEND_PID=$!
+        echo -e "${RED}❌ 未找到 backend 可执行文件: $BACKEND_BINARY${NC}"
+        exit 1
     fi
-    
-    cd ../..
     
     # 设置退出时清理后端进程
     trap "echo -e '\n${YELLOW}🛑 停止后端服务...${NC}'; kill $BACKEND_PID 2>/dev/null || true; exit" INT TERM

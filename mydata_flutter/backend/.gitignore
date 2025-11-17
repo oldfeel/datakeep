@@ -4,3 +4,4 @@ logs
 mydata.db-journal
 certs
 mydata-api.exe
+cmd/mydata_backend

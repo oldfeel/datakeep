@@ -126,3 +126,26 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# Install backend and syncthing executables from bin/ directory
+# These will be bundled with the application for desktop use
+set(BIN_DIR "${CMAKE_SOURCE_DIR}/../bin")
+if(EXISTS "${BIN_DIR}/mydata_backend")
+  install(FILES "${BIN_DIR}/mydata_backend"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/bin"
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                GROUP_READ GROUP_EXECUTE
+                WORLD_READ WORLD_EXECUTE
+    COMPONENT Runtime)
+  message(STATUS "Found mydata_backend, will bundle with application")
+endif()
+
+if(EXISTS "${BIN_DIR}/syncthing")
+  install(FILES "${BIN_DIR}/syncthing"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/bin"
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                GROUP_READ GROUP_EXECUTE
+                WORLD_READ WORLD_EXECUTE
+    COMPONENT Runtime)
+  message(STATUS "Found syncthing, will bundle with application")
+endif()
