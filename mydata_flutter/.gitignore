@@ -48,3 +48,6 @@ app.*.map.json
 /bin/syncthing
 /syncthing
 /bin/mydata_backend
+
+mydata.db
+mydata.db-journal

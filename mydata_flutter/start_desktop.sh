@@ -105,34 +105,7 @@ else
 fi
 
 echo -e "${GREEN}✅ 可执行文件准备完成${NC}"
-
-# 检查后端服务是否已经在运行
-echo -e "\n${YELLOW}🔍 检查后端服务状态...${NC}"
-if curl -k -s https://localhost:8443/api/health > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ 后端服务已在运行${NC}"
-    BACKEND_RUNNING=true
-else
-    echo -e "${YELLOW}⚠️  后端服务未运行，准备启动...${NC}"
-    BACKEND_RUNNING=false
-fi
-
-# 启动后端服务（如果未运行）
-if [ "$BACKEND_RUNNING" = false ]; then
-    echo -e "\n${BLUE}🔧 启动 Go 后端服务...${NC}"
-    
-    # 使用 bin 目录下的可执行文件
-    if [ -f "$BACKEND_BINARY" ]; then
-        echo -e "${GREEN}使用已编译的可执行文件: $BACKEND_BINARY${NC}"
-        "$BACKEND_BINARY" &
-        BACKEND_PID=$!
-    else
-        echo -e "${RED}❌ 未找到 backend 可执行文件: $BACKEND_BINARY${NC}"
-        exit 1
-    fi
-    
-    # 设置退出时清理后端进程
-    trap "echo -e '\n${YELLOW}🛑 停止后端服务...${NC}'; kill $BACKEND_PID 2>/dev/null || true; exit" INT TERM
-fi
+echo -e "${YELLOW}ℹ️  Backend 服务将由 Flutter 应用自动启动${NC}"
 
 # 检查并安装 Flutter 依赖
 echo -e "\n${BLUE}📦 检查 Flutter 依赖...${NC}"
@@ -181,10 +154,4 @@ echo -e "${YELLOW}提示: 按 Ctrl+C 可同时停止前端和后端服务${NC}"
 echo ""
 
 flutter run -d $PLATFORM
-
-# 如果后端是我们启动的，退出时清理
-if [ "$BACKEND_RUNNING" = false ]; then
-    echo -e "\n${YELLOW}🛑 停止后端服务...${NC}"
-    kill $BACKEND_PID 2>/dev/null || true
-fi
 
