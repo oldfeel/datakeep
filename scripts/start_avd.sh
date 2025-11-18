@@ -7,9 +7,7 @@ set -euo pipefail
 ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
 EMULATOR_BIN="${EMULATOR_BIN:-${ANDROID_SDK_ROOT}/emulator/emulator}"
 DEFAULT_AVD="${DEFAULT_AVD:-Pixel_Tablet}"
-DEFAULT_AVD_ARGS="${DEFAULT_AVD_ARGS:-"-no-snapshot-load -gpu swiftshader_indirect"}"
-
-read -r -a DEFAULT_ARGS <<< "$DEFAULT_AVD_ARGS"
+DEFAULT_AVD_ARGS="${DEFAULT_AVD_ARGS:-}"
 
 if [[ ! -x "$EMULATOR_BIN" ]]; then
   echo "未找到 emulator 可执行文件: $EMULATOR_BIN" >&2
@@ -24,10 +22,23 @@ else
   shift || true
 fi
 
-if [[ ${#DEFAULT_ARGS[@]} -gt 0 ]]; then
-  echo "默认附加参数: ${DEFAULT_ARGS[*]}"
+# 构建启动参数
+EMULATOR_ARGS=(-avd "$AVD_NAME")
+
+# 如果有默认参数，添加到启动参数中
+if [[ -n "$DEFAULT_AVD_ARGS" ]]; then
+  read -r -a DEFAULT_ARGS <<< "$DEFAULT_AVD_ARGS"
+  if [[ ${#DEFAULT_ARGS[@]} -gt 0 ]]; then
+    echo "默认附加参数: ${DEFAULT_ARGS[*]}"
+    EMULATOR_ARGS+=("${DEFAULT_ARGS[@]}")
+  fi
+fi
+
+# 添加用户传入的其他参数
+if [[ $# -gt 0 ]]; then
+  EMULATOR_ARGS+=("$@")
 fi
 
 echo "正在启动模拟器: $AVD_NAME"
-"$EMULATOR_BIN" -avd "$AVD_NAME" "${DEFAULT_ARGS[@]}" "$@"
+"$EMULATOR_BIN" "${EMULATOR_ARGS[@]}"
 
