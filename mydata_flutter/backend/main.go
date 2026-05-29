@@ -155,8 +155,8 @@ func syncEventsToDB() {
 		logger.Debug("开始请求 Syncthing 事件", zap.String("url", eventsURL))
 		resp, err := client.Do(req)
 		if err != nil {
-			logger.Error("请求 Syncthing 事件失败", zap.Error(err), zap.String("url", eventsURL))
-			time.Sleep(5 * time.Second)
+			logger.Debug("Syncthing 未就绪", zap.Error(err))
+			time.Sleep(10 * time.Second)
 			continue
 		}
 		logger.Debug("成功连接 Syncthing 事件接口", zap.String("url", eventsURL))
@@ -262,22 +262,16 @@ func StartServer() {
 		logger.Fatal("failed to connect database", zap.Error(err))
 	}
 	// 自动迁移设备表和文件夹表
-	if err := db.AutoMigrate(&File{}, &DeviceInfo{}, &FolderInfo{}); err != nil {
+	if err := db.AutoMigrate(&DeviceInfo{}, &FolderInfo{}); err != nil {
 		logger.Fatal("auto migrate failed", zap.Error(err))
 	}
 
-	// 2. 启动事件同步 goroutine
+	// 启动事件同步 goroutine
 	go syncEventsToDB()
 
 	// 获取 config.xml 路径
 	configPath = getConfigPath()
 	logger.Info("Syncthing config.xml", zap.String("path", configPath))
-
-	// 异步启动索引
-	logger.Info("启动异步索引...")
-	go func() {
-		loadAndIndex()
-	}()
 
 	// 监听 config.xml 变化
 	go watchConfig()
@@ -304,34 +298,9 @@ func StartServer() {
 		},
 	})
 
-	// 添加中间件来检测请求来源
+	// 检测请求来源
 	app.Use(func(c *fiber.Ctx) error {
-		// 检测是否为本地请求
-		clientIP := c.IP()
-		userAgent := c.Get("User-Agent", "")
-		referer := c.Get("Referer", "")
-		origin := c.Get("Origin", "")
-
-		// 判断是否为本地请求
-		isLocalRequest := clientIP == "127.0.0.1" ||
-			clientIP == "localhost" ||
-			clientIP == "::1" ||
-			strings.Contains(userAgent, "Wails") ||
-			strings.Contains(referer, "wails.localhost") ||
-			strings.Contains(origin, "wails.localhost")
-
-		// 将判断结果存储在上下文中
-		c.Locals("isLocalRequest", isLocalRequest)
-		c.Locals("clientIP", clientIP)
-		c.Locals("userAgent", userAgent)
-
-		logger.Info("请求来源检测",
-			zap.String("path", c.Path()),
-			zap.String("clientIP", clientIP),
-			zap.String("userAgent", userAgent),
-			zap.Bool("isLocalRequest", isLocalRequest),
-		)
-
+		c.Locals("isLocalRequest", c.IP() == "127.0.0.1" || c.IP() == "localhost" || c.IP() == "::1")
 		return c.Next()
 	})
 
@@ -390,10 +359,10 @@ func StartServer() {
 		logger.Fatal("自动生成证书失败", zap.Error(err))
 	}
 
-	// 启动 HTTPS 服务（用于本机和局域网访问）
+	// 启动 HTTPS 服务（本机和局域网设备访问）
 	logger.Info("启动 HTTPS API 服务", zap.String("port", "8443"))
 	logger.Info("HTTPS 服务器地址", zap.String("url", "https://localhost:8443"))
-	logger.Info("用途: 本机和局域网设备访问（Android 需要 HTTPS）")
+	logger.Info("用途: 本机和局域网设备访问（Flutter 支持自签名证书）")
 	logger.Info("")
 	logger.Info("可用的 API 端点:")
 	logger.Info("  - GET    /api/folder/:folderId")

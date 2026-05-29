@@ -366,21 +366,19 @@ class ApiService {
       
       final response = await _get(endpoint);
       
-      // 处理 client 后端响应格式
-      List<dynamic> fileList;
-      if (response.containsKey('code') && response['code'] == 0) {
-        fileList = response['data'] as List<dynamic>? ?? [];
-      } else if (response.containsKey('list')) {
-        fileList = response['list'] as List<dynamic>;
-      } else if (response.containsKey('data')) {
-        fileList = response['data'] is List 
-            ? response['data'] as List<dynamic>
-            : [response['data']];
-      } else {
-        fileList = [];
+      if (response.containsKey('code') && response['code'] != 0) {
+        debugPrint('获取文件夹文件列表失败: ${response['data']}');
+        return [];
       }
       
-      return fileList.cast<Map<String, dynamic>>();
+      List<dynamic> fileList;
+      if (response['data'] is List) {
+        fileList = response['data'] as List<dynamic>;
+      } else {
+        return [];
+      }
+      
+      return fileList.whereType<Map<String, dynamic>>().toList();
     } catch (e) {
       debugPrint('获取文件夹文件列表失败: $e');
       return [];

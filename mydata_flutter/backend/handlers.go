@@ -678,72 +678,17 @@ func updateSyncthingFolderSharing(folderID string, sharedDevices []string) error
 func folderFilesHandler(c *fiber.Ctx) error {
 	folderId := c.Params("folderId")
 	path := c.Query("path", "")
-
-	// URL解码folderId，处理中文字符
-	decodedFolderId, err := url.QueryUnescape(folderId)
-	if err != nil {
-		fmt.Printf("URL解码失败: %v\n", err)
-		decodedFolderId = folderId // 解码失败时使用原始值
+	decodedFolderId, _ := url.QueryUnescape(folderId)
+	if decodedFolderId == "" {
+		decodedFolderId = folderId
 	}
 
-	fmt.Printf("=== folderFilesHandler 开始 ===\n")
-	fmt.Printf("原始 folderId: %s\n", folderId)
-	fmt.Printf("解码后 folderId: %s\n", decodedFolderId)
-	fmt.Printf("原始 path: %s\n", path)
-
-	path = filepath.Clean(path)
-	fmt.Printf("标准化后 path: %s\n", path)
-
-	var files []File
-	if path == "" || path == "." {
-		// 查询根目录：只显示不包含路径分隔符的文件和目录
-		query := "%" + string(filepath.Separator) + "%"
-		fmt.Printf("查询根目录，SQL条件: folder_id = %s AND path NOT LIKE %s\n", decodedFolderId, query)
-		err = db.Where("folder_id = ? AND path NOT LIKE ?", decodedFolderId, query).Find(&files).Error
-	} else {
-		// 查询子目录：只显示指定路径下的直接子文件和子目录
-		// 例如：path="云面签"时，只显示"云面签/文件名"或"云面签/目录名"
-		prefix := path + string(filepath.Separator)
-		// 排除更深层的路径，如"云面签/子目录/文件"
-		excludePattern := prefix + "%" + string(filepath.Separator) + "%"
-		fmt.Printf("查询子目录，SQL条件: folder_id = %s AND path LIKE %s AND path NOT LIKE %s\n", decodedFolderId, prefix+"%", excludePattern)
-		err = db.Where("folder_id = ? AND path LIKE ? AND path NOT LIKE ?", decodedFolderId, prefix+"%", excludePattern).Find(&files).Error
+	syncthingPath := "/rest/db/browse?folder=" + url.QueryEscape(decodedFolderId)
+	if path != "" {
+		syncthingPath += "&path=" + url.QueryEscape(path)
 	}
 
-	if err != nil {
-		fmt.Printf("数据库查询失败: %v\n", err)
-		return fail(c, 1005, "数据库查询失败: "+err.Error())
-	}
-
-	fmt.Printf("查询结果数量: %d\n", len(files))
-	if len(files) > 0 {
-		fmt.Printf("前3个文件示例:\n")
-		for i, file := range files {
-			if i >= 3 {
-				break
-			}
-			fmt.Printf("  - ID: %d, Path: %s, Name: %s, IsDir: %t\n", file.ID, file.Path, file.Name, file.IsDir)
-		}
-	} else {
-		var totalCount int64
-		db.Model(&File{}).Where("folder_id = ?", decodedFolderId).Count(&totalCount)
-		fmt.Printf("该文件夹在数据库中的总文件数: %d\n", totalCount)
-		var allFolders []File
-		db.Select("DISTINCT folder_id").Find(&allFolders)
-		fmt.Printf("数据库中的所有文件夹ID:\n")
-		for _, f := range allFolders {
-			fmt.Printf("  - %s\n", f.FolderID)
-		}
-		var sampleFiles []File
-		db.Where("folder_id = ?", decodedFolderId).Limit(5).Find(&sampleFiles)
-		fmt.Printf("该文件夹的前5个文件:\n")
-		for _, file := range sampleFiles {
-			fmt.Printf("  - ID: %d, Path: %s, Name: %s, IsDir: %t\n", file.ID, file.Path, file.Name, file.IsDir)
-		}
-	}
-
-	fmt.Printf("=== folderFilesHandler 结束 ===\n")
-	return success(c, files)
+	return proxySyncthingRequest(c, syncthingPath, "GET", nil, nil)
 }
 
 // proxySyncthingRequest 通用的 Syncthing API 代理请求方法

@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"context"
 	"crypto/tls"
 	"encoding/json"
 	"encoding/xml"
@@ -25,10 +24,12 @@ import (
 
 // 全局变量声明
 var (
-	db         *gorm.DB
-	configPath string
-	folders    []FolderEntry
-	mu         sync.Mutex
+	db          *gorm.DB
+	configPath  string
+	folders     []FolderEntry
+	mu          sync.Mutex
+	cachedKey   string
+	cachedKeyMu sync.RWMutex
 )
 
 // 结构体定义
@@ -69,16 +70,6 @@ type Device struct {
 
 type DevicesConfig struct {
 	Devices []Device `json:"devices"`
-}
-
-type File struct {
-	ID       uint   `gorm:"primaryKey" json:"id"`
-	FolderID string `gorm:"column:folder_id" json:"folderId"`
-	Path     string `json:"path"`
-	Name     string `json:"name"`
-	Size     int64  `json:"size"`
-	ModTime  int64  `json:"modTime"`
-	IsDir    bool   `json:"isDir"`
 }
 
 // 设备表
@@ -321,145 +312,46 @@ func getConfigPath() string {
 }
 
 func getApiKeyFromConfig() string {
-	logger.Info("获取配置文件路径...")
+	cachedKeyMu.RLock()
+	if cachedKey != "" {
+		cachedKeyMu.RUnlock()
+		return cachedKey
+	}
+	cachedKeyMu.RUnlock()
+
+	cachedKeyMu.Lock()
+	defer cachedKeyMu.Unlock()
+	if cachedKey != "" {
+		return cachedKey
+	}
+
 	configPath := getConfigPath()
-	logger.Info("配置文件路径", zap.String("path", configPath))
 	type Gui struct {
 		APIKey string `xml:"apikey"`
 	}
 	type Config struct {
 		Gui Gui `xml:"gui"`
 	}
-	logger.Info("开始读取配置文件...")
 	data, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		logger.Warn("读取配置文件失败", zap.Error(err))
-		return "" // 失败时用空
+		return ""
 	}
-	logger.Info("配置文件读取成功", zap.Int("size", len(data)))
 	var cfg Config
-	logger.Info("开始解析 XML...")
-	err = xml.Unmarshal(data, &cfg)
-	if err != nil {
+	if err := xml.Unmarshal(data, &cfg); err != nil {
 		logger.Warn("解析 XML 失败", zap.Error(err))
 		return ""
 	}
-	if cfg.Gui.APIKey == "" {
-		logger.Info("配置文件中未找到 API Key")
-		return ""
+	if cfg.Gui.APIKey != "" {
+		cachedKey = cfg.Gui.APIKey
 	}
-	// 打印 API Key 的前 10 个字符用于调试（不打印完整 key 以保护安全）
-	keyPreview := cfg.Gui.APIKey
-	if len(keyPreview) > 10 {
-		keyPreview = keyPreview[:10] + "..."
-	}
-	logger.Info("成功获取 API Key", zap.Int("length", len(cfg.Gui.APIKey)), zap.String("preview", keyPreview))
-	return cfg.Gui.APIKey
+	return cachedKey
 }
 
-func loadAndIndex() {
-	mu.Lock()
-	defer mu.Unlock()
-
-	logger.Info("=== 开始加载和索引 ===")
-
-	// 先检查 Syncthing 是否运行
-	logger.Info("步骤 0: 检查 Syncthing 服务状态...")
-	if !isSyncthingRunning() {
-		logger.Info("Syncthing 服务未运行，尝试启动...")
-		// 尝试启动 Syncthing
-		mgr := GetSyncthingManager()
-		if err := mgr.Start(); err != nil {
-			logger.Warn("启动 Syncthing 失败，使用 config.xml", zap.Error(err))
-			logger.Info("步骤 1: 从 config.xml 加载文件夹配置...")
-			loadFoldersFromConfig()
-			if len(folders) == 0 {
-				logger.Warn("从 config.xml 加载后文件夹列表仍为空，请检查配置文件")
-				logger.Info("=== 加载和索引完成（无文件夹） ===")
-				return
-			} else {
-				logger.Info("从 config.xml 成功加载文件夹", zap.Int("count", len(folders)))
-			}
-		} else {
-			logger.Info("Syncthing 启动成功，等待 API 就绪...")
-			// 等待 Syncthing API 就绪（最多等待 10 秒）
-			if err := mgr.WaitForAPI(10 * time.Second); err != nil {
-				logger.Warn("等待 Syncthing API 就绪失败，使用 config.xml", zap.Error(err))
-				loadFoldersFromConfig()
-				if len(folders) == 0 {
-					logger.Warn("从 config.xml 加载后文件夹列表仍为空")
-					logger.Info("=== 加载和索引完成（无文件夹） ===")
-					return
-				} else {
-					logger.Info("从 config.xml 成功加载文件夹", zap.Int("count", len(folders)))
-				}
-			} else {
-				logger.Info("Syncthing API 已就绪，从 API 获取文件夹配置...")
-				// 从 Syncthing API 获取文件夹配置
-				syncthingFolders, err := loadFoldersFromSyncthing()
-				if err != nil {
-					logger.Warn("从 Syncthing API 获取文件夹失败，回退到 config.xml", zap.Error(err))
-					loadFoldersFromConfig()
-					if len(folders) == 0 {
-						logger.Warn("从 config.xml 加载后文件夹列表仍为空")
-						logger.Info("=== 加载和索引完成（无文件夹） ===")
-						return
-					} else {
-						logger.Info("从 config.xml 成功加载文件夹", zap.Int("count", len(folders)))
-					}
-				} else {
-					folders = syncthingFolders
-					logger.Info("从 Syncthing API 获取到同步文件夹", zap.Int("count", len(folders)))
-					for _, folder := range folders {
-						logger.Info("同步文件夹", zap.String("id", folder.ID), zap.String("path", folder.Path), zap.Strings("sharedDevices", folder.SharedDevices))
-					}
-				}
-			}
-		}
-	} else {
-		logger.Info("Syncthing 服务正在运行")
-		// 从 Syncthing API 获取完整的文件夹配置
-		logger.Info("步骤 1: 尝试从 Syncthing API 获取文件夹配置...")
-		syncthingFolders, err := loadFoldersFromSyncthing()
-		if err != nil {
-			logger.Warn("从 Syncthing API 获取文件夹失败，回退到 config.xml", zap.Error(err))
-			// 回退到从 config.xml 加载
-			logger.Info("步骤 2: 从 config.xml 加载文件夹配置...")
-			loadFoldersFromConfig()
-			// 确保从 config.xml 加载成功
-			if len(folders) == 0 {
-				logger.Warn("从 config.xml 加载后文件夹列表仍为空，请检查配置文件")
-				logger.Info("=== 加载和索引完成（无文件夹） ===")
-				return
-			} else {
-				logger.Info("从 config.xml 成功加载文件夹", zap.Int("count", len(folders)))
-			}
-		} else {
-			folders = syncthingFolders
-			logger.Info("从 Syncthing API 获取到同步文件夹", zap.Int("count", len(folders)))
-			for _, folder := range folders {
-				logger.Info("同步文件夹", zap.String("id", folder.ID), zap.String("path", folder.Path), zap.Strings("sharedDevices", folder.SharedDevices))
-			}
-		}
-	}
-
-	// 清空旧索引
-	logger.Info("步骤 3: 清空旧索引...")
-	if result := db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&File{}); result.Error != nil {
-		logger.Error("清空旧索引失败", zap.Error(result.Error))
-	} else {
-		logger.Info("清空旧索引成功", zap.Int64("deleted", result.RowsAffected))
-	}
-
-	// 遍历所有同步文件夹
-	logger.Info("步骤 4: 开始遍历和索引文件夹", zap.Int("total", len(folders)))
-	for i, folder := range folders {
-		logger.Info("开始索引文件夹", zap.Int("index", i+1), zap.Int("total", len(folders)), zap.String("id", folder.ID), zap.String("path", folder.Path))
-		walkAndIndex(folder)
-		logger.Info("完成索引文件夹", zap.Int("index", i+1), zap.Int("total", len(folders)), zap.String("id", folder.ID))
-	}
-
-	logger.Info("=== 加载和索引完成 ===")
+func resetApiKeyCache() {
+	cachedKeyMu.Lock()
+	cachedKey = ""
+	cachedKeyMu.Unlock()
 }
 
 // 展开路径中的 ~ 符号
@@ -506,67 +398,6 @@ func expandPath(path string) string {
 }
 
 // 检查 Syncthing 是否正在运行
-func isSyncthingRunning() bool {
-	logger.Info("检查 Syncthing 状态", zap.String("url", "https://127.0.0.1:8384/rest/system/status"))
-
-	// 使用 context 控制超时
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://127.0.0.1:8384/rest/system/status", nil)
-	if err != nil {
-		logger.Error("创建请求失败", zap.Error(err))
-		return false
-	}
-
-	// 添加 API Key（如果存在）
-	logger.Info("开始获取 API Key...")
-	apiKey := getApiKeyFromConfig()
-	logger.Info("API Key 获取完成", zap.Bool("hasKey", apiKey != ""), zap.Int("keyLength", len(apiKey)))
-	if apiKey != "" {
-		// 根据 Syncthing 文档，可以使用 X-API-Key 或 Authorization: Bearer
-		// 优先使用 X-API-Key
-		req.Header.Set("X-API-Key", apiKey)
-		// 同时设置 Authorization 头作为备选
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-		logger.Info("已设置 API Key", zap.Int("length", len(apiKey)))
-	} else {
-		logger.Info("未找到 API Key，使用无认证请求")
-	}
-
-	// 创建 HTTPS 客户端，跳过证书验证（Syncthing 使用自签名证书）
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{Transport: tr}
-
-	logger.Info("发送 HTTP 请求...")
-	startTime := time.Now()
-	resp, err := client.Do(req)
-	duration := time.Since(startTime)
-	if err != nil {
-		logger.Warn("连接 Syncthing API 失败", zap.Error(err), zap.Duration("duration", duration))
-		return false
-	}
-	defer resp.Body.Close()
-	logger.Info("Syncthing API 响应", zap.Int("statusCode", resp.StatusCode), zap.Duration("duration", duration))
-
-	// 403 可能表示 API Key 不正确，但 Syncthing 正在运行
-	// 200 表示成功
-	// 其他状态码表示 Syncthing 可能未运行或有问题
-	if resp.StatusCode == 200 {
-		return true
-	} else if resp.StatusCode == 403 {
-		// 403 表示 API Key 不正确，但 Syncthing 正在运行
-		// 读取响应体查看具体错误
-		body, _ := ioutil.ReadAll(resp.Body)
-		logger.Warn("Syncthing API 返回 403（API Key 可能不正确）", zap.String("response", string(body)))
-		// 即使 API Key 不正确，也认为 Syncthing 正在运行（因为能收到响应）
-		return true
-	}
-	return false
-}
-
 // 从 Syncthing API 加载文件夹配置
 func loadFoldersFromSyncthing() ([]FolderEntry, error) {
 	// 构建 syncthing API URL
@@ -698,62 +529,7 @@ func getString(m map[string]interface{}, key string) string {
 	return ""
 }
 
-func walkAndIndex(folder FolderEntry) {
-	root := expandPath(folder.Path)
-	log.Printf("开始索引文件夹: [%s] %s (展开后: %s)", folder.ID, folder.Path, root)
-
-	// 检查路径是否存在
-	if _, err := os.Stat(root); os.IsNotExist(err) {
-		log.Printf("警告: 文件夹路径不存在: %s", root)
-		return
-	}
-
-	log.Printf("开始遍历文件夹: %s", root)
-	fileCount := 0
-	startTime := time.Now()
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			fmt.Printf("跳过文件 %s (错误: %v)\n", path, err)
-			return nil
-		}
-
-		// 计算相对路径
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			fmt.Printf("计算相对路径失败 %s: %v\n", path, err)
-			return nil
-		}
-
-		if rel == "." {
-			return nil
-		}
-
-		file := File{
-			FolderID: folder.ID,
-			Path:     rel,
-			Name:     info.Name(),
-			Size:     info.Size(),
-			ModTime:  info.ModTime().Unix(),
-			IsDir:    info.IsDir(),
-		}
-
-		if result := db.Create(&file); result.Error != nil {
-			fmt.Printf("插入文件失败 %s: %v\n", rel, result.Error)
-		} else {
-			fileCount++
-			if fileCount%100 == 0 {
-				fmt.Printf("已索引 %d 个文件...\n", fileCount)
-			}
-		}
-		return nil
-	})
-
-	duration := time.Since(startTime)
-	log.Printf("文件夹 [%s] 索引完成，共 %d 个文件，耗时: %v", folder.ID, fileCount, duration)
-}
-
 func watchConfig() {
-	// 监听 config.xml 变化，自动重新索引
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Printf("创建文件监听器失败: %v", err)
@@ -774,14 +550,12 @@ func watchConfig() {
 				return
 			}
 			if event.Op&fsnotify.Write == fsnotify.Write && filepath.Base(event.Name) == filepath.Base(configPath) {
-				log.Println("检测到 config.xml 变更，重新索引...")
-				loadAndIndex()
+				resetApiKeyCache()
 			}
-		case err, ok := <-watcher.Errors:
+		case _, ok := <-watcher.Errors:
 			if !ok {
 				return
 			}
-			log.Printf("文件监听错误: %v", err)
 		}
 	}
 }

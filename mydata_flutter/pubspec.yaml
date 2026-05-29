@@ -50,6 +50,10 @@ dependencies:
   
   # 路由管理
   go_router: ^16.2.0
+
+  # HTTP 服务器（替代 Go backend）
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
   
   # 国际化
   flutter_localizations:

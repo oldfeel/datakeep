@@ -62,7 +62,6 @@ class NativeService {
   /// 获取 API 基础 URL
   static Future<String> getApiBaseUrl() async {
     if (_isDesktop) {
-      // 桌面端：使用 client 后端的 API 地址
       return 'https://localhost:8443/api';
     } else {
       // 移动端：使用 Platform Channel
@@ -339,7 +338,7 @@ class NativeService {
       // 检查 API 是否可访问
       try {
         final client = HttpClient();
-        client.badCertificateCallback = (cert, host, port) => true; // 允许自签名证书
+        client.badCertificateCallback = (cert, host, port) => true;
         client.connectionTimeout = const Duration(seconds: 2);
         final request = await client.getUrl(Uri.parse('https://localhost:8443/api/health'));
         final response = await request.close().timeout(const Duration(seconds: 2));
