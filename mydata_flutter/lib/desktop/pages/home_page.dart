@@ -29,6 +29,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
   String _wifiName = '';
   int _notificationCount = 0;
   final List<_NotificationItem> _notifications = [];
+  final Set<String> _shownPendingDevices = {};
 
   StreamSubscription<SyncthingEvent>? _eventSub;
 
@@ -39,6 +40,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
       context.read<DeviceProvider>().fetchDevices();
       context.read<FolderProvider>().fetchFolders();
       _fetchWifiInfo();
+      _checkPendingDevices();
     });
     _eventSub = EventService().events.listen((event) {
       if (!mounted) return;
@@ -55,6 +57,9 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           bgColor = Colors.orange;
           context.read<DeviceProvider>().fetchDevices();
           break;
+        case 'PendingDevicesChanged':
+          _handlePendingDevicesChanged(event);
+          return;
         case 'ItemFinished':
           message = '文件同步完成: ${event.data['item'] ?? ''}';
           bgColor = Colors.green;
@@ -66,19 +71,27 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
         case 'ConfigSaved':
           message = '配置已保存';
           bgColor = Colors.blue;
+          context.read<DeviceProvider>().fetchDevices();
           break;
         default:
           return;
       }
-      setState(() {
-        _notificationCount++;
-        _notifications.insert(0, _NotificationItem(message: message, time: DateTime.now()));
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message), backgroundColor: bgColor, duration: const Duration(seconds: 3)),
-      );
+      _addNotification(message, snackColor: bgColor);
     });
     EventService().start();
+  }
+
+  void _addNotification(String message, {Color? snackColor}) {
+    if (!mounted) return;
+    setState(() {
+      _notificationCount++;
+      _notifications.insert(0, _NotificationItem(message: message, time: DateTime.now()));
+    });
+    if (snackColor != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: snackColor, duration: const Duration(seconds: 3)),
+      );
+    }
   }
 
   Future<void> _fetchWifiInfo() async {
@@ -90,6 +103,127 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
         });
       }
     } catch (_) {}
+  }
+
+  /// 检查 Syncthing 待确认设备（未知设备尝试连接时）
+  Future<void> _checkPendingDevices() async {
+    final pending = await ApiService.getPendingDevices();
+    if (pending.isEmpty) return;
+
+    final knownIds = await _knownDeviceNormIds();
+    for (final entry in pending.entries) {
+      final deviceId = entry.key;
+      if (_isKnownDevice(deviceId, knownIds)) continue;
+      final info = entry.value;
+      if (info is! Map) continue;
+      await _showPendingDeviceDialog(
+        deviceId,
+        info['name']?.toString() ?? deviceId,
+        info['address']?.toString() ?? '',
+      );
+    }
+  }
+
+  Future<Set<String>> _knownDeviceNormIds() async {
+    final ids = <String>{};
+    try {
+      for (final d in await ApiService.getDevices()) {
+        ids.add(_normDeviceId(d.id));
+      }
+    } catch (_) {}
+    return ids;
+  }
+
+  String _normDeviceId(String id) =>
+      id.replaceAll(RegExp(r'[\s-]'), '').toUpperCase();
+
+  bool _isKnownDevice(String deviceId, Set<String> knownIds) =>
+      knownIds.contains(_normDeviceId(deviceId));
+
+  void _handlePendingDevicesChanged(SyncthingEvent event) async {
+    final added = event.data['added'];
+    if (added is List) {
+      final knownIds = await _knownDeviceNormIds();
+      for (final item in added) {
+        if (item is Map) {
+          final deviceId = item['deviceID']?.toString() ?? '';
+          if (deviceId.isEmpty || _isKnownDevice(deviceId, knownIds)) continue;
+          final name = item['name']?.toString() ?? '';
+          final address = item['address']?.toString() ?? '';
+          final displayName = (name.isNotEmpty && name != deviceId) ? name : '未知设备';
+          _addNotification('收到新设备连接请求: $displayName');
+          _showPendingDeviceDialog(deviceId, name, address);
+        }
+      }
+    } else {
+      _checkPendingDevices();
+    }
+  }
+
+  Future<void> _showPendingDeviceDialog(String deviceId, String name, String address) async {
+    if (deviceId.isEmpty || _shownPendingDevices.contains(deviceId)) return;
+    _shownPendingDevices.add(deviceId);
+
+    if (!mounted) return;
+    final displayName = (name.isNotEmpty && name != deviceId) ? name : '未知设备';
+
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('新设备请求连接'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('设备 "$displayName" 请求与本机建立连接。'),
+            const SizedBox(height: 12),
+            Text('设备 ID', style: Theme.of(ctx).textTheme.labelMedium),
+            SelectableText(deviceId, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+            if (address.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text('地址: $address', style: Theme.of(ctx).textTheme.bodySmall),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('拒绝'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('接受'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+
+    try {
+      if (accepted == true) {
+        await ApiService.acceptPendingDevice(deviceId: deviceId, name: displayName);
+        if (mounted) {
+          await context.read<DeviceProvider>().fetchDevices();
+          _addNotification(
+            '已接受设备 $displayName',
+            snackColor: Colors.green,
+          );
+        }
+      } else {
+        await ApiService.dismissPendingDevice(deviceId);
+        if (mounted) {
+          _addNotification('已拒绝设备 $displayName');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _addNotification('设备操作失败: $e', snackColor: Colors.red);
+      }
+    } finally {
+      _shownPendingDevices.remove(deviceId);
+    }
   }
 
   @override
@@ -247,6 +381,18 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           );
         }
 
+        // 启动后默认选中本机设备
+        if (_selectedDevice == null && provider.devices.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || _selectedDevice != null) return;
+            final local = provider.devices.firstWhere(
+              (d) => d.isLocal,
+              orElse: () => provider.devices.first,
+            );
+            _selectDevice(local);
+          });
+        }
+
         final devices = _searchText.isEmpty
             ? provider.devices
             : provider.devices.where((d) =>
@@ -308,7 +454,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
             ),
           ),
           title: Text(
-            device.name,
+            device.displayName,
             style: TextStyle(
               fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
               fontSize: 14,
@@ -470,11 +616,13 @@ class _AddDeviceDialog extends StatefulWidget {
 }
 
 class _AddDeviceDialogState extends State<_AddDeviceDialog> {
-  final _idController = TextEditingController();
   final _nameController = TextEditingController();
+  final _manualIdController = TextEditingController();
+  String? _selectedDeviceId;
   String? _idError;
-  List<String> _discoveredDevices = [];
+  List<Map<String, String>> _discoveredDevices = [];
   bool _isLoadingDiscovery = true;
+  bool _manualInput = false;
 
   @override
   void initState() {
@@ -484,19 +632,84 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
 
   @override
   void dispose() {
-    _idController.dispose();
     _nameController.dispose();
+    _manualIdController.dispose();
     super.dispose();
   }
 
   Future<void> _loadDiscoveredDevices() async {
+    setState(() {
+      _isLoadingDiscovery = true;
+      _idError = null;
+    });
     try {
-      final devices = await ApiService.getDiscoveredDeviceIds();
-      if (mounted) setState(() { _discoveredDevices = devices; _isLoadingDiscovery = false; });
+      final provider = context.read<DeviceProvider>();
+      await provider.fetchDevices();
+      // 多次重试扫描局域网（Syncthing 本地发现需要几秒）
+      final devices = await ApiService.getDiscoveredDevices(
+        retries: 5,
+        interval: const Duration(seconds: 3),
+      );
+      if (!mounted) return;
+      setState(() {
+        _discoveredDevices = devices;
+        _isLoadingDiscovery = false;
+        if (devices.isEmpty) {
+          _manualInput = true;
+        } else if (!_manualInput) {
+          _selectedDeviceId = devices.first['id'];
+          _applySelectedDevice(devices.first);
+          _validate(_selectedDeviceId!);
+        }
+      });
     } catch (_) {
-      if (mounted) setState(() { _isLoadingDiscovery = false; });
+      if (mounted) {
+        setState(() {
+          _isLoadingDiscovery = false;
+          _manualInput = true;
+        });
+      }
     }
   }
+
+  List<Map<String, String>> _availableDevices(DeviceProvider provider) {
+    final existing = provider.devices
+        .where((d) => !d.isLocal)
+        .map((d) => d.id.replaceAll(RegExp(r'[\s-]'), ''))
+        .toSet();
+    return _discoveredDevices.where((d) {
+      final clean = d['id']!.replaceAll(RegExp(r'[\s-]'), '');
+      return !existing.contains(clean);
+    }).toList();
+  }
+
+  String _discoveryStatusText(List<Map<String, String>> available) {
+    if (_discoveredDevices.isEmpty) {
+      return '未发现设备：请确认对方已启动 MyData 且在同一 WiFi';
+    }
+    if (available.isEmpty) {
+      return '已发现 ${_discoveredDevices.length} 个设备，均已添加';
+    }
+    return '手动输入模式';
+  }
+
+  void _applySelectedDevice(Map<String, String> device) {
+    final id = device['id']!;
+    final name = device['name']!;
+    if (name != id && !name.contains('-')) {
+      _nameController.text = name;
+    }
+  }
+
+  String _deviceLabel(Map<String, String> device) {
+    final id = device['id']!;
+    final name = device['name']?.trim() ?? '';
+    if (name.isNotEmpty && name != id && !name.contains('-')) return name;
+    return id;
+  }
+
+  String? get _effectiveDeviceId =>
+      _manualInput ? _manualIdController.text.trim() : _selectedDeviceId;
 
   void _validate(String raw) {
     final provider = context.read<DeviceProvider>();
@@ -509,9 +722,146 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     setState(() { _idError = null; });
   }
 
+  Widget _buildDeviceIdField(DeviceProvider provider) {
+    final available = _availableDevices(provider);
+
+    if (_isLoadingDiscovery) {
+      return InputDecorator(
+        decoration: const InputDecoration(
+          labelText: '局域网设备',
+          border: OutlineInputBorder(),
+          helperText: '正在扫描局域网设备...',
+        ),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 18, height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 12),
+            Text('扫描中...', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          ],
+        ),
+      );
+    }
+
+    if (!_manualInput && available.isNotEmpty) {
+      final currentId = available.any((d) => d['id'] == _selectedDeviceId)
+          ? _selectedDeviceId!
+          : available.first['id']!;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: currentId,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: '选择局域网设备',
+                    border: const OutlineInputBorder(),
+                    helperText: '已发现 ${available.length} 个设备',
+                    errorText: _idError,
+                  ),
+                  items: available.map((d) {
+                    final id = d['id']!;
+                    return DropdownMenuItem(
+                      value: id,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _deviceLabel(d),
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (d['name'] != id)
+                            Text(
+                              id,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    final device = available.firstWhere((d) => d['id'] == value);
+                    setState(() {
+                      _selectedDeviceId = value;
+                      _applySelectedDevice(device);
+                      _validate(value);
+                    });
+                  },
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: '重新扫描',
+                onPressed: _loadDiscoveredDevices,
+              ),
+            ],
+          ),
+          TextButton.icon(
+            onPressed: () => setState(() => _manualInput = true),
+            icon: const Icon(Icons.edit, size: 18),
+            label: const Text('手动输入设备 ID'),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _manualIdController,
+          decoration: InputDecoration(
+            labelText: '设备 ID',
+            border: const OutlineInputBorder(),
+            hintText: '请输入 56 位设备 ID',
+            helperText: _discoveryStatusText(available),
+            errorText: _idError,
+            suffixIcon: IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: '重新扫描',
+              onPressed: _loadDiscoveredDevices,
+            ),
+          ),
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+          maxLength: 63,
+          onChanged: _validate,
+        ),
+        if (available.isNotEmpty)
+          TextButton.icon(
+            onPressed: () {
+              setState(() {
+                _manualInput = false;
+                _selectedDeviceId = available.first['id'];
+                _applySelectedDevice(available.first);
+                _validate(_selectedDeviceId!);
+              });
+            },
+            icon: const Icon(Icons.devices, size: 18),
+            label: Text('从局域网设备列表选择（${available.length}）'),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.read<DeviceProvider>();
+    final canSubmit = _idError == null && (_effectiveDeviceId?.isNotEmpty ?? false);
 
     return AlertDialog(
       title: const Text('添加设备'),
@@ -522,65 +872,14 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Autocomplete<String>(
-                optionsBuilder: (textEditingValue) {
-                  if (textEditingValue.text.isEmpty) return _discoveredDevices;
-                  return _discoveredDevices.where((d) =>
-                      d.toLowerCase().contains(textEditingValue.text.toLowerCase()));
-                },
-                onSelected: (selection) {
-                  _idController.text = selection;
-                  _validate(selection);
-                },
-                fieldViewBuilder: (_, textEditingController, focusNode, onSubmitted) {
-                  return TextField(
-                    controller: _idController,
-                    focusNode: focusNode,
-                    decoration: InputDecoration(
-                      labelText: '设备 ID',
-                      hintText: '选择或输入设备 ID',
-                      helperText: _discoveredDevices.isNotEmpty
-                          ? '已发现 ${_discoveredDevices.length} 个设备，可下拉选择'
-                          : '请输入 56 位设备 ID',
-                      errorText: _idError,
-                      suffixIcon: _isLoadingDiscovery
-                          ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                            )
-                          : null,
-                    ),
-                    maxLength: 63,
-                    onChanged: _validate,
-                  );
-                },
-              ),
-              if (_discoveredDevices.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                const Text('附近的设备：', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                const SizedBox(height: 4),
-                ..._discoveredDevices.map((deviceId) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: OutlinedButton(
-                    onPressed: () {
-                      _idController.text = deviceId;
-                      _validate(deviceId);
-                    },
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      minimumSize: const Size(0, 32),
-                      textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                    ),
-                    child: Text(deviceId, overflow: TextOverflow.ellipsis),
-                  ),
-                )),
-              ],
+              _buildDeviceIdField(provider),
               const SizedBox(height: 16),
               TextField(
                 controller: _nameController,
                 decoration: const InputDecoration(
                   labelText: '设备名称（可选）',
                   hintText: '如：我的手机',
+                  border: OutlineInputBorder(),
                   helperText: '留空则使用设备通告的名称',
                 ),
               ),
@@ -591,17 +890,22 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
         ElevatedButton(
-          onPressed: _idError == null && _idController.text.isNotEmpty
+          onPressed: canSubmit
               ? () async {
+                  final deviceId = _effectiveDeviceId!;
                   try {
                     await provider.addDevice(
-                      deviceID: _idController.text,
+                      deviceID: deviceId,
                       name: _nameController.text,
                     );
                     if (mounted) {
                       Navigator.of(context).pop();
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('设备添加成功'), backgroundColor: Colors.green),
+                        const SnackBar(
+                          content: Text('已发送连接请求，等待对方确认接受'),
+                          backgroundColor: Colors.green,
+                          duration: Duration(seconds: 4),
+                        ),
                       );
                     }
                   } catch (e) {

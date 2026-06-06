@@ -35,8 +35,10 @@ class EventService {
 
   int _lastEventId = 0;
   bool _isRunning = false;
-  Timer? _reconnectTimer;
+  bool _cursorSynced = false;
   int _emptyCount = 0;
+  int _unavailableBackoff = 10; // Syncthing 不可用时的退避秒数
+  bool _loggedUnavailable = false;
 
   final _eventController = StreamController<SyncthingEvent>.broadcast();
   Stream<SyncthingEvent> get events => _eventController.stream;
@@ -44,15 +46,35 @@ class EventService {
   void start() {
     if (_isRunning) return;
     _isRunning = true;
+    _cursorSynced = false;
     _poll();
+  }
+
+  /// Hot Restart 后 since=0 会重放历史事件；先同步到最新 ID，避免重复弹窗
+  Future<void> _syncEventCursor() async {
+    try {
+      final events = await ApiService.getSyncthingEvents(since: 0, timeout: 0);
+      for (final eventJson in events) {
+        final event = SyncthingEvent.fromJson(eventJson);
+        if (event.id > _lastEventId) _lastEventId = event.id;
+      }
+      if (_lastEventId > 0) {
+        debugPrint('[EventService] 事件游标已同步至 $_lastEventId（跳过重放）');
+      }
+    } catch (e) {
+      debugPrint('[EventService] 同步事件游标失败: $e');
+    }
   }
 
   void stop() {
     _isRunning = false;
-    _reconnectTimer?.cancel();
   }
 
   void _poll() async {
+    if (!_cursorSynced) {
+      await _syncEventCursor();
+      _cursorSynced = true;
+    }
     while (_isRunning) {
       try {
         final events = await ApiService.getSyncthingEvents(
@@ -64,11 +86,13 @@ class EventService {
         if (events.isEmpty) {
           _emptyCount++;
           if (_emptyCount > 3) {
-            await Future.delayed(const Duration(seconds: 10));
+            await Future.delayed(Duration(seconds: _unavailableBackoff));
           }
           continue;
         }
         _emptyCount = 0;
+        _loggedUnavailable = false;
+        _unavailableBackoff = 10;
 
         for (final eventJson in events) {
           final event = SyncthingEvent.fromJson(eventJson);
@@ -78,12 +102,13 @@ class EventService {
           }
         }
       } catch (e) {
-        debugPrint('事件轮询失败: $e');
+        if (!_loggedUnavailable) {
+          debugPrint('事件轮询失败: $e');
+          _loggedUnavailable = true;
+        }
         if (!_isRunning) break;
-        _reconnectTimer = Timer(const Duration(seconds: 10), () {
-          if (_isRunning) _poll();
-        });
-        return;
+        _unavailableBackoff = (_unavailableBackoff * 2).clamp(10, 60);
+        await Future.delayed(Duration(seconds: _unavailableBackoff));
       }
     }
   }

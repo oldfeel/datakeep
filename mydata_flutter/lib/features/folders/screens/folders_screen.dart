@@ -267,7 +267,7 @@ class FoldersScreen extends StatelessWidget {
           ),
         ),
         label: Text(
-          device.name,
+          device.displayName,
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w500,

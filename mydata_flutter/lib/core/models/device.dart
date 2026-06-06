@@ -55,7 +55,8 @@ class Device {
       throw FormatException('Device JSON missing required field: deviceID', json);
     }
     
-    final name = json['name']?.toString() ?? '未知设备';
+    final nameRaw = json['name']?.toString().trim() ?? '';
+    final name = nameRaw.isNotEmpty ? nameRaw : '未知设备';
     
     // 创建清理后的 JSON
     final cleanedJson = Map<String, dynamic>.from(json);
@@ -91,6 +92,22 @@ class Device {
     if (isLocal) return 'online';
     if (connected) return 'online';
     return 'offline';
+  }
+
+  /// 用于 UI 展示的名称（空名/localhost/设备 ID 时做友好化处理）
+  String get displayName {
+    final n = name.trim();
+    final norm = (String s) => s.replaceAll(RegExp(r'[\s-]'), '').toUpperCase();
+    final shortId = id.contains('-') ? id.split('-').first.toUpperCase() : '';
+    if (n.isNotEmpty &&
+        n.toLowerCase() != 'localhost' &&
+        norm(n) != norm(id) &&
+        (shortId.isEmpty || n.toUpperCase() != shortId)) {
+      return n;
+    }
+    if (id.contains('-')) return id.split('-').first;
+    final clean = id.replaceAll(RegExp(r'[\s-]'), '');
+    return clean.length >= 7 ? clean.substring(0, 7) : id;
   }
 
   Device copyWith({

@@ -25,6 +25,12 @@ class NativeService {
     }
   }
 
+  /// 确保 Syncthing 在运行（桌面端会在 API 不可用时自动重启）
+  static Future<bool> ensureSyncthingRunning() async {
+    if (_isDesktop) return _startSyncthingDesktop();
+    return _isSyncthingApiReady();
+  }
+
   /// 停止 Syncthing 服务
   static Future<bool> stopSyncthingService() async {
     if (_isDesktop) {
@@ -64,14 +70,69 @@ class NativeService {
     if (_isDesktop) {
       return 'https://localhost:8443/api';
     } else {
-      // 移动端：使用 Platform Channel
-      try {
-        final result = await _channel.invokeMethod<String>('getApiBaseUrl');
-        return result ?? 'http://localhost:8080/api';
-      } on PlatformException catch (e) {
-        debugPrint('获取 API URL 失败: ${e.message}');
-        return 'https://localhost:8443/api';
+      return 'https://127.0.0.1:8443/api';
+    }
+  }
+
+  /// 获取 Android Syncthing 配置路径与手机型号（一次 Platform Channel 调用）
+  static Future<({String? path, String? deviceName})> getSyncthingBootstrap() async {
+    if (_isDesktop) return (path: null, deviceName: null);
+    try {
+      final result = await _channel.invokeMethod('getSyncthingConfigPath');
+      if (result is Map) {
+        final path = result['path']?.toString();
+        final deviceName = result['deviceName']?.toString();
+        debugPrint('[NativeService] getSyncthingBootstrap => path=$path, deviceName=$deviceName');
+        return (path: path, deviceName: deviceName);
       }
+      if (result is String) {
+        debugPrint('[NativeService] getSyncthingBootstrap (legacy) => path=$result');
+        return (path: result, deviceName: null);
+      }
+    } catch (e, st) {
+      debugPrint('[NativeService] getSyncthingBootstrap 失败: $e');
+      debugPrint('$st');
+    }
+    return (path: null, deviceName: null);
+  }
+
+  /// @deprecated 请用 [getSyncthingBootstrap]
+  static Future<String?> getSyncthingConfigPath() async {
+    final boot = await getSyncthingBootstrap();
+    return boot.path;
+  }
+
+  /// 获取 Android 默认设备名（手机型号）
+  static Future<String?> getDefaultDeviceName() async {
+    if (_isDesktop) return null;
+    try {
+      final result = await _channel.invokeMethod<String>('getDefaultDeviceName');
+      debugPrint('[NativeService] getDefaultDeviceName => $result');
+      return result;
+    } catch (e, st) {
+      // Hot Restart 不会重载 Kotlin，可能 MissingPluginException
+      debugPrint('[NativeService] getDefaultDeviceName 失败: $e');
+      debugPrint('$st');
+      return null;
+    }
+  }
+
+  /// 从 config.xml 读取本机设备名（Platform Channel 不可用时的回退）
+  static String? readLocalDeviceNameFromConfig(String configPath) {
+    try {
+      final xml = File(configPath).readAsStringSync();
+      final tag = RegExp(r'<device\s+([^>]+)>').firstMatch(xml);
+      final attrs = tag?.group(1);
+      if (attrs == null) return null;
+      final name = RegExp(r'\bname="([^"]*)"').firstMatch(attrs)?.group(1)?.trim();
+      debugPrint('[NativeService] config 本机设备名 => $name');
+      if (name == null || name.isEmpty) return null;
+      final lower = name.toLowerCase();
+      if (lower == 'localhost' || lower == 'unknown') return null;
+      return name;
+    } catch (e) {
+      debugPrint('[NativeService] 读取 config 设备名失败: $e');
+      return null;
     }
   }
 
@@ -80,44 +141,51 @@ class NativeService {
   /// 桌面端：启动 Syncthing
   static Future<bool> _startSyncthingDesktop() async {
     try {
-      // 先检查是否已经在运行
-      final status = await _getSyncthingStatusDesktop();
-      if (status == 'running' || status == 'active') {
-        debugPrint('Syncthing 已经在运行');
+      // 以 8384 API 为准判断是否在运行（不用 pgrep -f，会误匹配含 syncthing 字样的 shell 命令）
+      if (await _isSyncthingApiReady()) {
+        debugPrint('Syncthing 已在运行');
         return true;
       }
 
-      // 查找 Syncthing 可执行文件
+      // 进程存在但 API 不可用：先等待（可能正在启动，Hot Restart 后尤其常见）
+      if (await _hasSyncthingProcess()) {
+        for (var i = 0; i < 10; i++) {
+          await Future.delayed(const Duration(seconds: 1));
+          if (await _isSyncthingApiReady()) {
+            debugPrint('Syncthing 已就绪');
+            return true;
+          }
+        }
+        debugPrint('Syncthing 进程存在但 API 长时间不可用，正在重启…');
+        await _stopSyncthingDesktop();
+        await Future.delayed(const Duration(seconds: 1));
+      }
+
       final syncthingPath = await _findSyncthingExecutable();
       if (syncthingPath == null) {
         debugPrint('未找到 Syncthing 可执行文件');
         return false;
       }
 
-      // 获取配置目录
-      final homeDir = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '.';
-      final configPath = Platform.isWindows
-          ? '$homeDir\\AppData\\Local\\Syncthing'
-          : Platform.isMacOS
-              ? '$homeDir/Library/Application Support/Syncthing'
-              : '$homeDir/.config/syncthing';
+      final configPath = _syncthingConfigDir();
 
-      // 启动 Syncthing 进程（后台运行）
-      final process = await Process.start(
+      await Process.start(
         syncthingPath,
-        [
-          '-no-browser',
-          '-no-restart',
-          '-home',
-          configPath,
-        ],
+        ['-no-browser', '-no-restart', '-no-upgrade', '-home', configPath],
         mode: ProcessStartMode.detached,
       );
 
-      // 等待一下，检查进程是否成功启动
-      await Future.delayed(const Duration(seconds: 1));
-      final newStatus = await _getSyncthingStatusDesktop();
-      return newStatus == 'running' || newStatus == 'active';
+      // 等待 API 就绪，最多 20 秒
+      for (var i = 0; i < 20; i++) {
+        await Future.delayed(const Duration(seconds: 1));
+        if (await _isSyncthingApiReady()) {
+          debugPrint('Syncthing 已启动并就绪');
+          return true;
+        }
+      }
+
+      debugPrint('Syncthing 启动超时，8384 API 仍不可用');
+      return false;
     } catch (e) {
       debugPrint('启动 Syncthing 失败: $e');
       return false;
@@ -127,9 +195,9 @@ class NativeService {
   /// 桌面端：停止 Syncthing
   static Future<bool> _stopSyncthingDesktop() async {
     try {
-      // 查找 Syncthing 进程并终止
       if (Platform.isLinux || Platform.isMacOS) {
-        final result = await Process.run('pkill', ['-f', 'syncthing']);
+        // 精确匹配进程名，避免 pkill -f 误杀
+        final result = await Process.run('pkill', ['-x', 'syncthing']);
         return result.exitCode == 0;
       } else if (Platform.isWindows) {
         final result = await Process.run('taskkill', ['/F', '/IM', 'syncthing.exe']);
@@ -142,42 +210,50 @@ class NativeService {
     }
   }
 
+  static String _syncthingConfigDir() {
+    final homeDir = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '.';
+    if (Platform.isWindows) return '$homeDir\\AppData\\Local\\Syncthing';
+    if (Platform.isMacOS) return '$homeDir/Library/Application Support/Syncthing';
+    return '$homeDir/.config/syncthing';
+  }
+
+  /// 8384 API 是否可用（200/403 均表示 Syncthing 在监听）
+  static Future<bool> _isSyncthingApiReady() async {
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 2);
+      final request = await client.getUrl(Uri.parse('http://127.0.0.1:8384/rest/system/status'));
+      final apiKey = _getApiKeyFromConfig();
+      if (apiKey.isNotEmpty) {
+        request.headers.set('X-API-Key', apiKey);
+      }
+      final response = await request.close().timeout(const Duration(seconds: 2));
+      await response.drain();
+      client.close();
+      return response.statusCode == 200 || response.statusCode == 403;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 是否存在 syncthing 进程（精确匹配进程名）
+  static Future<bool> _hasSyncthingProcess() async {
+    if (Platform.isLinux || Platform.isMacOS) {
+      final result = await Process.run('pgrep', ['-x', 'syncthing']);
+      return result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty;
+    }
+    if (Platform.isWindows) {
+      final result = await Process.run('tasklist', ['/FI', 'IMAGENAME eq syncthing.exe']);
+      return result.stdout.toString().contains('syncthing.exe');
+    }
+    return false;
+  }
+
   /// 桌面端：获取 Syncthing 状态
   static Future<String> _getSyncthingStatusDesktop() async {
     try {
-      if (Platform.isLinux || Platform.isMacOS) {
-        // 使用 pgrep 检查进程
-        final result = await Process.run('pgrep', ['-f', 'syncthing']);
-        if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
-          // 检查 API 是否可访问
-          try {
-            final client = HttpClient();
-            client.connectionTimeout = const Duration(seconds: 2);
-            final request = await client.getUrl(Uri.parse('http://127.0.0.1:8384/rest/system/status'));
-            final apiKey = _getApiKeyFromConfig();
-            if (apiKey.isNotEmpty) {
-              request.headers.set('X-API-Key', apiKey);
-            }
-            final response = await request.close().timeout(const Duration(seconds: 2));
-            await response.drain();
-            client.close();
-            if (response.statusCode == 200) {
-              return 'running';
-            }
-          } catch (e) {
-            // API 不可访问，但进程在运行
-            debugPrint('Syncthing API 检查失败: $e');
-            return 'starting';
-          }
-          return 'running';
-        }
-      } else if (Platform.isWindows) {
-        // Windows: 使用 tasklist
-        final result = await Process.run('tasklist', ['/FI', 'IMAGENAME eq syncthing.exe']);
-        if (result.stdout.toString().contains('syncthing.exe')) {
-          return 'running';
-        }
-      }
+      if (await _isSyncthingApiReady()) return 'running';
+      if (await _hasSyncthingProcess()) return 'starting';
       return 'stopped';
     } catch (e) {
       debugPrint('获取 Syncthing 状态失败: $e');
@@ -240,11 +316,17 @@ class NativeService {
     return null;
   }
 
-  /// 从配置文件获取 API Key（简化版，实际应该读取配置文件）
+  /// 从 config.xml 读取 Syncthing API Key
   static String _getApiKeyFromConfig() {
-    // TODO: 实际应该从配置文件读取
-    // 这里返回空字符串，让 Syncthing 使用默认认证
-    return '';
+    try {
+      final configFile = File('${_syncthingConfigDir()}/config.xml');
+      if (!configFile.existsSync()) return '';
+      final xml = configFile.readAsStringSync();
+      final m = RegExp(r'<apikey>([^<]+)</apikey>').firstMatch(xml);
+      return m?.group(1)?.trim() ?? '';
+    } catch (_) {
+      return '';
+    }
   }
 
   // ========== Backend 服务管理 ==========

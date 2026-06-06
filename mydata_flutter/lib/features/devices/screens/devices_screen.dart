@@ -192,7 +192,7 @@ class DevicesScreen extends StatelessWidget {
                         Row(
                           children: [
                             Text(
-                              device.name,
+                              device.displayName,
                               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                 fontWeight: FontWeight.w600,
                               ),
@@ -285,7 +285,7 @@ class DevicesScreen extends StatelessWidget {
         title: Row(
           children: [
             Text(
-              device.name,
+              device.displayName,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             if (device.isLocal) ...[
@@ -452,18 +452,12 @@ class DevicesScreen extends StatelessWidget {
   }
 
   static void showAddDeviceDialog(BuildContext context) {
-    final deviceIdController = TextEditingController();
-    final nameController = TextEditingController();
     final deviceProvider = context.read<DeviceProvider>();
-    
-    // 检查是否为移动平台（Android/iOS）
     final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
     showDialog(
       context: context,
       builder: (dialogContext) => _AddDeviceDialog(
-        deviceIdController: deviceIdController,
-        nameController: nameController,
         deviceProvider: deviceProvider,
         isMobile: isMobile,
       ),
@@ -473,14 +467,10 @@ class DevicesScreen extends StatelessWidget {
 
 // 添加设备对话框组件
 class _AddDeviceDialog extends StatefulWidget {
-  final TextEditingController deviceIdController;
-  final TextEditingController nameController;
   final DeviceProvider deviceProvider;
   final bool isMobile;
 
   const _AddDeviceDialog({
-    required this.deviceIdController,
-    required this.nameController,
     required this.deviceProvider,
     required this.isMobile,
   });
@@ -490,8 +480,13 @@ class _AddDeviceDialog extends StatefulWidget {
 }
 
 class _AddDeviceDialogState extends State<_AddDeviceDialog> {
-  List<Map<String, String>> _discoveredDevices = []; // 改为存储带名称的设备列表
+  final _nameController = TextEditingController();
+  final _manualIdController = TextEditingController();
+  String? _selectedDeviceId;
+  String? _idError;
+  List<Map<String, String>> _discoveredDevices = [];
   bool _isLoadingDiscovery = true;
+  bool _manualInput = false;
 
   @override
   void initState() {
@@ -499,210 +494,322 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     _loadDiscoveredDevices();
   }
 
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _manualIdController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadDiscoveredDevices() async {
+    setState(() {
+      _isLoadingDiscovery = true;
+      _idError = null;
+    });
     try {
-      final devices = await ApiService.getDiscoveredDevices();
-      if (mounted) {
-        setState(() {
-          _discoveredDevices = devices;
-          _isLoadingDiscovery = false;
-        });
-      }
+      // 先刷新已配置设备，避免列表未加载时误判「未发现设备」
+      await widget.deviceProvider.fetchDevices();
+      final devices = await ApiService.getDiscoveredDevices(
+        retries: 5,
+        interval: const Duration(seconds: 3),
+      );
+      if (!mounted) return;
+      setState(() {
+        _discoveredDevices = devices;
+        _isLoadingDiscovery = false;
+        if (devices.isEmpty) {
+          _manualInput = true;
+        } else if (!_manualInput) {
+          final available = _availableDevices();
+          if (available.isNotEmpty) {
+            _selectedDeviceId = available.first['id'];
+            _applySelectedDevice(available.first);
+            _validate(_selectedDeviceId!);
+          } else {
+            _manualInput = true;
+          }
+        }
+      });
     } catch (e) {
       debugPrint('加载发现的设备失败: $e');
       if (mounted) {
         setState(() {
           _isLoadingDiscovery = false;
+          _manualInput = true;
         });
       }
     }
   }
-  
-  // 获取设备ID列表（用于 Autocomplete）
-  List<String> get _discoveredDeviceIds => _discoveredDevices.map((d) => d['id']!).toList();
-  
-  // 获取设备显示名称（名称 + ID）
-  String _getDeviceDisplayName(String deviceId) {
-    final device = _discoveredDevices.firstWhere(
-      (d) => d['id'] == deviceId,
-      orElse: () => {'id': deviceId, 'name': deviceId},
-    );
-    final name = device['name']!;
-    final id = device['id']!;
-    // 如果名称就是ID，只显示ID；否则显示 "名称 (ID)"
-    if (name == id) {
-      return id;
-    } else {
-      return '$name ($id)';
+
+  List<Map<String, String>> _availableDevices() {
+    final existing = widget.deviceProvider.devices
+        .where((d) => !d.isLocal)
+        .map((d) => d.id.replaceAll(RegExp(r'[\s-]'), ''))
+        .toSet();
+    return _discoveredDevices.where((d) {
+      final clean = d['id']!.replaceAll(RegExp(r'[\s-]'), '');
+      return !existing.contains(clean);
+    }).toList();
+  }
+
+  String _discoveryStatusText(List<Map<String, String>> available) {
+    if (_discoveredDevices.isEmpty) {
+      return '未发现设备：请确认对方已启动 MyData 且在同一 WiFi';
     }
+    if (available.isEmpty) {
+      return '已发现 ${_discoveredDevices.length} 个设备，均已添加';
+    }
+    return '手动输入模式';
+  }
+
+  void _applySelectedDevice(Map<String, String> device) {
+    final id = device['id']!;
+    final name = device['name']!;
+    if (name != id && !name.contains('-')) {
+      _nameController.text = name;
+    }
+  }
+
+  String _deviceLabel(Map<String, String> device) {
+    final id = device['id']!;
+    final name = device['name']?.trim() ?? '';
+    if (name.isNotEmpty && name != id && !name.contains('-')) return name;
+    return id;
+  }
+
+  String? get _effectiveDeviceId =>
+      _manualInput ? _manualIdController.text.trim() : _selectedDeviceId;
+
+  void _validate(String raw) {
+    final existingIds = widget.deviceProvider.devices
+        .map((d) => d.id.replaceAll(RegExp(r'[\s-]'), ''))
+        .toSet();
+    final clean = raw.replaceAll(RegExp(r'[\s-]'), '');
+    if (clean.isEmpty) {
+      setState(() => _idError = null);
+      return;
+    }
+    if (clean.length != 56) {
+      setState(() => _idError = '设备 ID 长度必须为 56 位');
+      return;
+    }
+    if (!RegExp(r'^[A-Z0-9]+$').hasMatch(clean)) {
+      setState(() => _idError = '设备 ID 只能包含大写字母和数字');
+      return;
+    }
+    if (existingIds.contains(clean)) {
+      setState(() => _idError = '该设备已存在');
+      return;
+    }
+    setState(() => _idError = null);
+  }
+
+  Future<void> _scanQrCode() async {
+    final scannedValue = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const QRScannerScreen(onScanResult: null)),
+    );
+    if (scannedValue != null && scannedValue.isNotEmpty && mounted) {
+      setState(() {
+        _manualInput = true;
+        _manualIdController.text = scannedValue;
+      });
+      _validate(scannedValue);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('扫描成功: ${scannedValue.length} 个字符'),
+          duration: const Duration(seconds: 2),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  Widget _buildDeviceIdField() {
+    final available = _availableDevices();
+
+    if (_isLoadingDiscovery) {
+      return InputDecorator(
+        decoration: const InputDecoration(
+          labelText: '局域网设备',
+          border: OutlineInputBorder(),
+          helperText: '正在扫描局域网设备...',
+        ),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              '扫描中...',
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!_manualInput && available.isNotEmpty) {
+      final currentId = available.any((d) => d['id'] == _selectedDeviceId)
+          ? _selectedDeviceId!
+          : available.first['id']!;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: currentId,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: '选择局域网设备',
+                    border: const OutlineInputBorder(),
+                    helperText: '已发现 ${available.length} 个设备',
+                    errorText: _idError,
+                  ),
+                  // 选中后只显示设备名称，不显示完整 ID
+                  selectedItemBuilder: (context) => available.map((d) {
+                    return Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _deviceLabel(d),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }).toList(),
+                  items: available.map((d) {
+                    final id = d['id']!;
+                    return DropdownMenuItem(
+                      value: id,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _deviceLabel(d),
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (d['name'] != id)
+                            Text(
+                              id,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    final device = available.firstWhere((d) => d['id'] == value);
+                    setState(() {
+                      _selectedDeviceId = value;
+                      _applySelectedDevice(device);
+                      _validate(value);
+                    });
+                  },
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: '重新扫描',
+                onPressed: _loadDiscoveredDevices,
+              ),
+              if (widget.isMobile)
+                IconButton(
+                  icon: const Icon(Icons.qr_code_scanner),
+                  tooltip: '扫描二维码',
+                  onPressed: _scanQrCode,
+                ),
+            ],
+          ),
+          TextButton.icon(
+            onPressed: () => setState(() => _manualInput = true),
+            icon: const Icon(Icons.edit, size: 18),
+            label: const Text('手动输入设备 ID'),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _manualIdController,
+          decoration: InputDecoration(
+            labelText: '设备 ID',
+            border: const OutlineInputBorder(),
+            hintText: '请输入 56 位设备 ID',
+            helperText: _discoveryStatusText(available),
+            errorText: _idError,
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  tooltip: '重新扫描',
+                  onPressed: _loadDiscoveredDevices,
+                ),
+                if (widget.isMobile)
+                  IconButton(
+                    icon: const Icon(Icons.qr_code_scanner),
+                    tooltip: '扫描二维码',
+                    onPressed: _scanQrCode,
+                  ),
+              ],
+            ),
+          ),
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+          maxLength: 63,
+          onChanged: _validate,
+        ),
+        if (available.isNotEmpty)
+          TextButton.icon(
+            onPressed: () {
+              setState(() {
+                _manualInput = false;
+                _selectedDeviceId = available.first['id'];
+                _applySelectedDevice(available.first);
+                _validate(_selectedDeviceId!);
+              });
+            },
+            icon: const Icon(Icons.devices, size: 18),
+            label: Text('从局域网设备列表选择（${available.length}）'),
+          ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final canSubmit = _idError == null && (_effectiveDeviceId?.isNotEmpty ?? false);
+
     return AlertDialog(
       title: const Text('添加设备'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 设备 ID 下拉选择框（支持手动输入）
-            Autocomplete<String>(
-              optionsBuilder: (TextEditingValue textEditingValue) {
-                if (textEditingValue.text.isEmpty) {
-                  return _discoveredDeviceIds;
-                }
-                // 过滤匹配的设备（支持按名称或ID搜索）
-                return _discoveredDeviceIds.where((deviceId) {
-                  final displayName = _getDeviceDisplayName(deviceId);
-                  final searchText = textEditingValue.text.toLowerCase();
-                  return deviceId.toLowerCase().contains(searchText) ||
-                         displayName.toLowerCase().contains(searchText);
-                }).toList();
-              },
-              onSelected: (String selection) {
-                // 选择时只设置设备ID（移除可能的显示名称部分）
-                widget.deviceIdController.text = selection;
-              },
-              displayStringForOption: (String deviceId) {
-                return _getDeviceDisplayName(deviceId);
-              },
-              fieldViewBuilder: (
-                BuildContext context,
-                TextEditingController textEditingController,
-                FocusNode focusNode,
-                VoidCallback onFieldSubmitted,
-              ) {
-                // 同步 controller
-                if (widget.deviceIdController.text != textEditingController.text) {
-                  textEditingController.text = widget.deviceIdController.text;
-                }
-                widget.deviceIdController.addListener(() {
-                  if (textEditingController.text != widget.deviceIdController.text) {
-                    textEditingController.text = widget.deviceIdController.text;
-                  }
-                });
-                textEditingController.addListener(() {
-                  if (widget.deviceIdController.text != textEditingController.text) {
-                    widget.deviceIdController.text = textEditingController.text;
-                  }
-                });
-
-                return TextField(
-                  controller: textEditingController,
-                  focusNode: focusNode,
-                  decoration: InputDecoration(
-                    labelText: '设备 ID',
-                    hintText: _discoveredDeviceIds.isEmpty
-                        ? '请输入设备 ID（52-56位字符）'
-                        : '选择或输入设备 ID',
-                    helperText: _isLoadingDiscovery
-                        ? '正在扫描局域网设备...'
-                        : (_discoveredDevices.isEmpty
-                            ? '未发现设备，可手动输入或扫描二维码'
-                            : '已发现 ${_discoveredDevices.length} 个设备，可下拉选择或手动输入'),
-                    suffixIcon: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_isLoadingDiscovery)
-                          const Padding(
-                            padding: EdgeInsets.all(12.0),
-                            child: SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        else if (_discoveredDevices.isNotEmpty)
-                          IconButton(
-                            icon: const Icon(Icons.refresh),
-                            onPressed: () {
-                              setState(() {
-                                _isLoadingDiscovery = true;
-                              });
-                              _loadDiscoveredDevices();
-                            },
-                            tooltip: '刷新设备列表',
-                          ),
-                        if (widget.isMobile)
-                          IconButton(
-                            icon: const Icon(Icons.qr_code_scanner),
-                            onPressed: () async {
-                              // 打开二维码扫描页面
-                              final scannedValue = await Navigator.of(context).push<String>(
-                                MaterialPageRoute(
-                                  builder: (context) => QRScannerScreen(
-                                    onScanResult: null,
-                                  ),
-                                ),
-                              );
-                              // 如果扫描成功，更新设备 ID
-                              debugPrint('扫描返回的值: $scannedValue');
-                              if (scannedValue != null && scannedValue.isNotEmpty) {
-                                widget.deviceIdController.text = scannedValue;
-                                textEditingController.text = scannedValue;
-                                // 显示成功提示
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('扫描成功: ${scannedValue.length} 个字符'),
-                                      duration: const Duration(seconds: 2),
-                                      backgroundColor: Colors.green,
-                                    ),
-                                  );
-                                }
-                              }
-                            },
-                            tooltip: '扫描二维码',
-                          ),
-                      ],
-                    ),
-                  ),
-                  maxLength: 63, // Syncthing 设备ID格式：8组×7字符 + 7个连字符 = 63字符
-                  onChanged: (value) {
-                    widget.deviceIdController.text = value;
-                  },
-                );
-              },
-            ),
-            if (widget.isMobile) ...[
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  // 打开二维码扫描页面
-                  final scannedValue = await Navigator.of(context).push<String>(
-                    MaterialPageRoute(
-                      builder: (context) => QRScannerScreen(
-                        onScanResult: null,
-                      ),
-                    ),
-                  );
-                  // 如果扫描成功，更新设备 ID
-                  debugPrint('扫描返回的值: $scannedValue');
-                  if (scannedValue != null && scannedValue.isNotEmpty) {
-                    widget.deviceIdController.text = scannedValue;
-                    // 显示成功提示
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('扫描成功: ${scannedValue.length} 个字符'),
-                          duration: const Duration(seconds: 2),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    }
-                  }
-                },
-                icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('扫描二维码'),
-              ),
-            ],
+            _buildDeviceIdField(),
             const SizedBox(height: 16),
             TextField(
-              controller: widget.nameController,
+              controller: _nameController,
               decoration: const InputDecoration(
                 labelText: '设备名称',
                 hintText: '请输入设备名称（可选）',
-                helperText: '如果留空，将使用设备通告的名称',
+                border: OutlineInputBorder(),
+                helperText: '留空则使用设备通告的名称',
               ),
             ),
           ],
@@ -714,34 +821,35 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
           child: const Text('取消'),
         ),
         ElevatedButton(
-          onPressed: () async {
-            if (widget.deviceIdController.text.isNotEmpty) {
-              try {
-                await widget.deviceProvider.addDevice(
-                  deviceID: widget.deviceIdController.text,
-                  name: widget.nameController.text,
-                );
-                if (mounted) {
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('设备添加成功'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
+          onPressed: canSubmit
+              ? () async {
+                  final deviceId = _effectiveDeviceId!;
+                  try {
+                    await widget.deviceProvider.addDevice(
+                      deviceID: deviceId,
+                      name: _nameController.text,
+                    );
+                    if (mounted) {
+                      Navigator.of(context).pop();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('已发送连接请求，等待对方确认接受'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('添加设备失败: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
                 }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('添加设备失败: $e'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              }
-            }
-          },
+              : null,
           child: const Text('添加'),
         ),
       ],

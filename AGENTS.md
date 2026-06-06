@@ -32,8 +32,8 @@ cd mydata_flutter && flutter run -d android
 # Flutter 依赖安装
 cd mydata_flutter && flutter pub get
 
-# Syncthing 编译
-cd syncthing && /snap/go/current/bin/go run build.go
+# Syncthing 编译（必须指定版本，否则 git describe 会取错 hash）
+cd syncthing && /snap/go/current/bin/go run build.go -version v2.1.0
 
 # Android Syncthing 原生库交叉编译
 cd app/lib_build && /snap/go/current/bin/go run main.go
@@ -47,22 +47,23 @@ scripts/start_avd.sh <AVD名称>
 - **桌面 & Android HTTPS**: `localhost:8443`（自签名证书，Flutter HttpClient 自行放行）
 - **后端使用 Dart shelf**，在 Flutter 进程内运行，无需独立进程
 - **响应格式**: 成功 `{"code": 0, "data": ...}` / 失败 `{"code": 非0, "data": "错误信息"}`
-- **Syncthing API**: `localhost:8384`，API Key 从 `config.xml` 读取
+- **Syncthing API**: `http://127.0.0.1:8384`（HTTP，非 HTTPS），API Key 从 `config.xml` 读取
 - 设备 `deviceID == "local"` 表示本机特殊处理
 
 ## 重要约定
 
 - 中文注释和用户界面文本
 - 自签名证书自动生成在 `certs/cert.pem` 和 `certs/key.pem`（运行目录下）
-- SQLite DB: 桌面端 `mydata_flutter/mydata.db`，移动端 `$MYDATA_DATA_DIR/mydata.db`
 - Syncthing config.xml 查找优先级：
-  Linux: `~/.local/state/syncthing/config.xml` → `~/.config/syncthing/config.xml`
-  Android 回退: `/data/data/com.nutomic.syncthingandroid/files/config.xml`
+  Linux: `~/.config/syncthing/config.xml` → `~/.local/state/syncthing/config.xml`
 - Flutter 进程内启动 shelf HTTPS 服务器，桌面端在 `main.dart` 中自动启动
+- **Flutter 后端无数据库**（SQLite），所有文件浏览代理到 Syncthing API
 
 ## 注意点
 
 - **后端已改为纯 Dart**（shelf），不再需要 Go 编译工具链和 air
+- **Syncthing 编译坑**：`syncthing/` 不是独立 git 仓库，`go run build.go` 会取 mydata 的 git hash 作为版本号导致启动失败。必须传 `-version v2.1.0`
 - `app/lib_build/main.go` 硬编码了 NDK 路径 `/home/oldfeel/Android/Sdk/ndk/29.0.13846066` 和 Syncthing 版本 `v1.28.1-mydata`
 - `parse_email/` 独立于主项目，读取 `mail.eml` → 输出 `chat.md`
 - 根目录 `readme.md` 描述的项目结构与实际目录不一致，以代码为准
+- **Go snap 权限问题**：系统 `go` 命令来自 snap 且权限受限，使用 `/snap/go/current/bin/go` 直接调用二进制

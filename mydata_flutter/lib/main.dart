@@ -3,76 +3,108 @@ import 'package:flutter/foundation.dart';
 import 'dart:io';
 import 'app.dart';
 import 'core/backend/backend_server.dart';
+import 'core/backend/syncthing_api.dart';
+import 'core/services/native_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
-    try {
-      // 启动 Dart 后端
-      final backend = BackendServer();
-      await backend.start();
-      debugPrint('Dart Backend 服务启动成功');
-
-      // 启动 Syncthing
-      await _startSyncthing();
-    } catch (e) {
-      debugPrint('启动服务时出错: $e');
-    }
+  if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS || Platform.isAndroid)) {
+    await _startPlatformServices();
   }
 
   runApp(const MyDataApp());
 }
 
-Future<void> _startSyncthing() async {
-  // 检查是否已在运行
+Future<void> _startPlatformServices() async {
   try {
-    final pgrep = await Process.run('pgrep', ['-f', 'syncthing']);
-    if (pgrep.exitCode == 0 && pgrep.stdout.toString().trim().isNotEmpty) {
-      debugPrint('Syncthing 已在运行');
-      return;
+    if (Platform.isAndroid) {
+      await _startAndroidServices();
+    } else {
+      await _startDesktopServices();
     }
-  } catch (_) {}
+  } catch (e, st) {
+    debugPrint('[startup] 启动服务异常: $e');
+    debugPrint('$st');
+  }
+}
 
-  // 查找 syncthing 可执行文件
-  final candidates = [
-    '/home/oldfeel/git/mydata/syncthing/bin/syncthing',
-    '${Platform.environment['HOME'] ?? ''}/.local/bin/syncthing',
-    '/usr/local/bin/syncthing',
-    '/usr/bin/syncthing',
-  ];
+Future<void> _startAndroidServices() async {
+  debugPrint('[startup] Android 启动流程开始');
 
-  String? syncthingPath;
-  for (final p in candidates) {
-    if (File(p).existsSync()) {
-      syncthingPath = p;
-      break;
-    }
+  try {
+    final syncthingStarted = await NativeService.startSyncthingService();
+    debugPrint('[startup] startSyncthingService => $syncthingStarted');
+  } catch (e, st) {
+    debugPrint('[startup] startSyncthingService 失败: $e');
+    debugPrint('$st');
   }
 
-  if (syncthingPath == null) {
-    // 尝试通过 which 查找
-    try {
-      final result = await Process.run('which', ['syncthing']);
-      if (result.exitCode == 0) {
-        syncthingPath = result.stdout.toString().trim();
-      }
-    } catch (_) {}
+  String? configPath;
+  var deviceName = '';
+  for (var i = 0; i < 20; i++) {
+    final boot = await NativeService.getSyncthingBootstrap();
+    configPath = boot.path;
+    if (boot.deviceName != null && deviceName.isEmpty) {
+      deviceName = boot.deviceName!;
+    }
+    debugPrint('[startup] bootstrap 尝试 ${i + 1}/20 => path=$configPath, deviceName=$deviceName');
+    if (configPath != null && File(configPath).existsSync()) break;
+    await Future.delayed(const Duration(seconds: 1));
   }
 
-  if (syncthingPath == null || syncthingPath.isEmpty) {
-    debugPrint('未找到 Syncthing 可执行文件，请先编译: cd syncthing && go run build.go');
+  if (deviceName.isEmpty) {
+    final fromChannel = await NativeService.getDefaultDeviceName();
+    if (fromChannel != null && fromChannel.isNotEmpty) {
+      deviceName = fromChannel;
+    }
+  }
+  if (deviceName.isEmpty && configPath != null) {
+    deviceName = NativeService.readLocalDeviceNameFromConfig(configPath) ?? '';
+    debugPrint('[startup] 从 config 回退 => $deviceName');
+  }
+  debugPrint('[startup] 本机目标设备名 => $deviceName');
+
+  try {
+    final backend = BackendServer();
+    await backend.start(
+      syncthingConfigPath: configPath,
+      defaultLocalDeviceName: deviceName,
+    );
+    debugPrint('[startup] Backend HTTPS 已启动, config=$configPath');
+  } catch (e, st) {
+    debugPrint('[startup] Backend 启动失败: $e');
+    debugPrint('$st');
     return;
   }
 
-  final homeDir = Platform.environment['HOME'] ?? '.';
-  final configPath = '$homeDir/.config/syncthing';
+  if (deviceName.isNotEmpty) {
+    try {
+      for (var i = 0; i < 15; i++) {
+        if (await NativeService.ensureSyncthingRunning()) {
+          debugPrint('[startup] Syncthing API 就绪 (${i + 1}/15)');
+          break;
+        }
+        await Future.delayed(const Duration(seconds: 1));
+      }
+      await SyncthingApi().ensureLocalDeviceName(deviceName);
+    } catch (e, st) {
+      debugPrint('[startup] 写入本机设备名失败: $e');
+      debugPrint('$st');
+    }
+  } else {
+    debugPrint('[startup] 无设备名，跳过 Syncthing API 写入');
+  }
+}
 
-  try {
-    await Process.start(syncthingPath, ['-no-browser', '-no-restart', '-home', configPath],
-        mode: ProcessStartMode.detached);
-    debugPrint('Syncthing 已启动');
-  } catch (e) {
-    debugPrint('启动 Syncthing 失败: $e');
+Future<void> _startDesktopServices() async {
+  debugPrint('[startup] 桌面端启动流程开始');
+  final syncthingOk = await NativeService.startSyncthingService();
+  debugPrint('[startup] Syncthing 就绪 => $syncthingOk');
+  final backend = BackendServer();
+  await backend.start();
+  debugPrint('[startup] Backend HTTPS 已启动');
+  if (syncthingOk) {
+    await SyncthingApi().ensureOverwriteRemoteDeviceNamesOnConnect();
   }
 }

@@ -3,8 +3,8 @@ import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/models/device.dart';
 import '../../core/models/folder.dart';
-import '../../features/devices/providers/device_provider.dart';
 import '../../features/folders/providers/folder_provider.dart';
+import '../../shared/widgets/device_info_panel.dart';
 class DeviceDetailPage extends StatefulWidget {
   final Device device;
   final void Function(Folder folder) onFolderTap;
@@ -42,25 +42,6 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
     }
   }
 
-  Future<void> _removeDevice() async {
-    if (widget.device.isLocal) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('无法移除本机设备'), backgroundColor: Colors.orange),
-      );
-      return;
-    }
-    try {
-      await context.read<DeviceProvider>().removeDevice(widget.device.id);
-      if (mounted) widget.onBack();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('移除失败: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -69,9 +50,13 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildHeader(context),
-          const SizedBox(height: 24),
-          _buildDeviceInfo(context),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
+          DeviceInfoPanel(
+            device: widget.device,
+            margin: EdgeInsets.zero,
+            onDeleted: widget.onBack,
+          ),
+          const SizedBox(height: 16),
           Expanded(child: _buildFolderList(context)),
         ],
       ),
@@ -91,66 +76,11 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
         const SizedBox(width: 12),
         Expanded(
           child: Text(
-            widget.device.name,
+            widget.device.displayName,
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
           ),
         ),
-        if (widget.device.isLocal)
-          Chip(
-            label: const Text('本机'),
-            color: WidgetStatePropertyAll(Theme.of(context).colorScheme.primary),
-            labelStyle: const TextStyle(color: Colors.white, fontSize: 12),
-          ),
-        const Spacer(),
-        if (!widget.device.isLocal)
-          TextButton.icon(
-            onPressed: _removeDevice,
-            icon: const Icon(Icons.delete_outline, color: Colors.red),
-            label: const Text('移除设备', style: TextStyle(color: Colors.red)),
-          ),
       ],
-    );
-  }
-
-  Widget _buildDeviceInfo(BuildContext context) {
-    final d = widget.device;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: d.isLocal ? Theme.of(context).colorScheme.primary : Colors.green,
-              child: Icon(
-                d.isLocal ? Icons.computer : Icons.phone_android,
-                size: 28, color: Colors.white,
-              ),
-            ),
-            const SizedBox(width: 20),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(d.id, style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Icon(Icons.circle, size: 10,
-                        color: d.isLocal || d.connected ? Colors.green : Colors.grey),
-                      const SizedBox(width: 6),
-                      Text(d.isLocal ? '本机设备' : (d.connected ? '在线' : '离线'),
-                        style: Theme.of(context).textTheme.bodyMedium),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            if (d.addresses != null && d.addresses!.isNotEmpty)
-              Text(d.addresses!.first, style: Theme.of(context).textTheme.bodySmall),
-          ],
-        ),
-      ),
     );
   }
 

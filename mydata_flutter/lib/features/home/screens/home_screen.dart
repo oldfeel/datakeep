@@ -6,6 +6,7 @@ import '../../folders/providers/folder_provider.dart';
 import '../../../core/models/device.dart';
 import '../../../core/models/folder.dart';
 import '../../../shared/widgets/folder_card.dart';
+import '../../../shared/widgets/device_info_panel.dart';
 import '../../folders/screens/folder_detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -95,13 +96,18 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           }
 
-          // 如果没有选中设备，默认选中第一个设备
+          // 启动后默认选中本机设备
           if (_selectedDeviceId == null && deviceProvider.devices.isNotEmpty) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || _selectedDeviceId != null) return;
+              final local = deviceProvider.devices.firstWhere(
+                (d) => d.isLocal,
+                orElse: () => deviceProvider.devices.first,
+              );
               setState(() {
-                _selectedDeviceId = deviceProvider.devices.first.id;
+                _selectedDeviceId = local.id;
               });
-              _loadDeviceFolders(_selectedDeviceId!);
+              _loadDeviceFolders(local.id);
             });
           }
 
@@ -190,7 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           label: Text(
-            device.name,
+            device.displayName,
             style: TextStyle(
               fontSize: 13,
               fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
@@ -248,15 +254,52 @@ class _HomeScreenState extends State<HomeScreen> {
   // 构建文件夹列表
   Widget _buildFoldersList(BuildContext context) {
     if (_selectedDeviceId == null) {
-      return const Center(
-        child: Text('请选择一个设备'),
-      );
+      return const Center(child: Text('请选择一个设备'));
     }
 
-    if (_isLoadingFolders) {
-      return const Center(
-        child: CircularProgressIndicator(),
+    final devices = context.watch<DeviceProvider>().devices;
+    Device? selectedDevice;
+    for (final d in devices) {
+      if (d.id == _selectedDeviceId) {
+        selectedDevice = d;
+        break;
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (selectedDevice != null)
+          DeviceInfoPanel(
+            device: selectedDevice,
+            onDeleted: () => _onDeviceDeleted(context),
+          ),
+        Expanded(child: _buildFoldersContent(context)),
+      ],
+    );
+  }
+
+  void _onDeviceDeleted(BuildContext context) {
+    final provider = context.read<DeviceProvider>();
+    Device? next;
+    if (provider.devices.isNotEmpty) {
+      next = provider.devices.firstWhere(
+        (d) => d.isLocal,
+        orElse: () => provider.devices.first,
       );
+    }
+    setState(() {
+      _selectedDeviceId = next?.id;
+      _deviceFolders = [];
+    });
+    if (next != null) {
+      _loadDeviceFolders(next.id);
+    }
+  }
+
+  Widget _buildFoldersContent(BuildContext context) {
+    if (_isLoadingFolders) {
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_foldersError != null) {

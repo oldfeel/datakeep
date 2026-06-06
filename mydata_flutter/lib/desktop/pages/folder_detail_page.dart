@@ -115,7 +115,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                   const SizedBox(width: 4),
                   Icon(Icons.home, size: 18, color: Theme.of(context).colorScheme.primary),
                   const SizedBox(width: 4),
-                  Text(widget.device.name,
+                  Text(widget.device.displayName,
                     style: TextStyle(color: Theme.of(context).colorScheme.primary)),
                 ],
               ),

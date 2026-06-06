@@ -4,6 +4,7 @@ import '../../../core/models/folder.dart';
 import '../../../core/services/api_service.dart';
 import '../../folders/screens/folder_detail_screen.dart';
 import '../../../shared/widgets/folder_card.dart';
+import '../../../shared/widgets/device_info_panel.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
   final String deviceId;
@@ -159,8 +160,15 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
               ],
             ),
           ),
-        // 设备信息
-        _buildDeviceInfo(),
+        // 设备信息（可展开/收起）
+        if (_device != null)
+          DeviceInfoPanel(
+            device: _device!,
+            wifiName: _wifiName,
+            onDeleted: () {
+              if (mounted) Navigator.of(context).pop();
+            },
+          ),
         // 文件夹列表
         Expanded(
           child: _folders.isEmpty
@@ -192,147 +200,6 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   : _buildMobileFolderList(),
         ),
       ],
-    );
-  }
-
-  Widget _buildDeviceInfo() {
-    if (_device == null) return const SizedBox.shrink();
-
-    return Card(
-      margin: const EdgeInsets.all(16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: _getDeviceTypeColor(_device!.type),
-                  radius: 24,
-                  child: Icon(
-                    _getDeviceTypeIcon(_device!.type),
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(
-                            _device!.name,
-                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                          ),
-                          if (_device!.isLocal) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.primary,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                '本地',
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: Colors.white,
-                                    ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(
-                            _device!.connected || _device!.isLocal
-                                ? Icons.wifi
-                                : Icons.wifi_off,
-                            size: 16,
-                            color: _device!.connected || _device!.isLocal
-                                ? Colors.green
-                                : Colors.grey,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            _device!.connected || _device!.isLocal
-                                ? '在线'
-                                : '离线',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                          if (_device!.connectionType != null &&
-                              _device!.connectionType != 'local') ...[
-                            const SizedBox(width: 16),
-                            Text(
-                              _getConnectionTypeText(_device!.connectionType!),
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            if (_wifiName != null) ...[
-              const Divider(),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(Icons.wifi, size: 16),
-                  const SizedBox(width: 8),
-                  Text(
-                    '当前WiFi: $_wifiName',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ],
-            if (_device!.addresses != null && _device!.addresses!.isNotEmpty) ...[
-              const Divider(),
-              const SizedBox(height: 8),
-              Text(
-                '地址:',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
-              const SizedBox(height: 4),
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                children: _device!.addresses!.take(3).map((addr) {
-                  return Chip(
-                    label: Text(
-                      addr,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    visualDensity: VisualDensity.compact,
-                  );
-                }).toList(),
-              ),
-            ],
-            if (_device!.version != null && _device!.version != 'local') ...[
-              const Divider(),
-              const SizedBox(height: 8),
-              Text(
-                '版本: ${_device!.version}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ],
-        ),
-      ),
     );
   }
 
@@ -388,45 +255,6 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         );
       },
     );
-  }
-
-  Color _getDeviceTypeColor(String type) {
-    switch (type) {
-      case 'desktop':
-        return Colors.blue;
-      case 'mobile':
-        return Colors.green;
-      case 'server':
-        return Colors.purple;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  IconData _getDeviceTypeIcon(String type) {
-    switch (type) {
-      case 'desktop':
-        return Icons.desktop_windows;
-      case 'mobile':
-        return Icons.phone_android;
-      case 'server':
-        return Icons.dns;
-      default:
-        return Icons.devices;
-    }
-  }
-
-  String _getConnectionTypeText(String type) {
-    switch (type) {
-      case 'tcp-server':
-        return 'TCP 服务器';
-      case 'tcp-client':
-        return 'TCP 客户端';
-      case 'quic':
-        return 'QUIC';
-      default:
-        return type;
-    }
   }
 }
 

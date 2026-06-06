@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=MyData
+Comment=跨平台文件同步应用
+Exec=mydata_flutter
+Icon=app_icon
+Type=Application
+Categories=Utility;FileTransfer;
+StartupWMClass=com.example.mydata_flutter

@@ -39,23 +39,30 @@ class ApiService {
   }
 
   /// 执行 GET 请求
-  static Future<Map<String, dynamic>> _get(String endpoint) async {
+  static Future<Map<String, dynamic>> _get(
+    String endpoint, {
+    Duration? timeout,
+    bool silent = false,
+  }) async {
     await initialize();
     
     try {
       final uri = Uri.parse('$_baseUrl$endpoint');
-      debugPrint('API GET: $uri');
+      if (!silent) debugPrint('API GET: $uri');
       
+      final effectiveTimeout = timeout ?? const Duration(seconds: 5);
       final response = await _httpClient.get(uri).timeout(
-        const Duration(seconds: 5),
+        effectiveTimeout,
         onTimeout: () {
           throw Exception('请求超时：后端服务可能未启动，请确保应用已启动后端服务');
         },
       );
 
-      debugPrint('API 响应状态: ${response.statusCode}');
-      if (response.statusCode != 200) {
-        debugPrint('API 响应体: ${response.body}');
+      if (!silent) {
+        debugPrint('API 响应状态: ${response.statusCode}');
+        if (response.statusCode != 200) {
+          debugPrint('API 响应体: ${response.body}');
+        }
       }
 
       if (response.statusCode == 200) {
@@ -84,11 +91,13 @@ class ApiService {
         } else {
           return jsonData as Map<String, dynamic>;
         }
+      } else if (response.statusCode == 503 && silent) {
+        return {'code': 1006, 'data': null};
       } else {
         throw Exception('HTTP 错误: ${response.statusCode}');
       }
     } catch (e) {
-      debugPrint('API 请求失败: $e');
+      if (!silent) debugPrint('API 请求失败: $e');
       // 如果是连接被拒绝，提供更友好的错误信息
       final errorStr = e.toString();
       if (errorStr.contains('连接被拒绝') || 
@@ -129,6 +138,15 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final jsonData = json.decode(response.body);
+        
+        if (jsonData is Map<String, dynamic>) {
+          if (jsonData.containsKey('code') && jsonData['code'] != 0) {
+            throw Exception(jsonData['data']?.toString() ?? '请求失败');
+          }
+          if (jsonData.containsKey('error')) {
+            throw Exception(jsonData['error'].toString());
+          }
+        }
         
         if (jsonData is Map<String, dynamic> && jsonData['success'] == true) {
           return jsonData['data'] as Map<String, dynamic>;
@@ -234,6 +252,7 @@ class ApiService {
     try {
       // 如果 deviceId 为空，使用 'local' 作为默认值
       final validDeviceId = deviceId.isEmpty ? 'local' : deviceId;
+      final localDeviceId = await getLocalDeviceId();
       final response = await _get('/device/$validDeviceId/folders');
       
       // 处理 client 后端响应格式
@@ -256,7 +275,7 @@ class ApiService {
           name: json['label'] ?? json['name'] ?? 'Unknown Folder',
           path: json['path'] ?? '',
           deviceId: deviceId,
-          isLocal: deviceId == 'local',
+          isLocal: validDeviceId == 'local' || validDeviceId == localDeviceId,
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
           status: 'synced',
@@ -385,28 +404,64 @@ class ApiService {
     }
   }
 
-  /// 添加设备
+  /// 桌面操作前确保 Syncthing 可用
+  static Future<void> _ensureSyncthingReady() async {
+    if (kIsWeb) return;
+    if (!Platform.isLinux && !Platform.isWindows && !Platform.isMacOS) return;
+    final ok = await NativeService.ensureSyncthingRunning();
+    if (!ok) {
+      throw Exception('Syncthing 未运行，请重启应用后再试');
+    }
+  }
+
+  /// 添加设备（本机 Syncthing 配置，需对端也添加本机才能完成配对）
   static Future<void> addDevice({
     required String deviceID,
     required String name,
   }) async {
     try {
+      await _ensureSyncthingReady();
       await _post('/syncthing/config/devices', {
-        'deviceID': deviceID.replaceAll(RegExp(r'[\s-]'), ''),
+        'deviceID': deviceID,
         'name': name,
-        'addresses': ['dynamic'],
-        'compression': 'metadata',
-        'introducer': false,
-        'autoAcceptFolders': false,
-        'untrusted': false,
-        'numConnections': 0,
-        'maxRecvKbps': 0,
-        'maxSendKbps': 0,
       });
     } catch (e) {
       debugPrint('添加设备失败: $e');
       throw Exception('添加设备失败: $e');
     }
+  }
+
+  /// 获取待确认的设备（未知设备尝试连接时出现在对端）
+  static Future<Map<String, dynamic>> getPendingDevices() async {
+    try {
+      final response = await _get('/syncthing/cluster/pending/devices', silent: true);
+      if (response['code'] == 1006) return {};
+      if (response.containsKey('code') && response['code'] == 0) {
+        final data = response['data'];
+        if (data is Map<String, dynamic>) return data;
+      }
+      return {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  /// 忽略/关闭待确认设备通知
+  static Future<void> dismissPendingDevice(String deviceId) async {
+    await initialize();
+    final uri = Uri.parse('$_baseUrl/syncthing/cluster/pending/devices?device=${Uri.encodeComponent(deviceId)}');
+    await _httpClient.delete(uri).timeout(const Duration(seconds: 5));
+  }
+
+  /// 接受待确认设备：添加到本机并清除 pending
+  static Future<void> acceptPendingDevice({
+    required String deviceId,
+    required String name,
+  }) async {
+    await addDevice(deviceID: deviceId, name: name);
+    try {
+      await dismissPendingDevice(deviceId);
+    } catch (_) {}
   }
 
 
@@ -426,7 +481,13 @@ class ApiService {
     int timeout = 60,
   }) async {
     try {
-      final response = await _get('/syncthing/events?since=$since&timeout=$timeout');
+      final response = await _get(
+        '/syncthing/events?since=$since&timeout=$timeout',
+        timeout: Duration(seconds: timeout + 15),
+        silent: true,
+      );
+
+      if (response['code'] == 1006) return [];
       
       // Syncthing 事件 API 直接返回数组
       if (response is List) {
@@ -442,7 +503,6 @@ class ApiService {
       }
       return [];
     } catch (e) {
-      debugPrint('获取 Syncthing 事件失败: $e');
       return [];
     }
   }
@@ -484,7 +544,22 @@ class ApiService {
   }
 
   /// 获取局域网发现的设备 ID 列表（带名称）
-  static Future<List<Map<String, String>>> getDiscoveredDevices() async {
+  static Future<List<Map<String, String>>> getDiscoveredDevices({
+    int retries = 5,
+    Duration interval = const Duration(seconds: 3),
+  }) async {
+    for (var attempt = 0; attempt < retries; attempt++) {
+      final devices = await _fetchDiscoveredDevicesOnce();
+      if (devices.isNotEmpty) return devices;
+      if (attempt < retries - 1) {
+        debugPrint('局域网扫描未发现设备，${interval.inSeconds}s 后重试 (${attempt + 1}/$retries)');
+        await Future.delayed(interval);
+      }
+    }
+    return [];
+  }
+
+  static Future<List<Map<String, String>>> _fetchDiscoveredDevicesOnce() async {
     try {
       final discovery = await getDiscovery();
       debugPrint('Discovery 数据: $discovery');
@@ -496,12 +571,20 @@ class ApiService {
         for (var device in configuredDevices) {
           // 移除连字符和空格进行匹配
           final cleanId = device.id.replaceAll(RegExp(r'[\s-]'), '');
-          deviceNameMap[cleanId] = device.name;
+          if (device.name.trim().isNotEmpty) {
+            deviceNameMap[cleanId] = device.name.trim();
+          }
         }
       } catch (e) {
         debugPrint('获取已配置设备列表失败（用于匹配名称）: $e');
       }
       
+      // 获取本机 ID，排除自身
+      String localCleanId = '';
+      try {
+        localCleanId = (await getLocalDeviceId()).replaceAll(RegExp(r'[\s-]'), '');
+      } catch (_) {}
+
       // discovery 格式应该是: { "deviceID1": {...}, "deviceID2": {...} }
       // 过滤掉非设备 ID 的 key（如 "code", "success", "error", "data" 等）
       final discoveredDevices = <Map<String, String>>[];
@@ -519,10 +602,26 @@ class ApiService {
         if (deviceId.length < 20) {
           continue;
         }
-        
-        // 尝试从已配置的设备中查找名称
+
         final cleanId = deviceId.replaceAll(RegExp(r'[\s-]'), '');
-        final deviceName = deviceNameMap[cleanId] ?? deviceId;
+        if (localCleanId.isNotEmpty && cleanId == localCleanId) {
+          continue;
+        }
+        
+        // 尝试从 discovery 条目或已配置设备中获取名称
+        String deviceName = deviceId;
+        final entry = discovery[deviceId];
+        if (entry is Map) {
+          final announceName = entry['name'] ?? entry['deviceName'];
+          if (announceName is String && announceName.isNotEmpty) {
+            deviceName = announceName;
+          }
+        }
+        final cleanForMap = deviceId.replaceAll(RegExp(r'[\s-]'), '');
+        deviceName = deviceNameMap[cleanForMap] ?? deviceName;
+        if (deviceName.trim().isEmpty) {
+          deviceName = deviceId;
+        }
         
         discoveredDevices.add({
           'id': deviceId,
@@ -687,6 +786,7 @@ class ApiService {
   /// 删除设备
   static Future<void> removeDevice(String deviceId) async {
     try {
+      await _ensureSyncthingReady();
       await _delete('/device/${Uri.encodeComponent(deviceId)}');
     } catch (e) {
       debugPrint('删除设备失败: $e');
