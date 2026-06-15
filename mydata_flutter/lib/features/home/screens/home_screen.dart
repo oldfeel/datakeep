@@ -123,7 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         },
       ),
-      floatingActionButton: _selectedDeviceId != null
+      floatingActionButton: _isSelectedLocalDevice(context)
           ? FloatingActionButton(
               onPressed: () {
                 _showAddFolderDialog(context);
@@ -196,7 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           label: Text(
-            device.displayName,
+            isLocal ? '本机' : device.displayName,
             style: TextStyle(
               fontSize: 13,
               fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
@@ -463,6 +463,15 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  bool _isSelectedLocalDevice(BuildContext context) {
+    if (_selectedDeviceId == null) return false;
+    final local = context.read<DeviceProvider>().devices.firstWhere(
+      (d) => d.isLocal,
+      orElse: () => Device(id: '', name: ''),
+    );
+    return local.id == _selectedDeviceId;
   }
 
   // 显示添加文件夹对话框

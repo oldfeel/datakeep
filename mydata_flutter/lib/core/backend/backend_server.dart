@@ -28,6 +28,8 @@ class BackendServer {
     final router = Router()
       ..get('/api/devices', _handleDevices)
       ..get('/api/device/<deviceId>/folders', _handleDeviceFolders)
+      ..post('/api/device/local/folders', _handleCreateFolder)
+      ..delete('/api/device/<deviceId>/folders/<folderId>', _handleDeleteFolder)
       ..delete('/api/device/<deviceId>', _handleRemoveDevice)
       ..get('/api/deviceid', _handleDeviceId)
       ..get('/api/folder/<folderId>', _handleFolderFiles)
@@ -265,8 +267,32 @@ class BackendServer {
     return _json({'code': 0, 'data': {'wifiName': ''}});
   }
 
-  Future<Response> _handleSharing(Request request, String folderId) async =>
-      _json({'code': 0, 'data': 'ok'});
+  Future<Response> _handleSharing(Request request, String folderId) async {
+    final body = utf8.decode(await request.read().expand((e) => e).toList());
+    final data = json.decode(body) as Map<String, dynamic>;
+    var sharedDevices = (data['sharedDevices'] as List?)?.cast<String>() ?? [];
+
+    // 自动加入本机设备
+    final localId = await _api.getLocalDeviceId();
+    if (localId != null && !sharedDevices.contains(localId)) {
+      sharedDevices = [localId, ...sharedDevices];
+    }
+
+    // 获取当前文件夹配置
+    final folder = await _api.proxyGet('/rest/config/folders/$folderId');
+    if (folder.containsKey('error')) {
+      return _json({'code': 1004, 'data': '文件夹不存在'}, status: 404);
+    }
+    // 更新 devices 列表
+    folder['devices'] = sharedDevices.map((id) => <String, dynamic>{
+      'deviceID': id, 'introducedBy': '',
+    }).toList();
+    final result = await _api.proxyPut('/rest/config/folders/$folderId', folder);
+    if (result.containsKey('error')) {
+      return _json({'code': 1005, 'data': '保存失败: ${result['error']}'}, status: 500);
+    }
+    return _json({'code': 0, 'data': {'message': '共享设置已更新'}});
+  }
 
   Future<Response> _handleSyncthingEvents(Request request) async {
     final since = request.url.queryParameters['since'] ?? '0';
@@ -393,6 +419,49 @@ class BackendServer {
       return _json({'code': 1003, 'data': '删除设备失败: ${result['error']}'}, status: 500);
     }
     return _json({'code': 0, 'data': {'message': '设备移除成功', 'deviceID': deviceId}});
+  }
+
+  Future<Response> _handleCreateFolder(Request request) async {
+    final body = utf8.decode(await request.read().expand((e) => e).toList());
+    final data = json.decode(body) as Map<String, dynamic>;
+    final id = data['id'] ?? '';
+    final label = data['label'] ?? data['name'] ?? id;
+    final path = data['path'] ?? '';
+    if (id.isEmpty || path.isEmpty) {
+      return _json({'code': 1002, 'data': '缺少必填字段'}, status: 400);
+    }
+
+    // 检查是否已存在相同路径或 ID 的文件夹
+    final existing = _api.getFoldersFromConfig();
+    for (final f in existing) {
+      if (f['id'] == id) {
+        return _json({'code': 1003, 'data': '文件夹 ID 已存在: $id'}, status: 400);
+      }
+      final normPath = path.replaceAll(RegExp(r'/+$'), '');
+      final existPath = (f['path'] ?? '').replaceAll(RegExp(r'/+$'), '');
+      if (normPath == existPath) {
+        return _json({'code': 1003, 'data': '该路径已存在同步文件夹'}, status: 400);
+      }
+    }
+
+    final folderData = <String, dynamic>{
+      'id': id, 'label': label, 'path': path, 'type': data['type'] ?? 'sendreceive',
+      'filesystemType': 'basic', 'rescanIntervalS': 3600, 'ignorePerms': false,
+      'autoNormalize': true, 'devices': [],
+    };
+    final result = await _api.proxyPost('/rest/config/folders', folderData);
+    if (result.containsKey('error')) {
+      return _json({'code': 1003, 'data': '添加文件夹失败: ${result['error']}'}, status: 500);
+    }
+    return _json({'code': 0, 'data': {'id': id, 'label': label, 'path': path}});
+  }
+
+  Future<Response> _handleDeleteFolder(Request request, String deviceId, String folderId) async {
+    final result = await _api.proxyDelete('/rest/config/folders/$folderId');
+    if (result.containsKey('error')) {
+      return _json({'code': 1003, 'data': '删除文件夹失败: ${result['error']}'}, status: 500);
+    }
+    return _json({'code': 0, 'data': {'message': '文件夹已删除'}});
   }
 
   Future<Response> _handleHealth(Request request) async =>

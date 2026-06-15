@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/device.dart';
@@ -331,6 +332,11 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
                       ),
                     ),
                 ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.open_in_browser, size: 20),
+                tooltip: '打开 Syncthing 管理页面',
+                onPressed: () => Process.run('xdg-open', ['http://localhost:8384']),
               ),
               IconButton(
                 icon: const Icon(Icons.refresh, size: 20),

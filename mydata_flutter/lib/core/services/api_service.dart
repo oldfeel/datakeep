@@ -793,4 +793,21 @@ class ApiService {
       throw Exception('删除设备失败: $e');
     }
   }
+
+  /// 获取设备列表（原始 JSON）
+  static Future<List<Map<String, dynamic>>> getDevicesRaw() async {
+    final resp = await _get('/devices');
+    return ((resp['data'] as List?)?.cast<Map<String, dynamic>>()) ?? [];
+  }
+
+  /// 获取设备文件夹列表（原始 JSON）
+  static Future<List<Map<String, dynamic>>> getDeviceFoldersRaw(String deviceId) async {
+    final resp = await _get('/device/$deviceId/folders');
+    return ((resp['data'] as List?)?.cast<Map<String, dynamic>>()) ?? [];
+  }
+
+  /// 更新文件夹共享设备列表
+  static Future<void> shareFolder(String folderId, List<String> sharedDevices) async {
+    await _post('/folder/$folderId/sharing', {'sharedDevices': sharedDevices});
+  }
 }

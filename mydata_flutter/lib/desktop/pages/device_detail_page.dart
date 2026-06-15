@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/models/device.dart';
 import '../../core/models/folder.dart';
 import '../../features/folders/providers/folder_provider.dart';
+import '../../core/services/api_service.dart';
 import '../../shared/widgets/device_info_panel.dart';
 class DeviceDetailPage extends StatefulWidget {
   final Device device;
@@ -109,12 +111,14 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
             Icon(Icons.folder_open, size: 64, color: Theme.of(context).colorScheme.primary),
             const SizedBox(height: 16),
             Text('暂无文件夹', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 8),
-            ElevatedButton.icon(
-              onPressed: _showAddFolderDialog,
-              icon: const Icon(Icons.add),
-              label: const Text('添加文件夹'),
-            ),
+            if (widget.device.isLocal) ...[
+              const SizedBox(height: 8),
+              ElevatedButton.icon(
+                onPressed: _showAddFolderDialog,
+                icon: const Icon(Icons.add),
+                label: const Text('添加文件夹'),
+              ),
+            ],
           ],
         ),
       );
@@ -129,12 +133,13 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
               fontWeight: FontWeight.w600,
             )),
             const Spacer(),
-            ElevatedButton.icon(
-              onPressed: _showAddFolderDialog,
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('添加'),
-              style: ElevatedButton.styleFrom(visualDensity: VisualDensity.compact),
-            ),
+            if (widget.device.isLocal)
+              ElevatedButton.icon(
+                onPressed: _showAddFolderDialog,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('添加'),
+                style: ElevatedButton.styleFrom(visualDensity: VisualDensity.compact),
+              ),
             const SizedBox(width: 8),
             IconButton(
               icon: const Icon(Icons.refresh, size: 20),
@@ -198,7 +203,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: idController, decoration: const InputDecoration(labelText: '文件夹 ID')),
+              TextField(controller: idController, decoration: const InputDecoration(labelText: '文件夹 ID（英文标识）')),
               const SizedBox(height: 16),
               TextField(controller: nameController, decoration: const InputDecoration(labelText: '文件夹名称')),
               const SizedBox(height: 16),
@@ -215,6 +220,9 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                       final result = await FilePicker.platform.getDirectoryPath();
                       if (result != null) {
                         pathController.text = result;
+                        final dirName = result.split('/').last;
+                        if (idController.text.isEmpty) idController.text = dirName;
+                        if (nameController.text.isEmpty) nameController.text = dirName;
                       }
                     },
                   ),
@@ -227,7 +235,12 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
           TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('取消')),
           ElevatedButton(
             onPressed: () async {
-              if (idController.text.isEmpty || nameController.text.isEmpty || pathController.text.isEmpty) return;
+              if (idController.text.isEmpty || nameController.text.isEmpty || pathController.text.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('请填写完整信息'), backgroundColor: Colors.orange),
+                );
+                return;
+              }
               try {
                 await context.read<FolderProvider>().createFolder(
                   id: idController.text,
@@ -284,13 +297,108 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   void _showSharingDialog(BuildContext context, Folder folder) {
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('文件夹共享设置'),
-        content: const Text('共享功能待实现'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('关闭')),
-        ],
+      builder: (ctx) => _FolderSharingDialog(folder: folder, onDone: _loadFolders),
+    );
+  }
+}
+
+class _FolderSharingDialog extends StatefulWidget {
+  final Folder folder;
+  final VoidCallback onDone;
+
+  const _FolderSharingDialog({required this.folder, required this.onDone});
+
+  @override
+  State<_FolderSharingDialog> createState() => _FolderSharingDialogState();
+}
+
+class _FolderSharingDialogState extends State<_FolderSharingDialog> {
+  final Set<String> _selected = {};
+  List<Map<String, dynamic>> _devices = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final list = await ApiService.getDevicesRaw();
+      final folderResult = await ApiService.getDeviceFoldersRaw(widget.folder.deviceId);
+      final current = folderResult.firstWhere(
+        (f) => f['id'] == widget.folder.id,
+        orElse: () => <String, dynamic>{},
+      );
+      final sharedIds = (current['sharedDevices'] as List?)?.cast<String>() ?? [];
+
+      if (mounted) {
+        setState(() {
+          _devices = list;
+          _selected.addAll(sharedIds);
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('加载共享设置失败: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _save() async {
+    try {
+      await ApiService.shareFolder(widget.folder.id, _selected.toList());
+      if (mounted) {
+        Navigator.of(context).pop();
+        widget.onDone();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('共享设置: ${widget.folder.name}'),
+      content: SizedBox(
+        width: 400,
+        height: 300,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _devices.isEmpty
+                ? const Center(child: Text('没有其他设备'))
+                : ListView(
+                    children: _devices.map((d) {
+                      final id = d['deviceID']?.toString() ?? '';
+                      final isLocal = d['connectionType'] == 'local' || id == 'local';
+                      final checked = isLocal || _selected.contains(id);
+                      return CheckboxListTile(
+                        title: Text(d['name']?.toString() ?? id, style: TextStyle(
+                          fontSize: 14, fontWeight: isLocal ? FontWeight.w600 : FontWeight.normal,
+                        )),
+                        subtitle: Text(isLocal ? '本机（始终共享）' : id,
+                          style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+                        value: checked,
+                        onChanged: isLocal ? null : (v) {
+                          setState(() {
+                            if (v == true) { _selected.add(id); } else { _selected.remove(id); }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
       ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        ElevatedButton(onPressed: _save, child: const Text('保存')),
+      ],
     );
   }
 }
