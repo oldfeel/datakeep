@@ -14,7 +14,7 @@ IconData getFileIcon(String fileName, {bool isDir = false}) {
   if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a'].contains(ext)) {
     return Icons.audiotrack;
   }
-  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'].contains(ext)) {
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'dump'].contains(ext)) {
     return Icons.archive;
   }
   if (['doc', 'docx', 'txt', 'rtf', 'odt'].contains(ext)) {
@@ -49,7 +49,7 @@ Color getFileIconColor(String fileName, {bool isDir = false}) {
   if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a'].contains(ext)) {
     return Colors.purple;
   }
-  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'].contains(ext)) {
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'dump'].contains(ext)) {
     return Colors.brown;
   }
   if (['doc', 'docx', 'txt', 'rtf', 'odt'].contains(ext)) {

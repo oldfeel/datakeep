@@ -210,32 +210,32 @@ class BackendServer {
 
   Future<Response> _handleFolderFiles(Request request, String folderId) async {
     final path = request.url.queryParameters['path'] ?? '';
-    final params = <String, String>{'folder': folderId};
-    if (path.isNotEmpty) params['path'] = path;
-    final result = await _api.proxyGet('/rest/db/browse', queryParams: params);
-    if (result.containsKey('error') || result.isEmpty) {
-      final folders = _api.getFoldersFromConfig();
-      final folder = folders.cast<Map<String, dynamic>?>().firstWhere(
-        (f) => f?['id'] == folderId,
-        orElse: () => null,
-      );
-      if (folder != null) {
-        final files = _api.browseLocalDirectory(folder['path'] as String, path);
-        return _json({'code': 0, 'data': files});
-      }
+    // 从 config.xml 获取文件夹真实路径
+    final folders = _api.getFoldersFromConfig();
+    final folderCfg = folders.cast<Map<String, dynamic>?>().firstWhere(
+      (f) => f?['id'] == folderId, orElse: () => null,
+    );
+    if (folderCfg == null) {
       return _json({'code': 1005, 'data': '文件夹未找到'});
     }
-    return _json({'code': 0, 'data': result['data'] ?? []});
+    final files = _api.browseLocalDirectory(folderCfg['path'] as String, path);
+    return _json({'code': 0, 'data': files});
   }
 
   Future<Response> _handleFilePreview(Request request, String folderId) async {
-    final path = request.url.queryParameters['path'] ?? '';
-    if (path.isEmpty) return Response(400, body: '缺少 path 参数');
-    final bytes = await _api.proxyGetRaw('/rest/db/file', queryParams: {
-      'folder': folderId, 'file': path,
-    });
-    if (bytes.isEmpty) return Response(404, body: '文件未找到');
-    final ext = path.split('.').last.toLowerCase();
+    final filePath = request.url.queryParameters['path'] ?? '';
+    if (filePath.isEmpty) return Response(400, body: '缺少 path 参数');
+    // 从 config.xml 获取文件夹真实路径，直接读本地文件
+    final folders = _api.getFoldersFromConfig();
+    final folderCfg = folders.cast<Map<String, dynamic>?>().firstWhere(
+      (f) => f?['id'] == folderId, orElse: () => null,
+    );
+    if (folderCfg == null) return Response(404, body: '文件夹未找到');
+    final fullPath = '${folderCfg['path']}/$filePath';
+    final file = File(fullPath);
+    if (!file.existsSync()) return Response(404, body: '文件未找到');
+    final bytes = await file.readAsBytes();
+    final ext = filePath.split('.').last.toLowerCase();
     return Response.ok(bytes, headers: {'Content-Type': _mimeType(ext)});
   }
 

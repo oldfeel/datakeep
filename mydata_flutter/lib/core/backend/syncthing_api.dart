@@ -196,16 +196,23 @@ class SyncthingApi {
         if (!aIsDir && bIsDir) return 1;
         return a.path.compareTo(b.path);
       });
-      return entries.map((e) {
-        final stat = e.statSync();
-        final name = e.uri.pathSegments.last;
-        return {
-          'name': name,
-          'type': e is Directory ? 'dir' : 'file',
-          'size': e is File ? stat.size : 0,
-          'modTime': stat.modified.millisecondsSinceEpoch ~/ 1000,
-        };
-      }).toList();
+      final result = entries
+          .where((e) {
+            final name = e.path.split('/').last;
+            return name.isNotEmpty && name != '.';
+          })
+          .map((e) {
+            final stat = e.statSync();
+            final name = e.path.split('/').last;
+            return {
+              'name': name,
+              'type': e is Directory ? 'dir' : 'file',
+              'size': e is File ? stat.size : 0,
+              'modTime': stat.modified.millisecondsSinceEpoch ~/ 1000,
+              'ctime': stat.changed.millisecondsSinceEpoch ~/ 1000,
+            };
+          }).toList();
+      return result;
     } catch (e) {
       debugPrint('浏览本地目录失败: $e');
       return [];
