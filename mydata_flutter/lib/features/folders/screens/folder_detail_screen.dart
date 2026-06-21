@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/services/api_service.dart';
+import '../../../core/services/android_storage_service.dart';
 import '../../../core/models/folder.dart';
+import '../../../shared/utils/file_types.dart';
+import '../../../shared/utils/media_file_opener.dart';
 
 class FolderDetailScreen extends StatefulWidget {
   final String deviceId;
@@ -22,11 +26,34 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   String? _error;
   List<String> _currentPath = [];
   Folder? _folderInfo;
+  Map<String, dynamic>? _syncInfo;
+  Timer? _syncTimer;
+  bool _fixingPath = false;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    _syncTimer = Timer.periodic(const Duration(seconds: 3), (_) => _refreshSync());
+  }
+
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshSync() async {
+    try {
+      final info = await ApiService.getFolderSyncStatus(widget.folderId);
+      if (!mounted) return;
+      final wasSyncing = _syncInfo?['status'] == 'syncing';
+      setState(() => _syncInfo = info);
+      final isSyncing = info['status'] == 'syncing';
+      if (isSyncing || (wasSyncing && info['status'] == 'synced')) {
+        await _loadFiles();
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadData() async {
@@ -55,6 +82,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       );
 
       // 加载文件列表
+      await _refreshSync();
       await _loadFiles();
     } catch (e) {
       setState(() {
@@ -107,7 +135,21 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     _loadFiles();
   }
 
+  Future<void> _openMediaPreview(String filePath) async {
+    await openMediaPreview(
+      context,
+      folderId: widget.folderId,
+      folderPath: _folderInfo?.path ?? '',
+      filePath: filePath,
+    );
+  }
+
   void _previewFile(String filePath) async {
+    if (FileTypes.isVideo(filePath) || FileTypes.isAudio(filePath)) {
+      await _openMediaPreview(filePath);
+      return;
+    }
+
     try {
       final response = await ApiService.previewFile(
         widget.folderId,
@@ -198,6 +240,163 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     }
   }
 
+  Future<void> _fixFolderPath() async {
+    if (_fixingPath) return;
+    setState(() => _fixingPath = true);
+    try {
+      // 先尝试重新扫描（用户可能刚授予 All files access）
+      var result = await ApiService.fixFolderPath(widget.folderId);
+      await _refreshSync();
+      final writable = _syncInfo?['pathWritable'] == true;
+      if (!writable && mounted) {
+        final picked = await AndroidStorageService.pickSyncFolder();
+        if (picked != null && picked.writable) {
+          result = await ApiService.fixFolderPath(widget.folderId, path: picked.path);
+        } else if (picked != null && !picked.writable) {
+          throw Exception('所选目录仍不可写，请授予「所有文件访问」权限');
+        }
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result['message']?.toString() ?? '已更新同步目录'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      await _loadData();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('操作失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _fixingPath = false);
+    }
+  }
+
+  Future<void> _requestStorageAccess() async {
+    await AndroidStorageService.requestAllFilesAccess();
+  }
+
+  Widget _buildSyncBanner(BuildContext context) {
+    final info = _syncInfo!;
+    final status = info['status']?.toString() ?? 'unknown';
+    final completion = (info['completion'] as num?)?.toDouble() ?? 0.0;
+    final needFiles = (info['needFiles'] as num?)?.toInt() ?? 0;
+    final localFiles = (info['localFiles'] as num?)?.toInt() ?? 0;
+    final pullErrors = (info['pullErrors'] as num?)?.toInt() ?? 0;
+    final state = info['state']?.toString() ?? '';
+    final pathError = info['pathError']?.toString() ?? '';
+    final needsPathFix = info['needsPathFix'] == true;
+    final pathWritable = info['pathWritable'] != false;
+
+    Color color;
+    String title;
+    IconData icon;
+    if (status == 'error' || pullErrors > 0 || needsPathFix) {
+      color = Colors.red;
+      title = needsPathFix ? '目录无写入权限' : '同步出错';
+      icon = Icons.error_outline;
+    } else if (status == 'syncing') {
+      color = Colors.orange;
+      title = '正在同步…';
+      icon = Icons.sync;
+    } else if (status == 'waiting') {
+      color = Colors.blue;
+      title = '等待同步';
+      icon = Icons.hourglass_empty;
+    } else {
+      color = Colors.green;
+      title = '已同步';
+      icon = Icons.check_circle_outline;
+    }
+
+    final showProgress = status == 'syncing' ||
+        status == 'waiting' ||
+        needFiles > 0 ||
+        (completion > 0 && completion < 100);
+    final progress = (completion / 100).clamp(0.0, 1.0);
+
+    return Material(
+      color: color.withValues(alpha: 0.08),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: color, size: 20),
+                const SizedBox(width: 8),
+                Text(title, style: TextStyle(fontWeight: FontWeight.w600, color: color)),
+                const Spacer(),
+                Text(
+                  status == 'synced'
+                      ? '${completion.toStringAsFixed(0)}%'
+                      : (completion > 0 ? '${completion.toStringAsFixed(0)}%' : ''),
+                  style: TextStyle(color: color, fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+            if (showProgress) ...[
+              const SizedBox(height: 8),
+              LinearProgressIndicator(
+                value: progress > 0 ? progress : null,
+                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                color: color,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                status == 'waiting'
+                    ? '正在等待与对端建立连接并获取文件列表…'
+                    : '本地 $localFiles 个文件，待同步 $needFiles 个${state.isNotEmpty ? ' · $state' : ''}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ] else if (status == 'synced') ...[
+              const SizedBox(height: 4),
+              Text(
+                '本地 $localFiles 个文件',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (pathError.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(pathError, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red)),
+            ],
+            if (needsPathFix) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _fixingPath ? null : _requestStorageAccess,
+                    icon: const Icon(Icons.security, size: 18),
+                    label: const Text('授予存储权限'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _fixingPath ? null : _fixFolderPath,
+                    icon: _fixingPath
+                        ? const SizedBox(
+                            width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.folder_open, size: 18),
+                    label: Text(_fixingPath ? '处理中…' : '选择/修复目录'),
+                  ),
+                ],
+              ),
+            ] else if (!pathWritable) ...[
+              const SizedBox(height: 4),
+              Text('路径写入检测中…', style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 600;
@@ -245,6 +444,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                 )
               : Column(
                   children: [
+                    if (_syncInfo != null) _buildSyncBanner(context),
                     // 桌面端标题栏
                     if (isDesktop)
                       Container(

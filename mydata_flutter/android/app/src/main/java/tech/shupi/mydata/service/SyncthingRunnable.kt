@@ -19,6 +19,16 @@ class SyncthingRunnable(private val context: Context, private val command: Comma
         private const val LOG_FILE_MAX_LINES = 10
         
         private val syncthingProcess = AtomicReference<Process>()
+
+        /** 清理残留 Syncthing 进程，避免数据库锁导致 exit 1 */
+        fun killOrphanProcesses() {
+            try {
+                Runtime.getRuntime().exec(arrayOf("pkill", "-9", "-f", "libsyncthing.so")).waitFor()
+                Thread.sleep(300)
+            } catch (e: Exception) {
+                Log.w(TAG, "killOrphanProcesses failed", e)
+            }
+        }
     }
     
     enum class Command {
@@ -168,17 +178,20 @@ class SyncthingRunnable(private val context: Context, private val command: Comma
                     // Syncthing 正常关闭（通过 API 或 SIGKILL），无需操作
                 }
                 1 -> {
-                    Log.w(TAG, "Another Syncthing instance is already running, requesting restart")
-                    // 继续执行
+                    Log.w(TAG, "Another Syncthing instance is already running, scheduling restart")
+                    scheduleRestart()
                 }
                 3 -> {
                     Log.i(TAG, "Restarting syncthing")
-                    context.startService(Intent(context, SyncthingService::class.java)
-                        .setAction(SyncthingService.ACTION_RESTART))
+                    scheduleRestart()
+                }
+                141, 143 -> {
+                    Log.w(TAG, "Syncthing killed (exit $ret), scheduling restart")
+                    scheduleRestart()
                 }
                 else -> {
-                    Log.w(TAG, "Syncthing has crashed (exit code $ret)")
-                    // 可以在这里显示崩溃通知
+                    Log.w(TAG, "Syncthing has crashed (exit code $ret), scheduling restart")
+                    scheduleRestart()
                 }
             }
         } catch (e: Exception) {
@@ -191,6 +204,15 @@ class SyncthingRunnable(private val context: Context, private val command: Comma
         return capturedStdOut
     }
     
+    private fun scheduleRestart() {
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            context.startService(
+                Intent(context, SyncthingService::class.java)
+                    .setAction(SyncthingService.ACTION_RESTART),
+            )
+        }, 3000)
+    }
+
     fun killSyncthing() {
         val process = syncthingProcess.get()
         if (process != null) {

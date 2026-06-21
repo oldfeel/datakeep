@@ -74,6 +74,11 @@ dependencies:
   # 二维码扫描（Android/iOS）
   mobile_scanner: ^5.2.3
 
+  # 跨平台视频播放（Linux / Android / iOS / macOS / Windows）
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
+  media_kit_libs_video: ^1.0.7
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

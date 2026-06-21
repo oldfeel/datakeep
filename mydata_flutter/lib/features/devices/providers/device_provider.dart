@@ -27,19 +27,22 @@ class DeviceProvider with ChangeNotifier {
     ),
   );
 
-  // 获取所有设备
-  Future<void> fetchDevices() async {
+  // 获取所有设备；silent=true 时不显示全屏 loading（后台刷新用）
+  Future<void> fetchDevices({bool silent = false}) async {
     try {
-      _isLoading = true;
-      _error = null;
-      notifyListeners();
+      if (!silent) {
+        _isLoading = true;
+        _error = null;
+        notifyListeners();
+      }
 
       final devices = await ApiService.getDevices();
       _devices = devices;
+      if (silent) _error = null;
     } catch (e) {
       _error = e.toString();
     } finally {
-      _isLoading = false;
+      if (!silent) _isLoading = false;
       notifyListeners();
     }
   }

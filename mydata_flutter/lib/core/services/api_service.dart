@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import '../models/folder.dart';
 import '../models/device.dart';
 import 'native_service.dart';
+import 'android_storage_service.dart';
+import '../../shared/utils/sync_folder_paths.dart';
 
 /// API 服务，调用后端 API 服务器
 class ApiService {
@@ -270,6 +272,7 @@ class ApiService {
       }
       
       return folderList.map((json) {
+        final status = json['status']?.toString() ?? 'synced';
         return Folder(
           id: json['id'] ?? '',
           name: json['label'] ?? json['name'] ?? 'Unknown Folder',
@@ -278,9 +281,9 @@ class ApiService {
           isLocal: validDeviceId == 'local' || validDeviceId == localDeviceId,
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
-          status: 'synced',
-          fileCount: 0,
-          totalSize: 0,
+          status: status,
+          fileCount: (json['localFiles'] as num?)?.toInt() ?? 0,
+          totalSize: (json['globalBytes'] as num?)?.toInt() ?? 0,
         );
       }).toList();
     } catch (e) {
@@ -372,6 +375,50 @@ class ApiService {
     }
   }
 
+  /// 获取文件夹同步状态（Android 会附加 native 写权限检测结果）
+  static Future<Map<String, dynamic>> getFolderSyncStatus(String folderId) async {
+    try {
+      final response = await _get('/folder/${Uri.encodeComponent(folderId)}/status', silent: true);
+      Map<String, dynamic> sync;
+      if (response.containsKey('code') && response['code'] == 0) {
+        final data = response['data'];
+        sync = data is Map<String, dynamic> ? Map<String, dynamic>.from(data) : {'status': 'unknown', 'completion': 0.0};
+      } else {
+        sync = {'status': 'unknown', 'completion': 0.0};
+      }
+
+      if (Platform.isAndroid) {
+        final currentPath = sync['currentPath']?.toString() ?? '';
+        if (currentPath.isNotEmpty) {
+          final writable = await AndroidStorageService.canWriteToPath(currentPath);
+          sync['pathWritable'] = writable;
+          if (!writable) {
+            sync['pathError'] = isPublicStoragePath(currentPath)
+                ? 'Syncthing 无法写入 $currentPath。请授予「所有文件访问」权限，或重新选择同步目录。'
+                : 'Syncthing 无法写入 $currentPath，请重新选择同步目录。';
+            sync['needsPathFix'] = true;
+            if (sync['status'] != 'syncing') sync['status'] = 'error';
+          }
+        }
+      }
+      return sync;
+    } catch (e) {
+      debugPrint('获取文件夹同步状态失败: $e');
+      return {'status': 'unknown', 'completion': 0.0};
+    }
+  }
+
+  /// 更新文件夹同步路径或触发重新扫描
+  static Future<Map<String, dynamic>> fixFolderPath(String folderId, {String? path}) async {
+    final body = path != null ? {'path': path} : <String, dynamic>{};
+    final response = await _post('/folder/${Uri.encodeComponent(folderId)}/fix-path', body);
+    if (response['code'] != 0) {
+      throw Exception(response['data']?.toString() ?? '修复路径失败');
+    }
+    final data = response['data'];
+    return data is Map<String, dynamic> ? data : {'message': '已修复同步目录'};
+  }
+
   /// 获取文件夹文件列表
   static Future<List<Map<String, dynamic>>> getFolderFiles(
     String folderId, {
@@ -451,6 +498,57 @@ class ApiService {
     await initialize();
     final uri = Uri.parse('$_baseUrl/syncthing/cluster/pending/devices?device=${Uri.encodeComponent(deviceId)}');
     await _httpClient.delete(uri).timeout(const Duration(seconds: 5));
+  }
+
+  /// 获取待接受的共享文件夹
+  static Future<Map<String, dynamic>> getPendingFolders() async {
+    try {
+      final response = await _get('/syncthing/cluster/pending/folders', silent: true);
+      if (response['code'] == 1006) {
+        debugPrint('[pending] Syncthing 未运行');
+        return {};
+      }
+      if (response.containsKey('code') && response['code'] == 0) {
+        final data = response['data'];
+        if (data is Map<String, dynamic>) return data;
+      }
+      return {};
+    } catch (e) {
+      debugPrint('[pending] 查询待接受文件夹失败: $e');
+      return {};
+    }
+  }
+
+  /// 忽略待接受的共享文件夹
+  static Future<void> dismissPendingFolder({
+    required String folderId,
+    required String deviceId,
+  }) async {
+    await initialize();
+    final uri = Uri.parse(
+      '$_baseUrl/syncthing/cluster/pending/folders?folder=${Uri.encodeComponent(folderId)}&device=${Uri.encodeComponent(deviceId)}',
+    );
+    await _httpClient.delete(uri).timeout(const Duration(seconds: 10));
+  }
+
+  /// 接受待共享文件夹
+  static Future<Map<String, dynamic>> acceptPendingFolder({
+    required String folderId,
+    required String deviceId,
+    String? path,
+  }) async {
+    await initialize();
+    final body = <String, dynamic>{
+      'folder': folderId,
+      'device': deviceId,
+    };
+    if (path != null && path.isNotEmpty) body['path'] = path;
+    final response = await _post('/syncthing/cluster/pending/folders/accept', body);
+    if (response['code'] != 0) {
+      throw Exception(response['data']?.toString() ?? '接受共享失败');
+    }
+    final data = response['data'];
+    return data is Map<String, dynamic> ? data : {'message': '已接受共享文件夹'};
   }
 
   /// 接受待确认设备：添加到本机并清除 pending

@@ -7,12 +7,14 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 import 'cert_manager.dart';
 import 'syncthing_api.dart';
+import '../../shared/utils/sync_folder_paths.dart';
 
 class BackendServer {
   final SyncthingApi _api = SyncthingApi();
   late CertManager _certMgr;
   HttpServer? _server;
   String? _defaultLocalDeviceName;
+  bool _deviceNameEnsureAttempted = false;
 
   bool get isRunning => _server != null;
 
@@ -33,6 +35,8 @@ class BackendServer {
       ..delete('/api/device/<deviceId>', _handleRemoveDevice)
       ..get('/api/deviceid', _handleDeviceId)
       ..get('/api/folder/<folderId>', _handleFolderFiles)
+      ..get('/api/folder/<folderId>/status', _handleFolderStatus)
+      ..post('/api/folder/<folderId>/fix-path', _handleFixFolderPath)
       ..get('/api/folder/<folderId>/preview', _handleFilePreview)
       ..get('/api/wifi', _handleWifiInfo)
       ..get('/api/wifi-info', _handleWifiInfo)
@@ -41,6 +45,9 @@ class BackendServer {
       ..get('/api/syncthing/discovery', _handleSyncthingDiscovery)
       ..get('/api/syncthing/cluster/pending/devices', _handlePendingDevices)
       ..delete('/api/syncthing/cluster/pending/devices', _handleDismissPendingDevice)
+      ..get('/api/syncthing/cluster/pending/folders', _handlePendingFolders)
+      ..delete('/api/syncthing/cluster/pending/folders', _handleDismissPendingFolder)
+      ..post('/api/syncthing/cluster/pending/folders/accept', _handleAcceptPendingFolder)
       ..get('/api/syncthing/deviceid', _handleSyncthingDeviceId)
       ..post('/api/syncthing/config/devices', _handleSyncthingAddDevice)
       ..get('/health', _handleHealth);
@@ -118,11 +125,13 @@ class BackendServer {
   Future<Response> _handleDevices(Request request) async {
     final localId = await _api.getLocalDeviceId();
 
-    // Syncthing 运行中若 config 仍是 localhost，通过 API 写入手机型号
-    if (localId != null &&
+    // Syncthing 运行中若 config 仍是 localhost，通过 API 写入手机型号（仅尝试一次，避免 ConfigSaved 循环）
+    if (!_deviceNameEnsureAttempted &&
+        localId != null &&
         _defaultLocalDeviceName != null &&
         _defaultLocalDeviceName!.isNotEmpty) {
-      final configName = _api.getDeviceNameFromConfig(localId) ?? '';
+      _deviceNameEnsureAttempted = true;
+      final configName = await _api.getEffectiveDeviceName(localId);
       if (SyncthingApi.isPlaceholderName(configName, localId)) {
         debugPrint('[devices] config 名仍为占位符 "$configName"，尝试写入 $_defaultLocalDeviceName');
         await _api.ensureLocalDeviceName(_defaultLocalDeviceName!);
@@ -187,20 +196,47 @@ class BackendServer {
   }
 
   Future<Response> _handleDeviceFolders(Request request, String deviceId) async {
-    if (await _isLocalDeviceId(deviceId)) {
-      final result = await _api.proxyGet('/rest/config/folders');
-      if (result.containsKey('error') || result.isEmpty) {
-        final folders = _api.getFoldersFromConfig();
-        return _json({'code': 0, 'data': folders});
+    final localId = await _api.getLocalDeviceId();
+    final isLocal = await _isLocalDeviceId(deviceId);
+    final result = await _api.proxyGet('/rest/config/folders', silent: true);
+    if (result.containsKey('error')) {
+      if (isLocal) {
+        return _json({'code': 0, 'data': _localFoldersPayload()});
       }
-      final folders = (result['data'] as List?)?.map((f) => {
-        'id': f['id'] ?? '', 'label': f['label'] ?? f['id'] ?? '', 'path': f['path'] ?? '',
-      }).toList() ?? [];
-      return _json({'code': 0, 'data': folders});
+      return _json({'code': 0, 'data': []});
     }
-    final result = await _api.proxyGet('/rest/config/folders',
-        queryParams: {'device': deviceId});
-    return _json({'code': 0, 'data': result['data'] ?? []});
+
+    final rawList = result['data'] as List? ?? [];
+    if (rawList.isEmpty && isLocal) {
+      return _json({'code': 0, 'data': _localFoldersPayload()});
+    }
+
+    final folders = <Map<String, dynamic>>[];
+    for (final f in rawList) {
+      if (f is! Map) continue;
+      final map = Map<String, dynamic>.from(f);
+      final devices = (map['devices'] as List?) ?? [];
+
+      if (!isLocal) {
+        final sharedWithTarget = devices.any((d) {
+          if (d is! Map) return false;
+          final id = d['deviceID']?.toString() ?? '';
+          return id.isNotEmpty && _normDeviceId(id) == _normDeviceId(deviceId);
+        });
+        if (!sharedWithTarget) continue;
+      }
+
+      final sharedDevices = devices
+          .whereType<Map>()
+          .map((d) => d['deviceID']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .where((id) =>
+              localId == null || _normDeviceId(id) != _normDeviceId(localId))
+          .toList();
+      map['sharedDevices'] = sharedDevices;
+      folders.add(await _folderPayload(map));
+    }
+    return _json({'code': 0, 'data': folders});
   }
 
   Future<Response> _handleDeviceId(Request request) async {
@@ -208,30 +244,101 @@ class BackendServer {
     return _json({'code': 0, 'data': {'deviceID': localId ?? 'local'}});
   }
 
+  Future<Response> _handleFolderStatus(Request request, String folderId) async {
+    final sync = await _api.getFolderSyncSummary(folderId);
+    if (sync['status'] == 'unknown') {
+      return _json({'code': 1005, 'data': '无法获取文件夹状态'}, status: 503);
+    }
+    final folderPath = await _api.getFolderPath(folderId);
+    if (folderPath != null) {
+      sync['currentPath'] = folderPath;
+    }
+    return _json({'code': 0, 'data': sync});
+  }
+
+  Future<Response> _handleFixFolderPath(Request request, String folderId) async {
+    final folderPath = await _api.getFolderPath(folderId);
+    if (folderPath == null) {
+      return _json({'code': 1005, 'data': '文件夹未找到'}, status: 404);
+    }
+
+    var newPath = folderPath;
+    final body = await request.read().expand((e) => e).toList();
+    if (body.isNotEmpty) {
+      try {
+        final data = json.decode(utf8.decode(body)) as Map<String, dynamic>;
+        final custom = data['path']?.toString() ?? '';
+        if (custom.isNotEmpty) newPath = custom;
+      } catch (_) {}
+    }
+
+    final encoded = Uri.encodeComponent(folderId);
+    final existing = await _api.proxyGet('/rest/config/folders/$encoded', silent: true);
+    if (existing.containsKey('error')) {
+      return _json({'code': 1005, 'data': '文件夹未找到'}, status: 404);
+    }
+    final folderCfg = Map<String, dynamic>.from(existing);
+    if (newPath != folderPath) {
+      folderCfg['path'] = newPath;
+    }
+    folderCfg['paused'] = false;
+    folderCfg['ignorePerms'] = true;
+    final updated = await _api.proxyPut('/rest/config/folders/$encoded', folderCfg);
+    if (updated.containsKey('error')) {
+      return _json({'code': 1005, 'data': '更新路径失败: ${updated['error']}'}, status: 500);
+    }
+
+    await Directory(newPath).create(recursive: true);
+    await _preCreateFolderMarker(newPath);
+    await _api.triggerFolderScan(folderId);
+    debugPrint('[folder] 已更新路径: $folderId $folderPath -> $newPath');
+    return _json({
+      'code': 0,
+      'data': {'message': '已更新同步目录', 'oldPath': folderPath, 'newPath': newPath},
+    });
+  }
+
+  /// 预建 .stfolder marker（与 Syncthing Android 一致）
+  Future<void> _preCreateFolderMarker(String path) async {
+    try {
+      await Directory('$path/.stfolder').create(recursive: true);
+    } catch (e) {
+      debugPrint('[folder] 预建 .stfolder 失败: $e');
+    }
+  }
+
   Future<Response> _handleFolderFiles(Request request, String folderId) async {
     final path = request.url.queryParameters['path'] ?? '';
-    // 从 config.xml 获取文件夹真实路径
-    final folders = _api.getFoldersFromConfig();
-    final folderCfg = folders.cast<Map<String, dynamic>?>().firstWhere(
-      (f) => f?['id'] == folderId, orElse: () => null,
-    );
-    if (folderCfg == null) {
+    var folderPath = await _api.getFolderPath(folderId);
+    // 中文 folderId 或 config 直读兜底
+    if (folderPath == null || folderPath.isEmpty) {
+      var decodedId = folderId;
+      try {
+        decodedId = Uri.decodeComponent(folderId);
+      } catch (_) {}
+      for (final f in _api.getFoldersFromConfig()) {
+        final fid = f['id']?.toString() ?? '';
+        if (fid == folderId || fid == decodedId) {
+          folderPath = f['path']?.toString();
+          break;
+        }
+      }
+    }
+    if (folderPath == null || folderPath.isEmpty) {
       return _json({'code': 1005, 'data': '文件夹未找到'});
     }
-    final files = _api.browseLocalDirectory(folderCfg['path'] as String, path);
+    final files = _api.browseLocalDirectory(folderPath, path);
     return _json({'code': 0, 'data': files});
   }
 
   Future<Response> _handleFilePreview(Request request, String folderId) async {
     final filePath = request.url.queryParameters['path'] ?? '';
     if (filePath.isEmpty) return Response(400, body: '缺少 path 参数');
-    // 从 config.xml 获取文件夹真实路径，直接读本地文件
-    final folders = _api.getFoldersFromConfig();
-    final folderCfg = folders.cast<Map<String, dynamic>?>().firstWhere(
-      (f) => f?['id'] == folderId, orElse: () => null,
-    );
-    if (folderCfg == null) return Response(404, body: '文件夹未找到');
-    final fullPath = '${folderCfg['path']}/$filePath';
+    final folderPath = await _api.getFolderPath(folderId);
+    if (folderPath == null || folderPath.isEmpty) {
+      return Response(404, body: '文件夹未找到');
+    }
+    final fullPath = '$folderPath/$filePath';
     final file = File(fullPath);
     if (!file.existsSync()) return Response(404, body: '文件未找到');
     final bytes = await file.readAsBytes();
@@ -274,7 +381,8 @@ class BackendServer {
 
     // 自动加入本机设备
     final localId = await _api.getLocalDeviceId();
-    if (localId != null && !sharedDevices.contains(localId)) {
+    if (localId != null &&
+        !sharedDevices.any((id) => _normDeviceId(id) == _normDeviceId(localId))) {
       sharedDevices = [localId, ...sharedDevices];
     }
 
@@ -283,14 +391,44 @@ class BackendServer {
     if (folder.containsKey('error')) {
       return _json({'code': 1004, 'data': '文件夹不存在'}, status: 404);
     }
-    // 更新 devices 列表
-    folder['devices'] = sharedDevices.map((id) => <String, dynamic>{
-      'deviceID': id, 'introducedBy': '',
-    }).toList();
+
+    final oldRemoteIds = <String>{};
+    for (final d in (folder['devices'] as List? ?? [])) {
+      if (d is! Map) continue;
+      final id = d['deviceID']?.toString() ?? '';
+      if (id.isEmpty || localId == null) continue;
+      if (_normDeviceId(id) != _normDeviceId(localId)) {
+        oldRemoteIds.add(id);
+      }
+    }
+
+    folder['devices'] = _folderDeviceList(sharedDevices);
     final result = await _api.proxyPut('/rest/config/folders/$folderId', folder);
     if (result.containsKey('error')) {
       return _json({'code': 1005, 'data': '保存失败: ${result['error']}'}, status: 500);
     }
+
+    // 对端已删除文件夹后再次共享：设备仍在列表中，Syncthing 不会重新发 pending。
+    // 对已共享的远程设备做一次「移除再添加」，强制对端重新收到邀请。
+    if (localId != null) {
+      for (final remoteId in sharedDevices) {
+        if (_normDeviceId(remoteId) == _normDeviceId(localId)) continue;
+        final wasShared = oldRemoteIds.any((id) => _normDeviceId(id) == _normDeviceId(remoteId));
+        if (!wasShared) continue;
+
+        debugPrint('[sharing] 重新向 $remoteId 发送文件夹 $folderId 邀请');
+        final withoutRemote = sharedDevices
+            .where((id) => _normDeviceId(id) != _normDeviceId(remoteId))
+            .toList();
+        folder['devices'] = _folderDeviceList(withoutRemote);
+        await _api.proxyPut('/rest/config/folders/$folderId', folder);
+        await Future.delayed(const Duration(milliseconds: 300));
+        folder['devices'] = _folderDeviceList(sharedDevices);
+        await _api.proxyPut('/rest/config/folders/$folderId', folder);
+      }
+    }
+
+    await _api.triggerFolderScan(folderId);
     return _json({'code': 0, 'data': {'message': '共享设置已更新'}});
   }
 
@@ -347,8 +485,55 @@ class BackendServer {
     return _json({'code': 0, 'data': filtered});
   }
 
+  List<Map<String, dynamic>> _localFoldersPayload() {
+    return _api.getFoldersFromConfig().map((f) {
+      return {
+        'id': f['id'] ?? '',
+        'label': f['label'] ?? f['id'] ?? '',
+        'path': f['path'] ?? '',
+        'sharedDevices': <String>[],
+        'localFiles': 0,
+        'status': 'unknown',
+        'completion': 0.0,
+        'needBytes': 0,
+        'needFiles': 0,
+        'state': 'unknown',
+        'pullErrors': 0,
+      };
+    }).where((f) => (f['id'] as String).isNotEmpty).toList();
+  }
+
   String _normDeviceId(String id) =>
       id.replaceAll(RegExp(r'[\s-]'), '').toUpperCase();
+
+  Map<String, dynamic> _folderDeviceEntry(String deviceId) => {
+        'deviceID': SyncthingApi.formatDeviceId(deviceId),
+        'introducedBy': '',
+      };
+
+  List<Map<String, dynamic>> _folderDeviceList(List<String> ids) =>
+      ids.map(_folderDeviceEntry).toList();
+
+  Future<Map<String, dynamic>> _folderPayload(Map folderMap) async {
+    final map = Map<String, dynamic>.from(folderMap);
+    final folderId = map['id']?.toString() ?? '';
+    final sync = folderId.isNotEmpty
+        ? await _api.getFolderSyncSummary(folderId)
+        : <String, dynamic>{'status': 'unknown', 'completion': 0.0};
+    return {
+      'id': folderId,
+      'label': map['label'] ?? map['id'] ?? '',
+      'path': map['path'] ?? '',
+      'sharedDevices': (map['sharedDevices'] as List?) ?? [],
+      'localFiles': sync['localFiles'] ?? 0,
+      'status': sync['status'] ?? 'unknown',
+      'completion': sync['completion'] ?? 0.0,
+      'needBytes': sync['needBytes'] ?? 0,
+      'needFiles': sync['needFiles'] ?? 0,
+      'state': sync['state'] ?? 'unknown',
+      'pullErrors': sync['pullErrors'] ?? 0,
+    };
+  }
 
   Future<Set<String>> _configuredDeviceNormIds() async {
     final ids = <String>{};
@@ -376,6 +561,127 @@ class BackendServer {
       return _json({'code': 1006, 'data': result['error']}, status: 503);
     }
     return _json({'code': 0, 'data': 'ok'});
+  }
+
+  Future<Response> _handlePendingFolders(Request request) async {
+    final deviceId = request.url.queryParameters['device'] ?? '';
+    final queryParams = deviceId.isNotEmpty ? {'device': deviceId} : null;
+    final result = await _api.proxyGet(
+      '/rest/cluster/pending/folders',
+      queryParams: queryParams,
+      silent: true,
+    );
+    if (result.containsKey('error')) {
+      return _json({'code': 1006, 'data': 'Syncthing 未运行'}, status: 503);
+    }
+    final data = result.containsKey('data') ? result['data'] : result;
+    if (data is! Map) {
+      return _json({'code': 0, 'data': {}});
+    }
+    return _json({'code': 0, 'data': data});
+  }
+
+  Future<Response> _handleDismissPendingFolder(Request request) async {
+    final folderId = request.url.queryParameters['folder'] ?? '';
+    final deviceId = request.url.queryParameters['device'] ?? '';
+    if (folderId.isEmpty || deviceId.isEmpty) {
+      return _json({'code': 1001, 'data': '缺少 folder 或 device 参数'});
+    }
+    final result = await _api.proxyDelete(
+      '/rest/cluster/pending/folders',
+      queryParams: {'folder': folderId, 'device': deviceId},
+    );
+    if (result.containsKey('error')) {
+      return _json({'code': 1006, 'data': result['error']}, status: 503);
+    }
+    return _json({'code': 0, 'data': 'ok'});
+  }
+
+  Future<Response> _handleAcceptPendingFolder(Request request) async {
+    final body = utf8.decode(await request.read().expand((e) => e).toList());
+    final data = json.decode(body) as Map<String, dynamic>;
+    final folderId = data['folder']?.toString() ?? '';
+    final deviceId = data['device']?.toString() ?? '';
+    var path = data['path']?.toString() ?? '';
+    if (folderId.isEmpty || deviceId.isEmpty) {
+      return _json({'code': 1001, 'data': '缺少 folder 或 device 参数'}, status: 400);
+    }
+
+    final pendingResult = await _api.proxyGet('/rest/cluster/pending/folders', silent: true);
+    if (pendingResult.containsKey('error')) {
+      return _json({'code': 1006, 'data': 'Syncthing 未运行'}, status: 503);
+    }
+    final pendingRaw = pendingResult.containsKey('data') ? pendingResult['data'] : pendingResult;
+    var label = folderId;
+    if (pendingRaw is Map && pendingRaw[folderId] is Map) {
+      final offeredBy = (pendingRaw[folderId] as Map)['offeredBy'];
+      if (offeredBy is Map) {
+        for (final entry in offeredBy.entries) {
+          if (_normDeviceId(entry.key.toString()) == _normDeviceId(deviceId)) {
+            final info = entry.value;
+            if (info is Map && info['label'] != null) {
+              label = info['label'].toString();
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    if (path.isEmpty) {
+      path = await defaultSyncFolderPath(folderId);
+    }
+    await Directory(path).create(recursive: true);
+    await _preCreateFolderMarker(path);
+
+    final localId = await _api.getLocalDeviceId();
+    if (localId == null) {
+      return _json({'code': 1006, 'data': '无法获取本机设备 ID'}, status: 503);
+    }
+
+    final existing = await _api.proxyGet('/rest/config/folders/$folderId', silent: true);
+    if (existing.containsKey('error')) {
+      final defaults = await _api.proxyGet('/rest/config/defaults/folder', silent: true);
+      final folderCfg = Map<String, dynamic>.from(
+        defaults.containsKey('data') ? defaults['data'] as Map : defaults,
+      );
+      folderCfg['id'] = folderId;
+      folderCfg['label'] = label;
+      folderCfg['path'] = path;
+      folderCfg['type'] ??= 'sendreceive';
+      folderCfg['paused'] = false;
+      folderCfg['ignorePerms'] = true;
+      folderCfg['devices'] = [
+        _folderDeviceEntry(localId),
+        _folderDeviceEntry(deviceId),
+      ];
+      final created = await _api.proxyPost('/rest/config/folders', folderCfg);
+      if (created.containsKey('error')) {
+        return _json({'code': 1005, 'data': '创建文件夹失败: ${created['error']}'}, status: 500);
+      }
+    } else {
+      final folderCfg = Map<String, dynamic>.from(existing);
+      final devices = (folderCfg['devices'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      final hasDevice = devices.any((d) => _normDeviceId(d['deviceID']?.toString() ?? '') == _normDeviceId(deviceId));
+      final hasLocal = devices.any((d) => _normDeviceId(d['deviceID']?.toString() ?? '') == _normDeviceId(localId));
+      if (!hasLocal) devices.insert(0, _folderDeviceEntry(localId));
+      if (!hasDevice) devices.add(_folderDeviceEntry(deviceId));
+      folderCfg['devices'] = devices;
+      folderCfg['paused'] = false;
+      folderCfg['ignorePerms'] = true;
+      if (path.isNotEmpty) folderCfg['path'] = path;
+      final updated = await _api.proxyPut('/rest/config/folders/$folderId', folderCfg);
+      if (updated.containsKey('error')) {
+        return _json({'code': 1005, 'data': '更新文件夹失败: ${updated['error']}'}, status: 500);
+      }
+    }
+
+    await _api.triggerFolderScan(folderId);
+    await _api.proxyDelete(
+      '/rest/cluster/pending/folders',
+      queryParams: {'folder': folderId, 'device': deviceId},
+    );
+    return _json({'code': 0, 'data': {'message': '已接受共享文件夹', 'folderId': folderId, 'label': label, 'path': path}});
   }
 
   Future<Response> _handleSyncthingDeviceId(Request request) async {
@@ -446,13 +752,19 @@ class BackendServer {
 
     final folderData = <String, dynamic>{
       'id': id, 'label': label, 'path': path, 'type': data['type'] ?? 'sendreceive',
-      'filesystemType': 'basic', 'rescanIntervalS': 3600, 'ignorePerms': false,
-      'autoNormalize': true, 'devices': [],
+      'filesystemType': 'basic', 'rescanIntervalS': 3600, 'ignorePerms': true,
+      'autoNormalize': true, 'paused': false,
+      'devices': [],
     };
+    final localId = await _api.getLocalDeviceId();
+    if (localId != null) {
+      folderData['devices'] = _folderDeviceList([localId]);
+    }
     final result = await _api.proxyPost('/rest/config/folders', folderData);
     if (result.containsKey('error')) {
       return _json({'code': 1003, 'data': '添加文件夹失败: ${result['error']}'}, status: 500);
     }
+    await _api.triggerFolderScan(id);
     return _json({'code': 0, 'data': {'id': id, 'label': label, 'path': path}});
   }
 

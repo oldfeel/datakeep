@@ -11,6 +11,7 @@ import '../../core/services/event_service.dart';
 import 'device_detail_page.dart';
 import 'folder_detail_page.dart';
 import 'file_preview_page.dart';
+import '../../shared/widgets/accept_pending_folder_dialog.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({super.key});
@@ -31,6 +32,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
   int _notificationCount = 0;
   final List<_NotificationItem> _notifications = [];
   final Set<String> _shownPendingDevices = {};
+  final Set<String> _shownPendingFolders = {};
 
   StreamSubscription<SyncthingEvent>? _eventSub;
 
@@ -42,6 +44,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
       context.read<FolderProvider>().fetchFolders();
       _fetchWifiInfo();
       _checkPendingDevices();
+      _checkPendingFolders();
     });
     _eventSub = EventService().events.listen((event) {
       if (!mounted) return;
@@ -60,6 +63,9 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           break;
         case 'PendingDevicesChanged':
           _handlePendingDevicesChanged(event);
+          return;
+        case 'PendingFoldersChanged':
+          _handlePendingFoldersChanged(event);
           return;
         case 'ItemFinished':
           message = '文件同步完成: ${event.data['item'] ?? ''}';
@@ -224,6 +230,100 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
       }
     } finally {
       _shownPendingDevices.remove(deviceId);
+    }
+  }
+
+  String _pendingFolderKey(String folderId, String deviceId) =>
+      '${_normDeviceId(folderId)}|${_normDeviceId(deviceId)}';
+
+  Future<void> _checkPendingFolders() async {
+    final pending = await ApiService.getPendingFolders();
+    if (pending.isEmpty) return;
+
+    for (final entry in pending.entries) {
+      final folderId = entry.key;
+      final info = entry.value;
+      if (info is! Map) continue;
+      final offeredBy = info['offeredBy'];
+      if (offeredBy is! Map) continue;
+      for (final offer in offeredBy.entries) {
+        final deviceId = offer.key.toString();
+        var label = folderId;
+        final folderInfo = offer.value;
+        if (folderInfo is Map && folderInfo['label'] != null) {
+          label = folderInfo['label'].toString();
+        }
+        await _showPendingFolderDialog(folderId: folderId, deviceId: deviceId, label: label);
+      }
+    }
+  }
+
+  void _handlePendingFoldersChanged(SyncthingEvent event) async {
+    final added = event.data['added'];
+    if (added is List) {
+      for (final item in added) {
+        if (item is! Map) continue;
+        final folderId = item['folderID']?.toString() ?? '';
+        final deviceId = item['deviceID']?.toString() ?? '';
+        if (folderId.isEmpty || deviceId.isEmpty) continue;
+        final label = item['folderLabel']?.toString() ?? folderId;
+        _addNotification('收到共享文件夹邀请: $label');
+        _showPendingFolderDialog(folderId: folderId, deviceId: deviceId, label: label);
+      }
+    } else {
+      _checkPendingFolders();
+    }
+  }
+
+  Future<void> _showPendingFolderDialog({
+    required String folderId,
+    required String deviceId,
+    required String label,
+  }) async {
+    final key = _pendingFolderKey(folderId, deviceId);
+    if (_shownPendingFolders.contains(key)) return;
+    _shownPendingFolders.add(key);
+
+    if (!mounted) return;
+    final displayLabel = label.isNotEmpty ? label : folderId;
+    String deviceName = deviceId;
+    try {
+      for (final d in await ApiService.getDevices()) {
+        if (_normDeviceId(d.id) == _normDeviceId(deviceId)) {
+          deviceName = d.displayName;
+          break;
+        }
+      }
+    } catch (_) {}
+
+    final accepted = await showAcceptPendingFolderDialog(
+      context: context,
+      folderId: folderId,
+      deviceName: deviceName,
+      label: displayLabel,
+    );
+
+    if (!mounted) return;
+
+    try {
+      if (accepted?.accepted == true && accepted!.path != null) {
+        await ApiService.acceptPendingFolder(
+          folderId: folderId,
+          deviceId: deviceId,
+          path: accepted.path,
+        );
+        if (mounted) {
+          await context.read<FolderProvider>().fetchFolders();
+          _addNotification('已接受共享文件夹 $displayLabel', snackColor: Colors.green);
+        }
+      } else if (accepted?.accepted == false) {
+        await ApiService.dismissPendingFolder(folderId: folderId, deviceId: deviceId);
+        if (mounted) _addNotification('已忽略共享文件夹 $displayLabel');
+      }
+    } catch (e) {
+      if (mounted) _addNotification('共享文件夹操作失败: $e', snackColor: Colors.red);
+    } finally {
+      _shownPendingFolders.remove(key);
     }
   }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:io';
+import 'package:media_kit/media_kit.dart';
 import 'app.dart';
 import 'core/backend/backend_server.dart';
 import 'core/backend/syncthing_api.dart';
@@ -8,6 +9,7 @@ import 'core/services/native_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
 
   if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS || Platform.isAndroid)) {
     await _startPlatformServices();
@@ -32,14 +34,6 @@ Future<void> _startPlatformServices() async {
 Future<void> _startAndroidServices() async {
   debugPrint('[startup] Android 启动流程开始');
 
-  try {
-    final syncthingStarted = await NativeService.startSyncthingService();
-    debugPrint('[startup] startSyncthingService => $syncthingStarted');
-  } catch (e, st) {
-    debugPrint('[startup] startSyncthingService 失败: $e');
-    debugPrint('$st');
-  }
-
   String? configPath;
   var deviceName = '';
   for (var i = 0; i < 20; i++) {
@@ -51,6 +45,21 @@ Future<void> _startAndroidServices() async {
     debugPrint('[startup] bootstrap 尝试 ${i + 1}/20 => path=$configPath, deviceName=$deviceName');
     if (configPath != null && File(configPath).existsSync()) break;
     await Future.delayed(const Duration(seconds: 1));
+  }
+
+  SyncthingApi().init(configPath: configPath, defaultLocalDeviceName: deviceName);
+
+  // 热重启时 Syncthing 可能仍在运行，避免重复启动导致进程冲突
+  if (!await SyncthingApi().isRunning()) {
+    try {
+      final syncthingStarted = await NativeService.startSyncthingService();
+      debugPrint('[startup] startSyncthingService => $syncthingStarted');
+    } catch (e, st) {
+      debugPrint('[startup] startSyncthingService 失败: $e');
+      debugPrint('$st');
+    }
+  } else {
+    debugPrint('[startup] Syncthing 已在运行，跳过 startSyncthingService');
   }
 
   if (deviceName.isEmpty) {
@@ -88,6 +97,7 @@ Future<void> _startAndroidServices() async {
         await Future.delayed(const Duration(seconds: 1));
       }
       await SyncthingApi().ensureLocalDeviceName(deviceName);
+      await SyncthingApi().ensureAndroidFoldersReady();
     } catch (e, st) {
       debugPrint('[startup] 写入本机设备名失败: $e');
       debugPrint('$st');

@@ -58,18 +58,27 @@ class SyncthingService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
-        stopSyncthing()
+        stopSyncthingProcessOnly(force = true)
         super.onDestroy()
     }
 
     private fun startSyncthing() {
-        if (currentState == State.ACTIVE || currentState == State.STARTING) return
+        if (syncthingThread?.isAlive == true && currentState == State.ACTIVE) {
+            Log.i(TAG, "Syncthing 线程已在运行，跳过")
+            return
+        }
 
         Log.i(TAG, "启动 Syncthing")
+        stopSyncthingProcessOnly(force = true)
+        SyncthingRunnable.killOrphanProcesses()
+
         currentState = State.STARTING
         startForeground(NOTIFICATION_ID, createNotification("正在启动 Syncthing..."))
 
         try {
+            ConfigHelper.ensureConfigExists(this)
+            ConfigHelper.ensureLocalDeviceName(this)
+            ConfigHelper.ensureAndroidFoldersReady(this)
             val runnable = SyncthingRunnable(this, SyncthingRunnable.Command.MAIN)
             syncthingRunnable.set(runnable)
             syncthingThread = Thread(runnable, "SyncthingThread").apply { start() }
@@ -82,26 +91,35 @@ class SyncthingService : Service() {
         }
     }
 
-    private fun stopSyncthing() {
+    /** 仅停止 Syncthing 进程，不销毁 Service（用于 restart） */
+    private fun stopSyncthingProcessOnly(force: Boolean = false) {
+        if (!force && (currentState == State.STOPPED || currentState == State.INIT)) return
         currentState = State.STOPPING
         try {
             syncthingRunnable.get()?.killSyncthing()
-            syncthingThread?.join(5000)
+            syncthingThread?.join(8000)
+        } catch (e: Exception) {
+            Log.e(TAG, "停止 Syncthing 进程失败", e)
+        } finally {
             syncthingRunnable.set(null)
             syncthingThread = null
             currentState = State.STOPPED
-        } catch (e: Exception) {
-            Log.e(TAG, "停止 Syncthing 失败", e)
-            currentState = State.ERROR
-        } finally {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            SyncthingRunnable.killOrphanProcesses()
         }
     }
 
     private fun restartSyncthing() {
-        stopSyncthing()
-        android.os.Handler(mainLooper).postDelayed({ startSyncthing() }, 1000)
+        stopSyncthingProcessOnly(force = true)
+        android.os.Handler(mainLooper).postDelayed({
+            SyncthingRunnable.killOrphanProcesses()
+            startSyncthing()
+        }, 3000)
+    }
+
+    private fun stopSyncthing() {
+        stopSyncthingProcessOnly(force = true)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     fun isRunning(): Boolean = currentState == State.ACTIVE

@@ -208,6 +208,8 @@ class FolderCard extends StatelessWidget {
     switch (status) {
       case 'syncing':
         return Colors.orange;
+      case 'waiting':
+        return Colors.blue;
       case 'synced':
         return Colors.green;
       case 'error':
@@ -221,6 +223,8 @@ class FolderCard extends StatelessWidget {
     switch (status) {
       case 'syncing':
         return Icons.sync;
+      case 'waiting':
+        return Icons.hourglass_empty;
       case 'synced':
         return Icons.check;
       case 'error':

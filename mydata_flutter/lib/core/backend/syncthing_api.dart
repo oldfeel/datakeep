@@ -162,21 +162,19 @@ class SyncthingApi {
   List<Map<String, dynamic>> getFoldersFromConfig() {
     try {
       final xml = File(_configPath).readAsStringSync();
-      final folderRegex = RegExp(
-        r'<folder\s+id="(.*?)"[^>]*\s*label="(.*?)"[^>]*\s*path="(.*?)"[^>]*>',
-        dotAll: true,
-      );
+      final tagRegex = RegExp(r'<folder\s+([^>/]+)/?>');
       final folders = <Map<String, dynamic>>[];
-      for (final m in folderRegex.allMatches(xml)) {
-        final folderPath = m.group(3) ?? '';
-        final expanded = folderPath.startsWith('~/')
-            ? '${Platform.environment['HOME'] ?? ''}${folderPath.substring(1)}'
-            : folderPath;
-        folders.add({
-          'id': m.group(1) ?? '',
-          'label': m.group(2) ?? m.group(1) ?? '',
-          'path': expanded,
-        });
+      for (final m in tagRegex.allMatches(xml)) {
+        final attrs = m.group(1) ?? '';
+        final id = RegExp(r'\bid="([^"]*)"').firstMatch(attrs)?.group(1) ?? '';
+        if (id.isEmpty) continue;
+        var path = RegExp(r'\bpath="([^"]*)"').firstMatch(attrs)?.group(1) ?? '';
+        final label = RegExp(r'\blabel="([^"]*)"').firstMatch(attrs)?.group(1) ?? id;
+        if (path.startsWith('~/')) {
+          path = '${Platform.environment['HOME'] ?? ''}${path.substring(1)}';
+        }
+        if (path.isEmpty) continue;
+        folders.add({'id': id, 'label': label, 'path': path});
       }
       return folders;
     } catch (e) {
@@ -250,6 +248,24 @@ class SyncthingApi {
     }
   }
 
+  /// 优先从 REST 读取设备名，回退 config.xml（Syncthing 保存后文件里 name 可能为空）
+  Future<String> getEffectiveDeviceName(String deviceId) async {
+    final formattedId = formatDeviceId(deviceId);
+    final rest = await getDeviceNameFromRest(formattedId);
+    if (rest != null && !_isPlaceholderName(rest, formattedId)) return rest;
+    return getDeviceNameFromConfig(formattedId) ?? '';
+  }
+
+  Future<String?> getDeviceNameFromRest(String deviceId) async {
+    final formattedId = formatDeviceId(deviceId);
+    final result = await proxyGet('/rest/config/devices/$formattedId', silent: true);
+    if (result.containsKey('error')) return null;
+    final raw = result.containsKey('data') ? result['data'] : result;
+    if (raw is! Map) return null;
+    final name = raw['name']?.toString().trim();
+    return (name != null && name.isNotEmpty) ? name : null;
+  }
+
   /// 从 config.xml 读取本机设备名称
   String getLocalDeviceName(String localId) {
     final formattedId = formatDeviceId(localId);
@@ -263,16 +279,12 @@ class SyncthingApi {
     return name;
   }
 
-  /// 将本机 Syncthing 设备名写入运行中的配置（Android 修正 localhost 等占位名）
+  /// 将本机 Syncthing 设备名写入配置（运行中仅 REST，停止时才写 config.xml）
   Future<void> ensureLocalDeviceName(String preferredName) async {
     final trimmed = preferredName.trim();
     debugPrint('[设备名] ensureLocalDeviceName 开始, preferred=$trimmed, config=$_configPath');
     if (trimmed.isEmpty) {
       debugPrint('[设备名] 跳过: 名称为空');
-      return;
-    }
-    if (!await isRunning()) {
-      debugPrint('[设备名] 跳过: Syncthing API 未运行');
       return;
     }
 
@@ -283,17 +295,27 @@ class SyncthingApi {
     }
 
     final formattedId = formatDeviceId(localId);
-    final current = getDeviceNameFromConfig(formattedId) ?? '';
-    debugPrint('[设备名] 本机 ID=$formattedId, config 当前名=$current');
-    if (!_isPlaceholderName(current, formattedId)) {
-      debugPrint('[设备名] 跳过: 当前名已是有效名称');
+    final restName = await getDeviceNameFromRest(formattedId);
+    if (restName != null && !_isPlaceholderName(restName, formattedId)) {
+      debugPrint('[设备名] 跳过: REST 已有有效名称 $restName');
       return;
     }
 
-    _patchLocalDeviceNameInConfigFile(formattedId, trimmed);
-    debugPrint('[设备名] 已写入 config.xml');
+    final current = getDeviceNameFromConfig(formattedId) ?? '';
+    debugPrint('[设备名] 本机 ID=$formattedId, config 当前名=$current');
+    if (!_isPlaceholderName(current, formattedId)) {
+      debugPrint('[设备名] 跳过: config 已是有效名称');
+      return;
+    }
 
-    final deviceRes = await proxyGet('/rest/config/devices/$formattedId');
+    final running = await isRunning();
+    if (!running) {
+      _patchLocalDeviceNameInConfigFile(formattedId, trimmed);
+      debugPrint('[设备名] Syncthing 未运行，已写入 config.xml');
+      return;
+    }
+
+    final deviceRes = await proxyGet('/rest/config/devices/$formattedId', silent: true);
     if (deviceRes.containsKey('error')) {
       debugPrint('[设备名] GET /rest/config/devices 失败: ${deviceRes['error']}');
       return;
@@ -480,6 +502,124 @@ class SyncthingApi {
       }
       device['name'] = name;
     }
+  }
+
+  /// 解析路由中的 folderId（支持 URL 编码的中文 ID）
+  String _resolveFolderId(String raw) {
+    if (raw.isEmpty) return raw;
+    try {
+      var id = Uri.decodeComponent(raw);
+      // 部分平台可能双重编码
+      if (id.contains('%')) {
+        id = Uri.decodeComponent(id);
+      }
+      return id;
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  /// 从 Syncthing 配置读取文件夹本地路径（优先 REST，避免 xml 属性顺序问题）
+  Future<String?> getFolderPath(String folderId) async {
+    final resolvedId = _resolveFolderId(folderId);
+    final encoded = Uri.encodeComponent(resolvedId);
+    final result = await proxyGet('/rest/config/folders/$encoded', silent: true);
+    if (!result.containsKey('error')) {
+      final path = result['path']?.toString() ?? '';
+      if (path.isNotEmpty) return path;
+    }
+    for (final f in getFoldersFromConfig()) {
+      final fid = f['id']?.toString() ?? '';
+      if (fid == resolvedId || fid == folderId) {
+        final path = f['path']?.toString() ?? '';
+        if (path.isNotEmpty) return path;
+      }
+    }
+    return null;
+  }
+
+  /// 触发文件夹扫描（接受共享或新建后调用）
+  Future<void> triggerFolderScan(String folderId) async {
+    final encoded = Uri.encodeComponent(folderId);
+    await proxyPost('/rest/db/scan?folder=$encoded', {});
+  }
+
+  /// Android：确保 ignorePerms=true 并触发全量扫描
+  Future<void> ensureAndroidFoldersReady() async {
+    if (!Platform.isAndroid) return;
+    if (!await isRunning()) return;
+
+    final folders = getFoldersFromConfig();
+    for (final f in folders) {
+      final id = f['id']?.toString() ?? '';
+      if (id.isEmpty) continue;
+      final encoded = Uri.encodeComponent(id);
+      final cfg = await proxyGet('/rest/config/folders/$encoded', silent: true);
+      if (cfg.containsKey('error')) continue;
+      if (cfg['ignorePerms'] != true) {
+        final updated = Map<String, dynamic>.from(cfg);
+        updated['ignorePerms'] = true;
+        await proxyPut('/rest/config/folders/$encoded', updated);
+        debugPrint('[folder] 已设置 ignorePerms: $id');
+      }
+      await triggerFolderScan(id);
+    }
+  }
+
+  /// 从 Syncthing 读取文件夹同步状态
+  Future<Map<String, dynamic>> getFolderSyncSummary(String folderId) async {
+    final status = await proxyGet(
+      '/rest/db/status',
+      queryParams: {'folder': folderId},
+      silent: true,
+    );
+    if (status.containsKey('error')) {
+      return {'status': 'unknown', 'state': 'unknown', 'completion': 0.0};
+    }
+
+    final completionRes = await proxyGet(
+      '/rest/db/completion',
+      queryParams: {'folder': folderId},
+      silent: true,
+    );
+
+    final state = status['state']?.toString() ?? 'unknown';
+    final needBytes = (status['needBytes'] as num?)?.toInt() ?? 0;
+    final needFiles = (status['needFiles'] as num?)?.toInt() ?? 0;
+    final globalBytes = (status['globalBytes'] as num?)?.toInt() ?? 0;
+    final localFiles = (status['localFiles'] as num?)?.toInt() ?? 0;
+    final pullErrors = (status['pullErrors'] as num?)?.toInt() ?? 0;
+    final completion = completionRes.containsKey('error')
+        ? (globalBytes > 0 ? (globalBytes - needBytes) / globalBytes * 100.0 : 100.0)
+        : (completionRes['completion'] as num?)?.toDouble() ?? 0.0;
+
+    String uiStatus;
+    if (pullErrors > 0) {
+      uiStatus = 'error';
+    } else if (state == 'syncing' ||
+        state == 'scanning' ||
+        state == 'scan-waiting' ||
+        needBytes > 0 ||
+        needFiles > 0) {
+      uiStatus = 'syncing';
+    } else if (globalBytes > 0 && (localFiles == 0 || completion < 99.9)) {
+      uiStatus = 'syncing';
+    } else if (globalBytes == 0 && localFiles == 0) {
+      uiStatus = 'waiting';
+    } else {
+      uiStatus = 'synced';
+    }
+
+    return {
+      'state': state,
+      'status': uiStatus,
+      'completion': completion,
+      'needBytes': needBytes,
+      'needFiles': needFiles,
+      'globalBytes': globalBytes,
+      'localFiles': localFiles,
+      'pullErrors': pullErrors,
+    };
   }
 
   /// 格式化为 Syncthing 标准设备 ID（带连字符）

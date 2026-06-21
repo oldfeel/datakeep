@@ -6,6 +6,7 @@ import '../../features/home/screens/home_screen.dart';
 import '../../features/folders/screens/folders_screen.dart';
 import '../../features/devices/screens/devices_screen.dart';
 import '../../features/sync/screens/sync_screen.dart';
+import 'syncthing_event_listener.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
@@ -37,7 +38,9 @@ class _MainNavigationState extends State<MainNavigation> {
   @override
   Widget build(BuildContext context) {
     // 桌面端和移动端都直接显示内容，不显示左侧菜单
-    return _screens[_currentIndex];
+    return SyncthingEventListener(
+      child: _screens[_currentIndex],
+    );
   }
 
 }

@@ -18,9 +18,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   String? _selectedDeviceId;
-  List<Folder> _deviceFolders = [];
-  bool _isLoadingFolders = false;
-  String? _foldersError;
 
   @override
   void initState() {
@@ -290,7 +287,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     setState(() {
       _selectedDeviceId = next?.id;
-      _deviceFolders = [];
     });
     if (next != null) {
       _loadDeviceFolders(next.id);
@@ -298,90 +294,110 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildFoldersContent(BuildContext context) {
-    if (_isLoadingFolders) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final deviceId = _selectedDeviceId!;
+    return Consumer<FolderProvider>(
+      builder: (context, folderProvider, _) {
+        if (folderProvider.loadedDeviceId != deviceId) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _selectedDeviceId == deviceId) {
+              folderProvider.fetchDeviceFolders(deviceId);
+            }
+          });
+        }
 
-    if (_foldersError != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.error_outline,
-              size: 64,
-              color: Theme.of(context).colorScheme.error,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              '加载文件夹失败',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _foldersError!,
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () {
-                _loadDeviceFolders(_selectedDeviceId!);
-              },
-              child: const Text('重试'),
-            ),
-          ],
-        ),
-      );
-    }
+        if (folderProvider.isLoading && folderProvider.loadedDeviceId != deviceId) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-    if (_deviceFolders.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.folder_open,
-              size: 64,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              '暂无文件夹',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '点击右下角按钮添加第一个同步文件夹',
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _deviceFolders.length,
-      itemBuilder: (context, index) {
-        final folder = _deviceFolders[index];
-        return FolderCard(
-          folder: folder,
-          onDelete: () {
-            _showDeleteDialog(context, folder);
-          },
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (context) => FolderDetailScreen(
-                  deviceId: folder.deviceId,
-                  folderId: folder.id,
+        if (folderProvider.loadedDeviceId == deviceId && folderProvider.error != null) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 64,
+                  color: Theme.of(context).colorScheme.error,
                 ),
-              ),
+                const SizedBox(height: 16),
+                Text(
+                  '加载文件夹失败',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  folderProvider.error!,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () => folderProvider.fetchDeviceFolders(deviceId),
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final folders = folderProvider.loadedDeviceId == deviceId
+            ? folderProvider.folders
+            : const <Folder>[];
+
+        if (folders.isEmpty && !folderProvider.isLoading) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.folder_open,
+                  size: 64,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  '暂无文件夹',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Syncthing 启动中或未配置文件夹',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: () => folderProvider.fetchDeviceFolders(deviceId),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('刷新'),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: folders.length,
+          itemBuilder: (context, index) {
+            final folder = folders[index];
+            return FolderCard(
+              folder: folder,
+              onDelete: () {
+                _showDeleteDialog(context, folder);
+              },
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => FolderDetailScreen(
+                      deviceId: folder.deviceId,
+                      folderId: folder.id,
+                    ),
+                  ),
+                );
+              },
+              isDesktop: false,
             );
           },
-          isDesktop: false,
         );
       },
     );
@@ -389,23 +405,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // 加载设备文件夹
   Future<void> _loadDeviceFolders(String deviceId) async {
-    setState(() {
-      _isLoadingFolders = true;
-      _foldersError = null;
-    });
-
-    try {
-      final folders = await context.read<FolderProvider>().getDeviceFolders(deviceId);
-      setState(() {
-        _deviceFolders = folders;
-        _isLoadingFolders = false;
-      });
-    } catch (e) {
-      setState(() {
-        _foldersError = e.toString();
-        _isLoadingFolders = false;
-      });
-    }
+    await context.read<FolderProvider>().fetchDeviceFolders(deviceId);
   }
 
   // 显示菜单

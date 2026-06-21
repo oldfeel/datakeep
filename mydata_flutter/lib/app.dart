@@ -7,6 +7,7 @@ import 'features/folders/providers/folder_provider.dart';
 import 'features/devices/providers/device_provider.dart';
 import 'core/services/syncthing_service_manager.dart';
 import 'shared/widgets/main_navigation.dart';
+import 'shared/widgets/android_storage_gate.dart';
 import 'desktop/pages/home_page.dart';
 
 class MyDataApp extends StatelessWidget {
@@ -27,7 +28,9 @@ class MyDataApp extends StatelessWidget {
         theme: AppTheme.lightTheme,
         darkTheme: AppTheme.darkTheme,
         themeMode: ThemeMode.system,
-        home: isDesktop ? const DesktopHomePage() : const MainNavigation(),
+        home: isDesktop
+            ? const DesktopHomePage()
+            : const AndroidStorageGate(child: MainNavigation()),
         debugShowCheckedModeBanner: false,
       ),
     );

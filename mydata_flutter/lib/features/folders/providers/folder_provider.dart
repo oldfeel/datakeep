@@ -6,24 +6,53 @@ class FolderProvider with ChangeNotifier {
   List<Folder> _folders = [];
   bool _isLoading = false;
   String? _error;
+  String? _loadedDeviceId;
 
   List<Folder> get folders => _folders;
   bool get isLoading => _isLoading;
   String? get error => _error;
+  String? get loadedDeviceId => _loadedDeviceId;
 
-  // 获取所有文件夹
-  Future<void> fetchFolders() async {
+  /// 加载指定设备的文件夹列表
+  Future<void> fetchDeviceFolders(String deviceId, {bool silent = false}) async {
     try {
-      _isLoading = true;
-      _error = null;
-      notifyListeners();
+      if (!silent) {
+        _isLoading = true;
+        _error = null;
+        notifyListeners();
+      }
 
-      final folders = await ApiService.getFolders();
+      final folders = await ApiService.getDeviceFolders(deviceId);
       _folders = folders;
+      _loadedDeviceId = deviceId;
+      if (silent) _error = null;
+
+      // Syncthing 重启中可能暂时为空，自动重试
+      if (folders.isEmpty && !silent) {
+        Future.delayed(const Duration(seconds: 4), () {
+          if (_loadedDeviceId == deviceId && _folders.isEmpty) {
+            fetchDeviceFolders(deviceId, silent: true);
+          }
+        });
+      }
     } catch (e) {
       _error = e.toString();
     } finally {
-      _isLoading = false;
+      if (!silent) _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // 获取所有文件夹（本机）
+  Future<void> fetchFolders({bool silent = false}) async {
+    try {
+      final localDeviceId = await ApiService.getLocalDeviceId();
+      await fetchDeviceFolders(localDeviceId, silent: silent);
+    } catch (e) {
+      _error = e.toString();
+      if (!silent) {
+        _isLoading = false;
+      }
       notifyListeners();
     }
   }
@@ -71,11 +100,10 @@ class FolderProvider with ChangeNotifier {
     }
   }
 
-  // 获取指定设备的文件夹
+  // 获取指定设备的文件夹（兼容旧调用，不更新 Provider 状态）
   Future<List<Folder>> getDeviceFolders(String deviceId) async {
     try {
-      final folders = await ApiService.getDeviceFolders(deviceId);
-      return folders;
+      return await ApiService.getDeviceFolders(deviceId);
     } catch (e) {
       _error = e.toString();
       notifyListeners();

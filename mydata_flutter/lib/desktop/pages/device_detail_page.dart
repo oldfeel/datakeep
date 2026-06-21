@@ -317,6 +317,18 @@ class _FolderSharingDialogState extends State<_FolderSharingDialog> {
   List<Map<String, dynamic>> _devices = [];
   bool _loading = true;
 
+  String _normId(String id) => id.replaceAll(RegExp(r'[\s-]'), '').toUpperCase();
+
+  bool _isSelected(String deviceId) =>
+      _selected.any((s) => _normId(s) == _normId(deviceId));
+
+  void _setSelected(String deviceId, bool selected) {
+    setState(() {
+      _selected.removeWhere((s) => _normId(s) == _normId(deviceId));
+      if (selected) _selected.add(deviceId);
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -378,7 +390,7 @@ class _FolderSharingDialogState extends State<_FolderSharingDialog> {
                     children: _devices.map((d) {
                       final id = d['deviceID']?.toString() ?? '';
                       final isLocal = d['connectionType'] == 'local' || id == 'local';
-                      final checked = isLocal || _selected.contains(id);
+                      final checked = isLocal || _isSelected(id);
                       return CheckboxListTile(
                         title: Text(d['name']?.toString() ?? id, style: TextStyle(
                           fontSize: 14, fontWeight: isLocal ? FontWeight.w600 : FontWeight.normal,
@@ -387,9 +399,7 @@ class _FolderSharingDialogState extends State<_FolderSharingDialog> {
                           style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
                         value: checked,
                         onChanged: isLocal ? null : (v) {
-                          setState(() {
-                            if (v == true) { _selected.add(id); } else { _selected.remove(id); }
-                          });
+                          _setSelected(id, v == true);
                         },
                       );
                     }).toList(),

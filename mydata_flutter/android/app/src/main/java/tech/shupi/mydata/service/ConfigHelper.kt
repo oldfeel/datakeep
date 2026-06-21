@@ -4,6 +4,9 @@ import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import tech.shupi.mydata.util.PermissionUtil
+import tech.shupi.mydata.util.StoragePathUtils
+import java.io.File
 
 /** 修正 Syncthing config.xml 中的本机设备名称（Android 默认 hostname 常为 localhost） */
 object ConfigHelper {
@@ -110,6 +113,52 @@ object ConfigHelper {
         } catch (e: Exception) {
             Log.e(TAG, "生成 Syncthing 配置失败", e)
         }
+    }
+
+    /**
+     * Syncthing 启动前：ignorePerms=true、预建 .stfolder、检查写权限。
+     * 与 Syncthing Android 一致，避免 Android 上 chmod / marker 导致同步失败。
+     */
+    fun ensureAndroidFoldersReady(context: Context) {
+        val configFile = Constants.getConfigFile(context)
+        if (!configFile.exists()) return
+
+        val hasAllFiles = PermissionUtil.haveStoragePermission(context)
+        Log.i(TAG, "ensureAndroidFoldersReady: allFilesAccess=$hasAllFiles")
+
+        var xml = configFile.readText()
+        var changed = false
+        if (xml.contains("ignorePerms=\"false\"")) {
+            xml = xml.replace("ignorePerms=\"false\"", "ignorePerms=\"true\"")
+            changed = true
+        }
+
+        val folderRegex = Regex("""<folder\s+([^>]+)>""")
+        for (match in folderRegex.findAll(xml)) {
+            val attrs = match.groupValues[1]
+            val pathMatch = Regex("""\bpath="([^"]*)"""").find(attrs) ?: continue
+            var path = pathMatch.groupValues[1].trim()
+            if (path.isEmpty() || path == "~") continue
+
+            File(path).mkdirs()
+            StoragePathUtils.preCreateFolderMarker(path)
+            val writable = StoragePathUtils.nativeCanWriteToPath(path)
+            Log.i(TAG, "folder path=$path writable=$writable marker=${File(path, ".stfolder").exists()}")
+
+            if (!writable && !hasAllFiles) {
+                val fallback = StoragePathUtils.getDefaultSyncFolderPath(context, extractFolderId(attrs))
+                Log.w(TAG, "路径不可写且无 All files access，建议迁移: $path -> $fallback")
+            }
+        }
+
+        if (changed) {
+            configFile.writeText(xml)
+            Log.i(TAG, "已将所有 folder ignorePerms 设为 true")
+        }
+    }
+
+    private fun extractFolderId(attrs: String): String {
+        return Regex("""\bid="([^"]+)"""").find(attrs)?.groupValues?.get(1) ?: "folder"
     }
 
     private fun patchFirstDeviceName(xml: String, newName: String): String? {

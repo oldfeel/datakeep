@@ -48,6 +48,18 @@ class NativeService {
     }
   }
 
+  /// 重启 Syncthing 服务（授予存储权限后调用）
+  static Future<bool> restartSyncthingService() async {
+    if (_isDesktop) return false;
+    try {
+      final result = await _channel.invokeMethod<bool>('restartSyncthingService');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      debugPrint('重启 Syncthing 服务失败: ${e.message}');
+      return false;
+    }
+  }
+
   /// 获取服务状态
   static Future<String> getServiceStatus() async {
     if (_isDesktop) {
