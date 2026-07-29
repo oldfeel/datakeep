@@ -1,7 +1,0 @@
-build/bin
-node_modules
-frontend/dist
-*.exe
-*.db-journal
-# Wails generated runtime
-frontend/wailsjs/runtime/

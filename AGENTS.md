@@ -2,8 +2,8 @@
 
 跨平台文件同步应用（基于 Syncthing）。Dart 后端（shelf）+ Flutter 前端。
 
-**长期维护方向**：桌面 `mydata_flutter/`（Flutter）+ 移动 `mydata_flutter/`（Flutter，同一套代码）。
-`client/`（Wails 桌面 + Go 后端原始版）、`mydata_flutter/backend/`（Go 后端旧版）和 `app/`（React Native）已停维。
+**长期维护方向**：桌面 + 移动均使用 `mydata_flutter/`（同一套 Flutter 代码）。
+`mydata_flutter/backend/`（Go 后端旧版）已停维，仅作参考。
 
 ## 仓库结构
 
@@ -12,10 +12,6 @@
 | `mydata_flutter/` | **Flutter 跨平台应用** — 桌面 + Android 主力 |
 | `mydata_flutter/lib/core/backend/` | Dart 后端 API（shelf HTTPS `:8443`，替代 Go backend） |
 | `mydata_flutter/backend/` | Go 后端旧版（已停维，参考用） |
-| `client/` | Wails 桌面应用（已停维，参考用） |
-| `client/backend/` | Go 后端原始版（已停维，参考用） |
-| `app/` | React Native 移动端（已停维，参考用） |
-| `app/lib_build/` | Android Syncthing 原生库交叉编译工具 |
 | `syncthing/` | Syncthing 源码（参考 + 交叉编译用） |
 | `parse_email/` | 独立工具：eml → markdown 转换 |
 | `scripts/start_avd.sh` | Android 模拟器启动脚本 |
@@ -35,8 +31,8 @@ cd mydata_flutter && flutter pub get
 # Syncthing 编译（必须指定版本，否则 git describe 会取错 hash）
 cd syncthing && /snap/go/current/bin/go run build.go -version v2.1.0
 
-# Android Syncthing 原生库交叉编译
-cd app/lib_build && /snap/go/current/bin/go run main.go
+# Android Syncthing 原生库交叉编译（写入 jniLibs）
+cd mydata_flutter && ./start_android.sh
 
 # Android 模拟器
 scripts/start_avd.sh <AVD名称>
@@ -63,7 +59,6 @@ scripts/start_avd.sh <AVD名称>
 
 - **后端已改为纯 Dart**（shelf），不再需要 Go 编译工具链和 air
 - **Syncthing 编译坑**：`syncthing/` 不是独立 git 仓库，`go run build.go` 会取 mydata 的 git hash 作为版本号导致启动失败。必须传 `-version v2.1.0`
-- `app/lib_build/main.go` 硬编码了 NDK 路径 `/home/oldfeel/Android/Sdk/ndk/29.0.13846066` 和 Syncthing 版本 `v1.28.1-mydata`
+- Android 原生库由 `mydata_flutter/start_android.sh` 交叉编译（版本如 `v1.28.1-mydata`）
 - `parse_email/` 独立于主项目，读取 `mail.eml` → 输出 `chat.md`
-- 根目录 `readme.md` 描述的项目结构与实际目录不一致，以代码为准
 - **Go snap 权限问题**：系统 `go` 命令来自 snap 且权限受限，使用 `/snap/go/current/bin/go` 直接调用二进制

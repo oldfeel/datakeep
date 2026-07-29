@@ -1,49 +1,48 @@
 # Cursor Rules for MyData Project
 
 ## Project Context
-This is a Syncthing-like file synchronization application built with:
-- Frontend: React + TypeScript + Material-UI
-- Desktop App: Wails (Go + Web)
-- Backend API: Go + Fiber (RESTful API)
-- Database: SQLite + GORM
+跨平台文件同步应用（基于 Syncthing）。
+- 应用：Flutter（桌面 + Android，同一套代码 `mydata_flutter/`）
+- 进程内 API：Dart shelf（HTTPS `:8443`）
+- 同步引擎：本机 Syncthing（`127.0.0.1:8384`）
+
+详细约定见根目录 `AGENTS.md`。
 
 ## Architecture Rules
 
 ### 1. Interface Usage
-- Use Wails interfaces for desktop-specific features (file picker, system operations)
-- Use REST API (localhost:8080) for network access and device management
-- Always prefer REST API for device/folder lists and management
+- 桌面与 Android 均通过本机 HTTPS API（`:8443`）访问设备/文件夹
+- Syncthing REST 仅由后端代理，前端不直连
+- 设备 `deviceID == "local"` 或本机真实 ID 表示本机特殊处理
 
 ### 2. Code Style
-- Use Chinese comments and user-facing text
-- Follow Material-UI design patterns
-- Use TypeScript interfaces for type safety
-- Implement proper error handling with Snackbar notifications
+- 中文注释和用户界面文本
+- 使用 TypeScript/Dart 类型安全模式（本项目以 Dart 为主）
+- 错误通过 SnackBar / 明确错误态提示用户
 
 ### 3. State Management
-- Use React useState + useEffect for frontend state
-- Implement proper loading states and error handling
-- Auto-refresh data after operations (especially delete)
-- Keep frontend and backend state synchronized
+- Flutter：Provider / 页面内 State + 加载与错误态
+- 操作后刷新列表（尤其删除）
+- 保持 UI 与 Syncthing/后端状态同步
 
 ### 4. File Organization
-- Frontend components in `client/frontend/src/pages/`
-- Backend API in `api/` directory
-- Wails bindings auto-generated in `client/frontend/wailsjs/`
+- Flutter UI：`mydata_flutter/lib/`
+- Dart 后端：`mydata_flutter/lib/core/backend/`
+- 旧 Go 后端（停维）：`mydata_flutter/backend/`
 
 ### 5. Development Workflow
-- Backend changes require recompilation
-- Frontend changes auto-reload with Wails
-- New Wails functions need `wails generate module`
+- `cd mydata_flutter && flutter run -d linux` / `-d android`
+- Android 原生库：`mydata_flutter/start_android.sh`
+- 后端改动随 Flutter 热重载/热重启生效（进程内 shelf）
 
 ## Key Features
-- Folder management (add, edit, delete, share)
-- Device management and sharing
-- File browsing and synchronization
-- Cross-platform desktop application
+- 文件夹管理（添加、编辑、删除、共享权限）
+- 设备管理与共享
+- 文件浏览与同步
+- 跨平台桌面 + Android
 
 ## Important Notes
-- Always check if device is 'local' when filtering
-- Implement confirmation dialogs for destructive operations
-- Use proper loading indicators and error messages
-- Reference syncthing/gui/ for UI patterns and functionality 
+- 过滤设备时注意本机（`local` / 本机 deviceID）
+- 破坏性操作需要确认对话框
+- 使用明确的加载与错误提示
+- UI 模式可参考 `syncthing/gui/`
