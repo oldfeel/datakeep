@@ -217,6 +217,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         final folder = _folders[index];
         return FolderCard(
           folder: folder,
+          showPath: _device?.isLocal ?? false,
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute(
@@ -241,6 +242,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         final folder = _folders[index];
         return FolderCard(
           folder: folder,
+          showPath: _device?.isLocal ?? false,
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute(

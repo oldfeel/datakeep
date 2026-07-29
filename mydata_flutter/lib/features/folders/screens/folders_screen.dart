@@ -6,6 +6,7 @@ import '../../devices/screens/devices_screen.dart';
 import '../../../core/models/folder.dart';
 import '../../../core/models/device.dart';
 import '../../../shared/widgets/folder_card.dart';
+import '../../../shared/widgets/folder_edit_dialog.dart';
 import 'folder_detail_screen.dart';
 
 class FoldersScreen extends StatelessWidget {
@@ -153,8 +154,13 @@ class FoldersScreen extends StatelessWidget {
               final folder = folderProvider.folders[index];
               return FolderCard(
                 folder: folder,
-                onDelete: () {
-                  _showDeleteDialog(context, folder);
+                onEdit: () {
+                  FolderEditDialog.show(
+                    context,
+                    folder: folder,
+                    onDone: () =>
+                        context.read<FolderProvider>().fetchFolders(silent: true),
+                  );
                 },
                 onTap: () {
                   Navigator.of(context).push(
@@ -190,8 +196,13 @@ class FoldersScreen extends StatelessWidget {
               final folder = folderProvider.folders[index];
               return FolderCard(
                 folder: folder,
-                onDelete: () {
-                  _showDeleteDialog(context, folder);
+                onEdit: () {
+                  FolderEditDialog.show(
+                    context,
+                    folder: folder,
+                    onDone: () =>
+                        context.read<FolderProvider>().fetchFolders(silent: true),
+                  );
                 },
                 onTap: () {
                   Navigator.of(context).push(
@@ -374,33 +385,6 @@ class FoldersScreen extends StatelessWidget {
               }
             },
             child: const Text('添加'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showDeleteDialog(BuildContext context, Folder folder) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('确认删除'),
-        content: Text('确定要删除文件夹 "${folder.name}" 吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              context.read<FolderProvider>().deleteFolder(folder.id);
-              Navigator.of(context).pop();
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('删除'),
           ),
         ],
       ),

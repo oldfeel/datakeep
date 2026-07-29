@@ -71,7 +71,34 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
       case 'DeviceConnected':
         context.read<DeviceProvider>().fetchDevices(silent: true);
         break;
+      case 'StartupComplete':
+      case 'FolderSummary':
+      case 'FolderCompletion':
+      case 'StateChanged':
+        _refreshFoldersAfterSyncthingReady();
+        break;
     }
+  }
+
+  DateTime? _lastFolderRefreshAt;
+
+  /// Syncthing 启动完成或文件夹状态变化后刷新列表（节流）
+  void _refreshFoldersAfterSyncthingReady() {
+    final now = DateTime.now();
+    if (_lastFolderRefreshAt != null &&
+        now.difference(_lastFolderRefreshAt!) < const Duration(seconds: 2)) {
+      return;
+    }
+    _lastFolderRefreshAt = now;
+    if (!mounted) return;
+    final folderProvider = context.read<FolderProvider>();
+    final deviceId = folderProvider.loadedDeviceId;
+    if (deviceId != null) {
+      folderProvider.fetchDeviceFolders(deviceId, silent: true);
+    } else {
+      folderProvider.fetchFolders(silent: true);
+    }
+    context.read<DeviceProvider>().fetchDevices(silent: true);
   }
 
   String _normDeviceId(String id) =>

@@ -1,5 +1,8 @@
 allprojects {
     repositories {
+        // 国内优先走阿里云，避免 Maven Central Cloudflare 403
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
         google()
         mavenCentral()
     }

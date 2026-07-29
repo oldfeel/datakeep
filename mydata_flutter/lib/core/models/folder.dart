@@ -14,6 +14,8 @@ class Folder {
   final String status; // 'syncing', 'synced', 'error'
   final int fileCount;
   final int totalSize; // 字节数
+  /// 对端可见权限：sync / readonly（本机列表通常为空）
+  final String? access;
 
   Folder({
     required this.id,
@@ -26,10 +28,14 @@ class Folder {
     required this.status,
     required this.fileCount,
     required this.totalSize,
+    this.access,
   });
 
   factory Folder.fromJson(Map<String, dynamic> json) => _$FolderFromJson(json);
   Map<String, dynamic> toJson() => _$FolderToJson(this);
+
+  bool get isReadonlyAccess => access == 'readonly';
+  bool get isSyncAccess => access == null || access == 'sync';
 
   Folder copyWith({
     String? id,
@@ -42,6 +48,7 @@ class Folder {
     String? status,
     int? fileCount,
     int? totalSize,
+    String? access,
   }) {
     return Folder(
       id: id ?? this.id,
@@ -54,6 +61,7 @@ class Folder {
       status: status ?? this.status,
       fileCount: fileCount ?? this.fileCount,
       totalSize: totalSize ?? this.totalSize,
+      access: access ?? this.access,
     );
   }
 }

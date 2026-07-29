@@ -96,6 +96,17 @@ class ApiService {
       } else if (response.statusCode == 503 && silent) {
         return {'code': 1006, 'data': null};
       } else {
+        // 尽量解析后端返回的中文错误信息
+        try {
+          final jsonData = json.decode(response.body);
+          if (jsonData is Map && jsonData['data'] != null) {
+            throw Exception(jsonData['data'].toString());
+          }
+        } catch (e) {
+          if (e is Exception && !e.toString().startsWith('FormatException')) {
+            rethrow;
+          }
+        }
         throw Exception('HTTP 错误: ${response.statusCode}');
       }
     } catch (e) {
@@ -255,8 +266,16 @@ class ApiService {
       // 如果 deviceId 为空，使用 'local' 作为默认值
       final validDeviceId = deviceId.isEmpty ? 'local' : deviceId;
       final localDeviceId = await getLocalDeviceId();
-      final response = await _get('/device/$validDeviceId/folders');
-      
+      final response = await _get(
+        '/device/$validDeviceId/folders',
+        timeout: const Duration(seconds: 12),
+      );
+
+      if (response.containsKey('code') && response['code'] != 0) {
+        final msg = response['data']?.toString() ?? '获取文件夹失败';
+        throw Exception(msg);
+      }
+
       // 处理 client 后端响应格式
       List<dynamic> folderList;
       if (response.containsKey('code') && response['code'] == 0) {
@@ -264,13 +283,13 @@ class ApiService {
       } else if (response.containsKey('list')) {
         folderList = response['list'] as List<dynamic>;
       } else if (response.containsKey('data')) {
-        folderList = response['data'] is List 
+        folderList = response['data'] is List
             ? response['data'] as List<dynamic>
             : [response['data']];
       } else {
         folderList = [];
       }
-      
+
       return folderList.map((json) {
         final status = json['status']?.toString() ?? 'synced';
         return Folder(
@@ -283,12 +302,15 @@ class ApiService {
           updatedAt: DateTime.now(),
           status: status,
           fileCount: (json['localFiles'] as num?)?.toInt() ?? 0,
-          totalSize: (json['globalBytes'] as num?)?.toInt() ?? 0,
+          totalSize: (json['localBytes'] as num?)?.toInt() ??
+              (json['globalBytes'] as num?)?.toInt() ??
+              0,
+          access: json['access']?.toString(),
         );
       }).toList();
     } catch (e) {
       debugPrint('获取设备文件夹失败: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -420,34 +442,48 @@ class ApiService {
   }
 
   /// 获取文件夹文件列表
+  /// [deviceId] 非本机时经 peer 代理拉取对端文件
   static Future<List<Map<String, dynamic>>> getFolderFiles(
     String folderId, {
     String? path,
+    String? deviceId,
   }) async {
     try {
-      String endpoint = '/folder/${Uri.encodeComponent(folderId)}';
+      final localId = await getLocalDeviceId();
+      final isLocal = deviceId == null ||
+          deviceId.isEmpty ||
+          deviceId == 'local' ||
+          deviceId == localId;
+
+      String endpoint;
+      if (isLocal) {
+        endpoint = '/folder/${Uri.encodeComponent(folderId)}';
+      } else {
+        endpoint =
+            '/device/${Uri.encodeComponent(deviceId)}/folder/${Uri.encodeComponent(folderId)}/files';
+      }
       if (path != null && path.isNotEmpty) {
         endpoint += '?path=${Uri.encodeComponent(path)}';
       }
-      
-      final response = await _get(endpoint);
-      
+
+      final response = await _get(endpoint, timeout: const Duration(seconds: 12));
+
       if (response.containsKey('code') && response['code'] != 0) {
         debugPrint('获取文件夹文件列表失败: ${response['data']}');
-        return [];
+        throw Exception(response['data']?.toString() ?? '获取文件列表失败');
       }
-      
+
       List<dynamic> fileList;
       if (response['data'] is List) {
         fileList = response['data'] as List<dynamic>;
       } else {
         return [];
       }
-      
+
       return fileList.whereType<Map<String, dynamic>>().toList();
     } catch (e) {
       debugPrint('获取文件夹文件列表失败: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -907,5 +943,30 @@ class ApiService {
   /// 更新文件夹共享设备列表
   static Future<void> shareFolder(String folderId, List<String> sharedDevices) async {
     await _post('/folder/$folderId/sharing', {'sharedDevices': sharedDevices});
+  }
+
+  /// 获取文件夹 ACL（deviceId → sync|readonly|hidden）
+  static Future<Map<String, String>> getFolderAcl(String folderId) async {
+    final resp = await _get('/folder/${Uri.encodeComponent(folderId)}/acl');
+    if (resp['code'] != 0) {
+      throw Exception(resp['data']?.toString() ?? '获取权限失败');
+    }
+    final data = resp['data'];
+    if (data is! Map) return {};
+    final perms = data['permissions'];
+    if (perms is! Map) return {};
+    return {
+      for (final e in perms.entries) e.key.toString(): e.value.toString(),
+    };
+  }
+
+  /// 保存文件夹 ACL
+  static Future<void> setFolderAcl(
+    String folderId,
+    Map<String, String> permissions,
+  ) async {
+    await _post('/folder/${Uri.encodeComponent(folderId)}/acl', {
+      'permissions': permissions,
+    });
   }
 }

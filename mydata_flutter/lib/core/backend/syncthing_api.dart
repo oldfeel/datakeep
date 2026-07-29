@@ -75,6 +75,20 @@ class SyncthingApi {
     }
   }
 
+  /// 代理层失败（区别于 Syncthing 业务 JSON 自带的空 `error: ""` 字段）
+  bool _isProxyError(Map<String, dynamic> result) {
+    final err = result['error'];
+    if (err == null || err.toString().isEmpty) return false;
+    // /rest/db/status 成功响应含 state/localFiles，同时可能有 error:""
+    if (result.containsKey('state') ||
+        result.containsKey('localFiles') ||
+        result.containsKey('data') ||
+        result.containsKey('myID')) {
+      return false;
+    }
+    return true;
+  }
+
   Future<Map<String, dynamic>> proxyGet(
     String path, {
     Map<String, String>? queryParams,
@@ -573,7 +587,8 @@ class SyncthingApi {
       queryParams: {'folder': folderId},
       silent: true,
     );
-    if (status.containsKey('error')) {
+    // 注意：成功响应里也有 error:""，不能用 containsKey('error')
+    if (_isProxyError(status) || status.isEmpty) {
       return {'status': 'unknown', 'state': 'unknown', 'completion': 0.0};
     }
 
@@ -587,9 +602,11 @@ class SyncthingApi {
     final needBytes = (status['needBytes'] as num?)?.toInt() ?? 0;
     final needFiles = (status['needFiles'] as num?)?.toInt() ?? 0;
     final globalBytes = (status['globalBytes'] as num?)?.toInt() ?? 0;
+    final globalFiles = (status['globalFiles'] as num?)?.toInt() ?? 0;
     final localFiles = (status['localFiles'] as num?)?.toInt() ?? 0;
+    final localBytes = (status['localBytes'] as num?)?.toInt() ?? 0;
     final pullErrors = (status['pullErrors'] as num?)?.toInt() ?? 0;
-    final completion = completionRes.containsKey('error')
+    final completion = _isProxyError(completionRes) || completionRes.isEmpty
         ? (globalBytes > 0 ? (globalBytes - needBytes) / globalBytes * 100.0 : 100.0)
         : (completionRes['completion'] as num?)?.toDouble() ?? 0.0;
 
@@ -617,7 +634,9 @@ class SyncthingApi {
       'needBytes': needBytes,
       'needFiles': needFiles,
       'globalBytes': globalBytes,
+      'globalFiles': globalFiles,
       'localFiles': localFiles,
+      'localBytes': localBytes,
       'pullErrors': pullErrors,
     };
   }
@@ -711,5 +730,27 @@ class SyncthingApi {
         device['addresses'] = [address];
       }
     }
+  }
+
+  /// 获取已连接设备的局域网地址（原始 host:port）
+  Future<({bool connected, String? address})> getDeviceConnection(String deviceId) async {
+    final connResult = await proxyGet('/rest/system/connections', silent: true);
+    if (connResult.containsKey('error')) {
+      return (connected: false, address: null);
+    }
+    final connections = connResult['connections'];
+    if (connections is! Map) return (connected: false, address: null);
+
+    Map<String, dynamic>? conn;
+    connections.forEach((key, value) {
+      if (_normId(key.toString()) == _normId(deviceId) && value is Map) {
+        conn = Map<String, dynamic>.from(value);
+      }
+    });
+    if (conn == null) return (connected: false, address: null);
+    return (
+      connected: conn!['connected'] == true,
+      address: conn!['address']?.toString(),
+    );
   }
 }

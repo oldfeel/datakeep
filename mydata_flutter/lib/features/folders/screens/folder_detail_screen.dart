@@ -44,6 +44,10 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   }
 
   Future<void> _refreshSync() async {
+    // 远程/只读不拉本机 Syncthing 同步状态
+    if (_folderInfo?.isLocal != true || _folderInfo?.isReadonlyAccess == true) {
+      return;
+    }
     try {
       final info = await ApiService.getFolderSyncStatus(widget.folderId);
       if (!mounted) return;
@@ -101,6 +105,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       final files = await ApiService.getFolderFiles(
         widget.folderId,
         path: path,
+        deviceId: widget.deviceId,
       );
       setState(() {
         _files = files;
@@ -444,7 +449,10 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                 )
               : Column(
                   children: [
-                    if (_syncInfo != null) _buildSyncBanner(context),
+                    if (_syncInfo != null &&
+                        _folderInfo?.isLocal == true &&
+                        _folderInfo?.isReadonlyAccess != true)
+                      _buildSyncBanner(context),
                     // 桌面端标题栏
                     if (isDesktop)
                       Container(

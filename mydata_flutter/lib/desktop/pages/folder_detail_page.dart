@@ -62,7 +62,11 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
     setState(() { _isLoading = true; _error = null; });
     try {
       final path = _currentPath.join('/');
-      final files = await ApiService.getFolderFiles(widget.folder.id, path: path.isEmpty ? null : path);
+      final files = await ApiService.getFolderFiles(
+        widget.folder.id,
+        path: path.isEmpty ? null : path,
+        deviceId: widget.device.id,
+      );
       if (mounted) { setState(() { _files = files; _isLoading = false; _applySort(); }); }
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _isLoading = false; });

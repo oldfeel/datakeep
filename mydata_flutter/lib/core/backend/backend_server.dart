@@ -7,10 +7,13 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 import 'cert_manager.dart';
 import 'syncthing_api.dart';
+import 'peer_client.dart';
+import 'folder_acl_store.dart';
 import '../../shared/utils/sync_folder_paths.dart';
 
 class BackendServer {
   final SyncthingApi _api = SyncthingApi();
+  final FolderAclStore _acl = FolderAclStore();
   late CertManager _certMgr;
   HttpServer? _server;
   String? _defaultLocalDeviceName;
@@ -26,16 +29,20 @@ class BackendServer {
     final dataDir = await _resolveDataDir();
     _certMgr = CertManager('$dataDir/certs');
     await _certMgr.ensureReady();
+    await _acl.init(dataDir);
 
     final router = Router()
       ..get('/api/devices', _handleDevices)
       ..get('/api/device/<deviceId>/folders', _handleDeviceFolders)
+      ..get('/api/device/<deviceId>/folder/<folderId>/files', _handleDeviceFolderFiles)
       ..post('/api/device/local/folders', _handleCreateFolder)
       ..delete('/api/device/<deviceId>/folders/<folderId>', _handleDeleteFolder)
       ..delete('/api/device/<deviceId>', _handleRemoveDevice)
       ..get('/api/deviceid', _handleDeviceId)
       ..get('/api/folder/<folderId>', _handleFolderFiles)
       ..get('/api/folder/<folderId>/status', _handleFolderStatus)
+      ..get('/api/folder/<folderId>/acl', _handleGetFolderAcl)
+      ..post('/api/folder/<folderId>/acl', _handleSetFolderAcl)
       ..post('/api/folder/<folderId>/fix-path', _handleFixFolderPath)
       ..get('/api/folder/<folderId>/preview', _handleFilePreview)
       ..get('/api/wifi', _handleWifiInfo)
@@ -50,6 +57,9 @@ class BackendServer {
       ..post('/api/syncthing/cluster/pending/folders/accept', _handleAcceptPendingFolder)
       ..get('/api/syncthing/deviceid', _handleSyncthingDeviceId)
       ..post('/api/syncthing/config/devices', _handleSyncthingAddDevice)
+      ..get('/api/peer/folders', _handlePeerFolders)
+      ..get('/api/peer/folder/<folderId>/files', _handlePeerFolderFiles)
+      ..get('/api/peer/health', _handlePeerHealth)
       ..get('/health', _handleHealth);
 
     final handler = Pipeline()
@@ -196,36 +206,29 @@ class BackendServer {
   }
 
   Future<Response> _handleDeviceFolders(Request request, String deviceId) async {
-    final localId = await _api.getLocalDeviceId();
     final isLocal = await _isLocalDeviceId(deviceId);
+    if (!isLocal) {
+      return _handleRemoteDeviceFolders(deviceId);
+    }
+    return _json({'code': 0, 'data': await _buildLocalFoldersPayload()});
+  }
+
+  /// 本机文件夹列表（含同步统计）
+  Future<List<Map<String, dynamic>>> _buildLocalFoldersPayload() async {
+    final localId = await _api.getLocalDeviceId();
     final result = await _api.proxyGet('/rest/config/folders', silent: true);
     if (result.containsKey('error')) {
-      if (isLocal) {
-        return _json({'code': 0, 'data': _localFoldersPayload()});
-      }
-      return _json({'code': 0, 'data': []});
+      return _localFoldersPayload();
     }
 
     final rawList = result['data'] as List? ?? [];
-    if (rawList.isEmpty && isLocal) {
-      return _json({'code': 0, 'data': _localFoldersPayload()});
-    }
+    if (rawList.isEmpty) return _localFoldersPayload();
 
     final folders = <Map<String, dynamic>>[];
     for (final f in rawList) {
       if (f is! Map) continue;
       final map = Map<String, dynamic>.from(f);
       final devices = (map['devices'] as List?) ?? [];
-
-      if (!isLocal) {
-        final sharedWithTarget = devices.any((d) {
-          if (d is! Map) return false;
-          final id = d['deviceID']?.toString() ?? '';
-          return id.isNotEmpty && _normDeviceId(id) == _normDeviceId(deviceId);
-        });
-        if (!sharedWithTarget) continue;
-      }
-
       final sharedDevices = devices
           .whereType<Map>()
           .map((d) => d['deviceID']?.toString() ?? '')
@@ -236,7 +239,317 @@ class BackendServer {
       map['sharedDevices'] = sharedDevices;
       folders.add(await _folderPayload(map));
     }
-    return _json({'code': 0, 'data': folders});
+    return folders;
+  }
+
+  /// 经局域网 HTTPS 拉取对端真实文件夹列表
+  Future<Response> _handleRemoteDeviceFolders(String deviceId) async {
+    final conn = await _api.getDeviceConnection(deviceId);
+    if (!conn.connected) {
+      return _json({'code': 1007, 'data': '设备离线'}, status: 503);
+    }
+    final ip = PeerClient.extractLanIp(conn.address);
+    if (ip == null) {
+      return _json({
+        'code': 1007,
+        'data': '无法解析对端局域网地址（可能经中继连接）',
+      }, status: 503);
+    }
+
+    final localId = await _api.getLocalDeviceId();
+    if (localId == null || localId.isEmpty) {
+      return _json({'code': 1007, 'data': '本机设备 ID 未知'}, status: 503);
+    }
+
+    debugPrint('[peer] 拉取对端文件夹: device=$deviceId ip=$ip');
+    final peer = await PeerClient.getJson(
+      ip,
+      '/api/peer/folders',
+      headers: {PeerClient.deviceIdHeader: localId},
+    );
+    if (peer.containsKey('error')) {
+      return _json({
+        'code': 1008,
+        'data': peer['error']?.toString() ?? '对端 MyData 不可达',
+      }, status: 503);
+    }
+    if (peer['code'] != 0) {
+      return _json({
+        'code': peer['code'] ?? 1008,
+        'data': peer['data']?.toString() ?? '对端返回错误',
+      }, status: 503);
+    }
+    final data = peer['data'];
+    if (data is! List) {
+      return _json({'code': 1008, 'data': '对端响应格式错误'}, status: 502);
+    }
+    return _json({'code': 0, 'data': data});
+  }
+
+  /// 对端探活
+  Future<Response> _handlePeerHealth(Request request) async {
+    final auth = await _authorizePeer(request);
+    if (auth != null) return auth;
+    final localId = await _api.getLocalDeviceId();
+    return _json({
+      'code': 0,
+      'data': {'ok': true, 'deviceID': localId ?? ''},
+    });
+  }
+
+  /// 对端拉取本机文件夹（按 ACL：仅 sync/readonly）
+  Future<Response> _handlePeerFolders(Request request) async {
+    final auth = await _authorizePeer(request);
+    if (auth != null) return auth;
+    final callerId = request.headers['x-mydata-device-id'] ?? '';
+    final folders = await _buildLocalFoldersPayload();
+    final filtered = <Map<String, dynamic>>[];
+    for (final f in folders) {
+      final folderId = f['id']?.toString() ?? '';
+      if (folderId.isEmpty) continue;
+      final sharedIds = (f['sharedDevices'] as List?) ?? [];
+      final syncthingShared = sharedIds.any(
+        (id) => _normDeviceId(id.toString()) == _normDeviceId(callerId),
+      );
+      final access = _acl.resolve(
+        folderId,
+        callerId,
+        syncthingShared: syncthingShared,
+      );
+      if (!access.isPeerVisible) continue;
+      final copy = Map<String, dynamic>.from(f);
+      copy['access'] = access.apiValue;
+      filtered.add(copy);
+    }
+    return _json({'code': 0, 'data': filtered});
+  }
+
+  /// 对端只读浏览本机文件夹文件
+  Future<Response> _handlePeerFolderFiles(Request request, String folderId) async {
+    final auth = await _authorizePeer(request);
+    if (auth != null) return auth;
+    final callerId = request.headers['x-mydata-device-id'] ?? '';
+    final access = await _resolveAccessForCaller(folderId, callerId);
+    if (!access.isPeerVisible) {
+      return _json({'code': 1403, 'data': '无权限访问该文件夹'}, status: 403);
+    }
+    return _browseFolderFiles(folderId, request.url.queryParameters['path'] ?? '');
+  }
+
+  Future<FolderAccess> _resolveAccessForCaller(String folderId, String callerId) async {
+    final folders = await _buildLocalFoldersPayload();
+    Map<String, dynamic>? match;
+    for (final f in folders) {
+      if (f['id']?.toString() == folderId) {
+        match = f;
+        break;
+      }
+    }
+    final sharedIds = (match?['sharedDevices'] as List?) ?? [];
+    final syncthingShared = sharedIds.any(
+      (id) => _normDeviceId(id.toString()) == _normDeviceId(callerId),
+    );
+    return _acl.resolve(folderId, callerId, syncthingShared: syncthingShared);
+  }
+
+  /// 本机或代理对端的文件列表
+  Future<Response> _handleDeviceFolderFiles(
+    Request request,
+    String deviceId,
+    String folderId,
+  ) async {
+    final isLocal = await _isLocalDeviceId(deviceId);
+    if (isLocal) {
+      return _browseFolderFiles(folderId, request.url.queryParameters['path'] ?? '');
+    }
+    return _proxyPeerFolderFiles(deviceId, folderId, request.url.queryParameters['path'] ?? '');
+  }
+
+  Future<Response> _proxyPeerFolderFiles(
+    String deviceId,
+    String folderId,
+    String path,
+  ) async {
+    final conn = await _api.getDeviceConnection(deviceId);
+    if (!conn.connected) {
+      return _json({'code': 1007, 'data': '设备离线'}, status: 503);
+    }
+    final ip = PeerClient.extractLanIp(conn.address);
+    if (ip == null) {
+      return _json({'code': 1007, 'data': '无法解析对端局域网地址'}, status: 503);
+    }
+    final localId = await _api.getLocalDeviceId();
+    if (localId == null || localId.isEmpty) {
+      return _json({'code': 1007, 'data': '本机设备 ID 未知'}, status: 503);
+    }
+    final encoded = Uri.encodeComponent(folderId);
+    final q = path.isEmpty ? '' : '?path=${Uri.encodeComponent(path)}';
+    final peer = await PeerClient.getJson(
+      ip,
+      '/api/peer/folder/$encoded/files$q',
+      headers: {PeerClient.deviceIdHeader: localId},
+    );
+    if (peer.containsKey('error')) {
+      return _json({
+        'code': 1008,
+        'data': peer['error']?.toString() ?? '对端不可达',
+      }, status: 503);
+    }
+    if (peer['code'] != 0) {
+      return _json({
+        'code': peer['code'] ?? 1008,
+        'data': peer['data']?.toString() ?? '对端返回错误',
+      }, status: peer['statusCode'] is int ? peer['statusCode'] as int : 503);
+    }
+    return _json({'code': 0, 'data': peer['data'] ?? []});
+  }
+
+  Future<Response> _handleGetFolderAcl(Request request, String folderId) async {
+    var decodedId = folderId;
+    try {
+      decodedId = Uri.decodeComponent(folderId);
+    } catch (_) {}
+
+    final devices = await _api.proxyGet('/rest/config/devices', silent: true);
+    final deviceList = devices['data'] is List ? devices['data'] as List : [];
+    final localId = await _api.getLocalDeviceId();
+
+    // 当前 Syncthing 共享设备
+    final folderCfg = await _api.proxyGet(
+      '/rest/config/folders/${Uri.encodeComponent(decodedId)}',
+      silent: true,
+    );
+    final sharedNorm = <String>{};
+    if (!folderCfg.containsKey('error')) {
+      for (final d in (folderCfg['devices'] as List? ?? [])) {
+        if (d is! Map) continue;
+        final id = d['deviceID']?.toString() ?? '';
+        if (id.isNotEmpty) sharedNorm.add(_normDeviceId(id));
+      }
+    }
+
+    final permissions = <String, String>{};
+    for (final d in deviceList) {
+      if (d is! Map) continue;
+      final id = d['deviceID']?.toString() ?? '';
+      if (id.isEmpty) continue;
+      if (localId != null && _normDeviceId(id) == _normDeviceId(localId)) continue;
+      final access = _acl.resolve(
+        decodedId,
+        id,
+        syncthingShared: sharedNorm.contains(_normDeviceId(id)),
+      );
+      permissions[id] = access.apiValue;
+    }
+
+    return _json({
+      'code': 0,
+      'data': {
+        'folderId': decodedId,
+        'permissions': permissions,
+      },
+    });
+  }
+
+  Future<Response> _handleSetFolderAcl(Request request, String folderId) async {
+    var decodedId = folderId;
+    try {
+      decodedId = Uri.decodeComponent(folderId);
+    } catch (_) {}
+
+    final body = utf8.decode(await request.read().expand((e) => e).toList());
+    final data = json.decode(body) as Map<String, dynamic>;
+    final rawPerms = data['permissions'];
+    if (rawPerms is! Map) {
+      return _json({'code': 1001, 'data': '缺少 permissions'}, status: 400);
+    }
+
+    final permissions = <String, FolderAccess>{};
+    for (final e in rawPerms.entries) {
+      final access = FolderAccess.tryParse(e.value?.toString());
+      if (access == null) {
+        return _json({
+          'code': 1001,
+          'data': '无效权限: ${e.value}',
+        }, status: 400);
+      }
+      permissions[e.key.toString()] = access;
+    }
+
+    await _acl.setFolderPermissions(decodedId, permissions);
+
+    // 对齐 Syncthing：仅 sync 设备加入共享
+    final localId = await _api.getLocalDeviceId();
+    final syncIds = permissions.entries
+        .where((e) => e.value == FolderAccess.sync)
+        .map((e) => e.key)
+        .toList();
+    var sharedDevices = [...syncIds];
+    if (localId != null &&
+        !sharedDevices.any((id) => _normDeviceId(id) == _normDeviceId(localId))) {
+      sharedDevices = [localId, ...sharedDevices];
+    }
+
+    final encoded = Uri.encodeComponent(decodedId);
+    final folder = await _api.proxyGet('/rest/config/folders/$encoded');
+    if (folder.containsKey('error')) {
+      return _json({'code': 1004, 'data': '文件夹不存在'}, status: 404);
+    }
+
+    final oldRemoteIds = <String>{};
+    for (final d in (folder['devices'] as List? ?? [])) {
+      if (d is! Map) continue;
+      final id = d['deviceID']?.toString() ?? '';
+      if (id.isEmpty || localId == null) continue;
+      if (_normDeviceId(id) != _normDeviceId(localId)) {
+        oldRemoteIds.add(id);
+      }
+    }
+
+    folder['devices'] = _folderDeviceList(sharedDevices);
+    final result = await _api.proxyPut('/rest/config/folders/$encoded', folder);
+    if (result.containsKey('error')) {
+      return _json({'code': 1005, 'data': '保存失败: ${result['error']}'}, status: 500);
+    }
+
+    // 对仍为 sync 且原本已共享的设备，强制重发邀请
+    if (localId != null) {
+      for (final remoteId in syncIds) {
+        if (_normDeviceId(remoteId) == _normDeviceId(localId)) continue;
+        final wasShared =
+            oldRemoteIds.any((id) => _normDeviceId(id) == _normDeviceId(remoteId));
+        if (!wasShared) continue;
+        debugPrint('[acl] 重新向 $remoteId 发送文件夹 $decodedId 邀请');
+        final withoutRemote = sharedDevices
+            .where((id) => _normDeviceId(id) != _normDeviceId(remoteId))
+            .toList();
+        folder['devices'] = _folderDeviceList(withoutRemote);
+        await _api.proxyPut('/rest/config/folders/$encoded', folder);
+        await Future.delayed(const Duration(milliseconds: 300));
+        folder['devices'] = _folderDeviceList(sharedDevices);
+        await _api.proxyPut('/rest/config/folders/$encoded', folder);
+      }
+    }
+
+    await _api.triggerFolderScan(decodedId);
+    return _json({'code': 0, 'data': {'message': '权限已更新'}});
+  }
+
+  /// 校验 X-MyData-Device-ID 是否为已配对设备（或本机）
+  Future<Response?> _authorizePeer(Request request) async {
+    // shelf 将 header 名规范为小写
+    final callerId = request.headers['x-mydata-device-id'] ?? '';
+    if (callerId.isEmpty) {
+      return _json({'code': 1401, 'data': '缺少设备身份'}, status: 401);
+    }
+    if (await _isLocalDeviceId(callerId)) return null;
+    final known = await _configuredDeviceNormIds();
+    final localId = await _api.getLocalDeviceId();
+    if (localId != null) known.add(_normDeviceId(localId));
+    if (!known.contains(_normDeviceId(callerId))) {
+      return _json({'code': 1403, 'data': '设备未配对'}, status: 403);
+    }
+    return null;
   }
 
   Future<Response> _handleDeviceId(Request request) async {
@@ -308,9 +621,11 @@ class BackendServer {
   }
 
   Future<Response> _handleFolderFiles(Request request, String folderId) async {
-    final path = request.url.queryParameters['path'] ?? '';
+    return _browseFolderFiles(folderId, request.url.queryParameters['path'] ?? '');
+  }
+
+  Future<Response> _browseFolderFiles(String folderId, String path) async {
     var folderPath = await _api.getFolderPath(folderId);
-    // 中文 folderId 或 config 直读兜底
     if (folderPath == null || folderPath.isEmpty) {
       var decodedId = folderId;
       try {
@@ -493,6 +808,9 @@ class BackendServer {
         'path': f['path'] ?? '',
         'sharedDevices': <String>[],
         'localFiles': 0,
+        'localBytes': 0,
+        'globalFiles': 0,
+        'globalBytes': 0,
         'status': 'unknown',
         'completion': 0.0,
         'needBytes': 0,
@@ -526,6 +844,9 @@ class BackendServer {
       'path': map['path'] ?? '',
       'sharedDevices': (map['sharedDevices'] as List?) ?? [],
       'localFiles': sync['localFiles'] ?? 0,
+      'localBytes': sync['localBytes'] ?? 0,
+      'globalFiles': sync['globalFiles'] ?? 0,
+      'globalBytes': sync['globalBytes'] ?? 0,
       'status': sync['status'] ?? 'unknown',
       'completion': sync['completion'] ?? 0.0,
       'needBytes': sync['needBytes'] ?? 0,
@@ -545,6 +866,12 @@ class BackendServer {
           final id = d['deviceID']?.toString() ?? '';
           if (id.isNotEmpty) ids.add(_normDeviceId(id));
         }
+      }
+    }
+    if (ids.isEmpty) {
+      for (final d in _configDevices()) {
+        final id = d['deviceID']?.toString() ?? '';
+        if (id.isNotEmpty) ids.add(_normDeviceId(id));
       }
     }
     return ids;

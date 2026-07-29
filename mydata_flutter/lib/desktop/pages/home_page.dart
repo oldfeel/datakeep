@@ -67,6 +67,13 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
         case 'PendingFoldersChanged':
           _handlePendingFoldersChanged(event);
           return;
+        case 'StartupComplete':
+        case 'FolderSummary':
+        case 'FolderCompletion':
+        case 'StateChanged':
+          context.read<FolderProvider>().fetchFolders(silent: true);
+          context.read<DeviceProvider>().fetchDevices(silent: true);
+          return;
         case 'ItemFinished':
           message = '文件同步完成: ${event.data['item'] ?? ''}';
           bgColor = Colors.green;
@@ -602,6 +609,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
       case DesktopPage.deviceDetail:
         if (_selectedDevice == null) return _buildWelcomePage(context);
         return DeviceDetailPage(
+          key: ValueKey(_selectedDevice!.id),
           device: _selectedDevice!,
           onFolderTap: _selectFolder,
           onBack: _navigateHome,
@@ -611,6 +619,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           return _buildWelcomePage(context);
         }
         return FolderDetailPage(
+          key: ValueKey('${_selectedDevice!.id}/${_selectedFolder!.id}'),
           device: _selectedDevice!,
           folder: _selectedFolder!,
           onFileTap: _previewFile,

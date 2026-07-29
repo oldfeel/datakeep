@@ -6,6 +6,7 @@ import '../../folders/providers/folder_provider.dart';
 import '../../../core/models/device.dart';
 import '../../../core/models/folder.dart';
 import '../../../shared/widgets/folder_card.dart';
+import '../../../shared/widgets/folder_edit_dialog.dart';
 import '../../../shared/widgets/device_info_panel.dart';
 import '../../folders/screens/folder_detail_screen.dart';
 
@@ -295,6 +296,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildFoldersContent(BuildContext context) {
     final deviceId = _selectedDeviceId!;
+    final devices = context.watch<DeviceProvider>().devices;
+    final selectedIsLocal = devices.any((d) => d.id == deviceId && d.isLocal);
     return Consumer<FolderProvider>(
       builder: (context, folderProvider, _) {
         if (folderProvider.loadedDeviceId != deviceId) {
@@ -382,9 +385,17 @@ class _HomeScreenState extends State<HomeScreen> {
             final folder = folders[index];
             return FolderCard(
               folder: folder,
-              onDelete: () {
-                _showDeleteDialog(context, folder);
-              },
+              // 远程列表已是对端真实数据，可显示路径与统计
+              showPath: true,
+              onEdit: selectedIsLocal
+                  ? () {
+                      FolderEditDialog.show(
+                        context,
+                        folder: folder,
+                        onDone: () => _loadDeviceFolders(deviceId),
+                      );
+                    }
+                  : null,
               onTap: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
@@ -535,35 +546,6 @@ class _HomeScreenState extends State<HomeScreen> {
               }
             },
             child: const Text('添加'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // 显示删除对话框
-  void _showDeleteDialog(BuildContext context, Folder folder) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('确认删除'),
-        content: Text('确定要删除文件夹 "${folder.name}" 吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              context.read<FolderProvider>().deleteFolder(folder.id);
-              Navigator.of(context).pop();
-              _loadDeviceFolders(_selectedDeviceId!);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('删除'),
           ),
         ],
       ),
