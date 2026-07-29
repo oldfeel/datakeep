@@ -84,4 +84,52 @@ class PeerClient {
       client.close(force: true);
     }
   }
+
+  /// GET https://{ip}:8443/path → 原始字节（文件预览）
+  static Future<Map<String, dynamic>> getBytes(
+    String ip,
+    String path, {
+    Map<String, String>? headers,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final uri = Uri.parse('https://$ip:$peerPort$path');
+    final client = _client();
+    client.connectionTimeout = const Duration(seconds: 5);
+    try {
+      final req = await client.getUrl(uri).timeout(timeout);
+      headers?.forEach(req.headers.set);
+      final res = await req.close().timeout(timeout);
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in res) {
+        builder.add(chunk);
+      }
+      final bytes = builder.takeBytes();
+      if (res.statusCode != 200) {
+        String msg = 'HTTP ${res.statusCode}';
+        try {
+          final decoded = json.decode(utf8.decode(bytes));
+          if (decoded is Map && decoded['data'] != null) {
+            msg = decoded['data'].toString();
+          }
+        } catch (_) {}
+        return {'error': msg, 'statusCode': res.statusCode};
+      }
+      return {
+        'bytes': bytes,
+        'contentType': res.headers.contentType?.mimeType ??
+            res.headers.value('content-type') ??
+            'application/octet-stream',
+      };
+    } on SocketException catch (e) {
+      debugPrint('[peer] 下载失败 $uri: $e');
+      return {'error': '对端 MyData 未运行或不可达'};
+    } on TimeoutException catch (_) {
+      return {'error': '下载对端文件超时'};
+    } catch (e) {
+      debugPrint('[peer] 下载失败 $uri: $e');
+      return {'error': e.toString()};
+    } finally {
+      client.close(force: true);
+    }
+  }
 }

@@ -26,6 +26,8 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
   DesktopPage _currentPage = DesktopPage.home;
   Device? _selectedDevice;
   Folder? _selectedFolder;
+  /// 文件夹内当前浏览的相对路径（如 `照片`），预览返回后用于恢复
+  String _folderBrowsePath = '';
   String? _previewFilePath;
   String _searchText = '';
   String _wifiName = '';
@@ -344,6 +346,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
     setState(() {
       _selectedDevice = device;
       _selectedFolder = null;
+      _folderBrowsePath = '';
       _previewFilePath = null;
       _currentPage = DesktopPage.deviceDetail;
     });
@@ -352,6 +355,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
   void _selectFolder(Folder folder) {
     setState(() {
       _selectedFolder = folder;
+      _folderBrowsePath = '';
       _previewFilePath = null;
       _currentPage = DesktopPage.folderDetail;
     });
@@ -359,6 +363,9 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
 
   void _previewFile(String path) {
     setState(() {
+      // 记住文件所在子目录，预览返回后恢复
+      final slash = path.lastIndexOf('/');
+      _folderBrowsePath = slash >= 0 ? path.substring(0, slash) : '';
       _previewFilePath = path;
       _currentPage = DesktopPage.filePreview;
     });
@@ -369,6 +376,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
       _currentPage = DesktopPage.home;
       _selectedDevice = null;
       _selectedFolder = null;
+      _folderBrowsePath = '';
       _previewFilePath = null;
     });
   }
@@ -619,10 +627,14 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           return _buildWelcomePage(context);
         }
         return FolderDetailPage(
-          key: ValueKey('${_selectedDevice!.id}/${_selectedFolder!.id}'),
+          key: ValueKey('${_selectedDevice!.id}/${_selectedFolder!.id}/$_folderBrowsePath'),
           device: _selectedDevice!,
           folder: _selectedFolder!,
+          initialPath: _folderBrowsePath,
           onFileTap: _previewFile,
+          onPathChanged: (path) {
+            _folderBrowsePath = path;
+          },
           onBack: () => _selectDevice(_selectedDevice!),
         );
       case DesktopPage.filePreview:

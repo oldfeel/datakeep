@@ -2,3 +2,6 @@ example
 
 # 日志
 logs
+
+# 运行时文件夹 ACL
+**/folder_acl.json

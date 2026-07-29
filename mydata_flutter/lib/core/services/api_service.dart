@@ -480,7 +480,16 @@ class ApiService {
         return [];
       }
 
-      return fileList.whereType<Map<String, dynamic>>().toList();
+      return fileList.whereType<Map<String, dynamic>>().map((f) {
+        final copy = Map<String, dynamic>.from(f);
+        final t = copy['type'];
+        copy['isDir'] = t == 1 ||
+            t == '1' ||
+            t == 'dir' ||
+            t == true ||
+            copy['isDir'] == true;
+        return copy;
+      }).toList();
     } catch (e) {
       debugPrint('获取文件夹文件列表失败: $e');
       rethrow;
@@ -794,14 +803,34 @@ class ApiService {
   }
 
   /// 文件预览
+  /// [deviceId] 非本机时经 peer 代理从对端拉取文件内容
   static Future<http.Response> previewFile(
     String folderId,
-    String filePath,
-  ) async {
+    String filePath, {
+    String? deviceId,
+  }) async {
     await initialize();
-    
-    final uri = Uri.parse('$_baseUrl/folder/${Uri.encodeComponent(folderId)}/preview?path=${Uri.encodeComponent(filePath)}');
-    return await _httpClient.get(uri);
+
+    final localId = await getLocalDeviceId();
+    final isLocal = deviceId == null ||
+        deviceId.isEmpty ||
+        deviceId == 'local' ||
+        deviceId == localId;
+
+    final String uriStr;
+    if (isLocal) {
+      uriStr =
+          '$_baseUrl/folder/${Uri.encodeComponent(folderId)}/preview?path=${Uri.encodeComponent(filePath)}';
+    } else {
+      uriStr =
+          '$_baseUrl/device/${Uri.encodeComponent(deviceId)}/folder/${Uri.encodeComponent(folderId)}/preview?path=${Uri.encodeComponent(filePath)}';
+    }
+    final uri = Uri.parse(uriStr);
+    debugPrint('API GET preview: $uri');
+    return await _httpClient.get(uri).timeout(
+      const Duration(seconds: 60),
+      onTimeout: () => throw Exception('预览超时'),
+    );
   }
 
   /// 更新文件夹

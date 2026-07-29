@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/android_storage_service.dart';
 import '../../../core/models/folder.dart';
 import '../../../shared/utils/file_types.dart';
+import '../../../shared/utils/local_file_path.dart';
 import '../../../shared/utils/media_file_opener.dart';
+import 'image_preview_screen.dart';
 
 class FolderDetailScreen extends StatefulWidget {
   final String deviceId;
@@ -146,7 +149,65 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       folderId: widget.folderId,
       folderPath: _folderInfo?.path ?? '',
       filePath: filePath,
+      deviceId: widget.deviceId,
     );
+  }
+
+  Future<void> _openImagePreview(String filePath) async {
+    final fileName = filePath.split('/').last;
+    final folderPath = _folderInfo?.path ?? '';
+
+    if (folderPath.isNotEmpty) {
+      final localPath = joinLocalFilePath(folderPath, filePath);
+      if (await File(localPath).exists()) {
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ImagePreviewScreen(
+              title: fileName,
+              filePath: localPath,
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final response = await ApiService.previewFile(
+        widget.folderId,
+        filePath,
+        deviceId: widget.deviceId,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(); // 关闭 loading
+
+      if (response.statusCode != 200) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ImagePreviewScreen(
+            title: fileName,
+            bytes: response.bodyBytes,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop(); // 关闭 loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('图片加载失败: $e'), backgroundColor: Colors.red),
+      );
+    }
   }
 
   void _previewFile(String filePath) async {
@@ -155,10 +216,16 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       return;
     }
 
+    if (FileTypes.isImage(filePath)) {
+      await _openImagePreview(filePath);
+      return;
+    }
+
     try {
       final response = await ApiService.previewFile(
         widget.folderId,
         filePath,
+        deviceId: widget.deviceId,
       );
 
       if (!mounted) return;
@@ -166,17 +233,13 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       if (response.statusCode == 200) {
         final contentType = response.headers['content-type'] ?? 'text/plain';
         
-        // 根据内容类型显示不同的预览
         if (contentType.startsWith('image/')) {
-          // 图片预览
-          showDialog(
-            context: context,
-            builder: (context) => Dialog(
-              child: InteractiveViewer(
-                child: Image.memory(
-                  response.bodyBytes,
-                  fit: BoxFit.contain,
-                ),
+          final fileName = filePath.split('/').last;
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ImagePreviewScreen(
+                title: fileName,
+                bytes: response.bodyBytes,
               ),
             ),
           );
@@ -582,9 +645,18 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   }
 
   Widget _buildFileList(bool isDesktop) {
+    bool isDirEntry(Map<String, dynamic> f) {
+      final t = f['type'];
+      return t == 1 ||
+          t == '1' ||
+          t == 'dir' ||
+          t == true ||
+          f['isDir'] == true;
+    }
+
     // 先显示文件夹，再显示文件
-    final folders = _files.where((f) => f['isDir'] == true).toList();
-    final files = _files.where((f) => f['isDir'] != true).toList();
+    final folders = _files.where(isDirEntry).toList();
+    final files = _files.where((f) => !isDirEntry(f)).toList();
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),

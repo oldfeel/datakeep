@@ -35,6 +35,7 @@ class BackendServer {
       ..get('/api/devices', _handleDevices)
       ..get('/api/device/<deviceId>/folders', _handleDeviceFolders)
       ..get('/api/device/<deviceId>/folder/<folderId>/files', _handleDeviceFolderFiles)
+      ..get('/api/device/<deviceId>/folder/<folderId>/preview', _handleDeviceFolderPreview)
       ..post('/api/device/local/folders', _handleCreateFolder)
       ..delete('/api/device/<deviceId>/folders/<folderId>', _handleDeleteFolder)
       ..delete('/api/device/<deviceId>', _handleRemoveDevice)
@@ -59,6 +60,7 @@ class BackendServer {
       ..post('/api/syncthing/config/devices', _handleSyncthingAddDevice)
       ..get('/api/peer/folders', _handlePeerFolders)
       ..get('/api/peer/folder/<folderId>/files', _handlePeerFolderFiles)
+      ..get('/api/peer/folder/<folderId>/preview', _handlePeerFolderPreview)
       ..get('/api/peer/health', _handlePeerHealth)
       ..get('/health', _handleHealth);
 
@@ -336,6 +338,18 @@ class BackendServer {
     return _browseFolderFiles(folderId, request.url.queryParameters['path'] ?? '');
   }
 
+  /// 对端只读预览本机文件
+  Future<Response> _handlePeerFolderPreview(Request request, String folderId) async {
+    final auth = await _authorizePeer(request);
+    if (auth != null) return auth;
+    final callerId = request.headers['x-mydata-device-id'] ?? '';
+    final access = await _resolveAccessForCaller(folderId, callerId);
+    if (!access.isPeerVisible) {
+      return Response(403, body: '无权限访问该文件夹');
+    }
+    return _serveLocalFilePreview(folderId, request.url.queryParameters['path'] ?? '');
+  }
+
   Future<FolderAccess> _resolveAccessForCaller(String folderId, String callerId) async {
     final folders = await _buildLocalFoldersPayload();
     Map<String, dynamic>? match;
@@ -363,6 +377,20 @@ class BackendServer {
       return _browseFolderFiles(folderId, request.url.queryParameters['path'] ?? '');
     }
     return _proxyPeerFolderFiles(deviceId, folderId, request.url.queryParameters['path'] ?? '');
+  }
+
+  /// 本机或代理对端的文件预览
+  Future<Response> _handleDeviceFolderPreview(
+    Request request,
+    String deviceId,
+    String folderId,
+  ) async {
+    final path = request.url.queryParameters['path'] ?? '';
+    final isLocal = await _isLocalDeviceId(deviceId);
+    if (isLocal) {
+      return _serveLocalFilePreview(folderId, path);
+    }
+    return _proxyPeerFolderPreview(deviceId, folderId, path);
   }
 
   Future<Response> _proxyPeerFolderFiles(
@@ -402,6 +430,44 @@ class BackendServer {
       }, status: peer['statusCode'] is int ? peer['statusCode'] as int : 503);
     }
     return _json({'code': 0, 'data': peer['data'] ?? []});
+  }
+
+  Future<Response> _proxyPeerFolderPreview(
+    String deviceId,
+    String folderId,
+    String path,
+  ) async {
+    if (path.isEmpty) return Response(400, body: '缺少 path 参数');
+    final conn = await _api.getDeviceConnection(deviceId);
+    if (!conn.connected) {
+      return Response(503, body: '设备离线');
+    }
+    final ip = PeerClient.extractLanIp(conn.address);
+    if (ip == null) {
+      return Response(503, body: '无法解析对端局域网地址');
+    }
+    final localId = await _api.getLocalDeviceId();
+    if (localId == null || localId.isEmpty) {
+      return Response(503, body: '本机设备 ID 未知');
+    }
+    final encoded = Uri.encodeComponent(folderId);
+    final q = '?path=${Uri.encodeComponent(path)}';
+    debugPrint('[peer] 拉取对端预览: device=$deviceId folder=$folderId path=$path');
+    final peer = await PeerClient.getBytes(
+      ip,
+      '/api/peer/folder/$encoded/preview$q',
+      headers: {PeerClient.deviceIdHeader: localId},
+    );
+    if (peer.containsKey('error')) {
+      final code = peer['statusCode'] is int ? peer['statusCode'] as int : 503;
+      return Response(code, body: peer['error']?.toString() ?? '对端不可达');
+    }
+    final bytes = peer['bytes'];
+    if (bytes is! List<int>) {
+      return Response(502, body: '对端响应无效');
+    }
+    final contentType = peer['contentType']?.toString() ?? 'application/octet-stream';
+    return Response.ok(bytes, headers: {'Content-Type': contentType});
   }
 
   Future<Response> _handleGetFolderAcl(Request request, String folderId) async {
@@ -647,15 +713,39 @@ class BackendServer {
   }
 
   Future<Response> _handleFilePreview(Request request, String folderId) async {
-    final filePath = request.url.queryParameters['path'] ?? '';
+    return _serveLocalFilePreview(folderId, request.url.queryParameters['path'] ?? '');
+  }
+
+  Future<Response> _serveLocalFilePreview(String folderId, String filePath) async {
     if (filePath.isEmpty) return Response(400, body: '缺少 path 参数');
-    final folderPath = await _api.getFolderPath(folderId);
+
+    // 与目录浏览一致：兼容 URL 编码的 folderId
+    var folderPath = await _api.getFolderPath(folderId);
+    if (folderPath == null || folderPath.isEmpty) {
+      var decodedId = folderId;
+      try {
+        decodedId = Uri.decodeComponent(folderId);
+      } catch (_) {}
+      for (final f in _api.getFoldersFromConfig()) {
+        final fid = f['id']?.toString() ?? '';
+        if (fid == folderId || fid == decodedId) {
+          folderPath = f['path']?.toString();
+          break;
+        }
+      }
+    }
     if (folderPath == null || folderPath.isEmpty) {
       return Response(404, body: '文件夹未找到');
     }
-    final fullPath = '$folderPath/$filePath';
+
+    final base = folderPath.replaceAll(RegExp(r'[/\\]+$'), '');
+    final rel = filePath.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+    final fullPath = '$base/$rel';
     final file = File(fullPath);
-    if (!file.existsSync()) return Response(404, body: '文件未找到');
+    if (!file.existsSync()) {
+      debugPrint('[preview] 文件未找到: $fullPath');
+      return Response(404, body: '文件未找到');
+    }
     final bytes = await file.readAsBytes();
     final ext = filePath.split('.').last.toLowerCase();
     return Response.ok(bytes, headers: {'Content-Type': _mimeType(ext)});

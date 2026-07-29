@@ -47,18 +47,45 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
 
   String get _localFilePath => joinLocalFilePath(widget.folder.path, widget.filePath);
 
+  /// 本机文件夹且本地文件存在时，可直接读盘（远程/只读对端则走 API）
+  bool get _canUseLocalFile =>
+      widget.device.isLocal &&
+      widget.folder.path.isNotEmpty &&
+      !widget.folder.isReadonlyAccess &&
+      File(_localFilePath).existsSync();
+
   String? get _accessibleFilePath {
     if (_tempFilePath != null) return _tempFilePath;
-    if (File(_localFilePath).existsSync()) return _localFilePath;
+    if (_canUseLocalFile) return _localFilePath;
     return null;
   }
 
   @override
   void initState() {
     super.initState();
-    if (_needsDownloadPreview) _loadFile();
+    if (_needsDownloadPreview) {
+      if (_canUseLocalFile) {
+        if (_isText) {
+          _loadLocalText();
+        }
+        // 图片：直接用本地路径，无需下载
+      } else {
+        _loadFile();
+      }
+    }
     if (_isPlayableMedia && _accessibleFilePath != null) {
       _mediaPlayPath = _accessibleFilePath;
+    }
+  }
+
+  Future<void> _loadLocalText() async {
+    setState(() { _isLoading = true; _error = null; });
+    try {
+      _textContent = await File(_localFilePath).readAsString();
+      if (mounted) setState(() { _isLoading = false; });
+    } catch (e) {
+      // 本地读失败则回退 API
+      await _loadFile();
     }
   }
 
@@ -89,7 +116,11 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
 
   Future<void> _fetchToTemp({bool decodeText = false}) async {
     if (_tempFilePath != null) return;
-    final response = await ApiService.previewFile(widget.folder.id, widget.filePath);
+    final response = await ApiService.previewFile(
+      widget.folder.id,
+      widget.filePath,
+      deviceId: widget.device.id,
+    );
     if (response.statusCode != 200) throw Exception('HTTP ${response.statusCode}');
 
     final bytes = response.bodyBytes;
@@ -238,10 +269,13 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
       );
     }
 
-    if (_isImage && _tempFilePath != null) {
-      return InteractiveViewer(
-        child: Center(child: Image.file(File(_tempFilePath!), fit: BoxFit.contain)),
-      );
+    if (_isImage) {
+      final path = _accessibleFilePath;
+      if (path != null) {
+        return InteractiveViewer(
+          child: Center(child: Image.file(File(path), fit: BoxFit.contain)),
+        );
+      }
     }
 
     if (_isText && _textContent != null) {

@@ -12,6 +12,7 @@ Future<void> openMediaPreview(
   required String folderId,
   required String folderPath,
   required String filePath,
+  String? deviceId,
 }) async {
   final fileName = filePath.split('/').last;
   final isVideo = FileTypes.isVideo(filePath);
@@ -41,7 +42,11 @@ Future<void> openMediaPreview(
   loadingShown = true;
 
   try {
-    final response = await ApiService.previewFile(folderId, filePath);
+    final response = await ApiService.previewFile(
+      folderId,
+      filePath,
+      deviceId: deviceId,
+    );
     if (!context.mounted) return;
     if (loadingShown) Navigator.of(context).pop();
 

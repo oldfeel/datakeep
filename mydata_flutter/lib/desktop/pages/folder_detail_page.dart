@@ -10,14 +10,19 @@ enum _SortField { name, size, mtime, ctime }
 class FolderDetailPage extends StatefulWidget {
   final Device device;
   final Folder folder;
+  /// 进入页面时恢复的相对路径，如 `照片` 或 `a/b`
+  final String initialPath;
   final void Function(String filePath) onFileTap;
+  final void Function(String relativePath)? onPathChanged;
   final VoidCallback onBack;
 
   const FolderDetailPage({
     super.key,
     required this.device,
     required this.folder,
+    this.initialPath = '',
     required this.onFileTap,
+    this.onPathChanged,
     required this.onBack,
   });
 
@@ -38,7 +43,16 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialPath.isNotEmpty) {
+      _currentPath.addAll(
+        widget.initialPath.split('/').where((s) => s.isNotEmpty),
+      );
+    }
     _loadPrefs().then((_) => _loadFiles());
+  }
+
+  void _notifyPathChanged() {
+    widget.onPathChanged?.call(_currentPath.join('/'));
   }
 
   Future<void> _loadPrefs() async {
@@ -100,13 +114,28 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
 
   void _toggleView() { setState(() => _isGrid = !_isGrid); _savePrefs(); }
 
-  void _enterFolder(String name) { setState(() { _currentPath.add(name); }); _loadFiles(); }
-
-  void _navigateToPath(List<String> targetPath) {
-    setState(() { _currentPath.clear(); _currentPath.addAll(targetPath); }); _loadFiles();
+  void _enterFolder(String name) {
+    setState(() { _currentPath.add(name); });
+    _notifyPathChanged();
+    _loadFiles();
   }
 
-  void _goUp() { if (_currentPath.isEmpty) return; setState(() { _currentPath.removeLast(); }); _loadFiles(); }
+  void _navigateToPath(List<String> targetPath) {
+    setState(() { _currentPath.clear(); _currentPath.addAll(targetPath); });
+    _notifyPathChanged();
+    _loadFiles();
+  }
+
+  void _goUp() {
+    if (_currentPath.isEmpty) return;
+    setState(() { _currentPath.removeLast(); });
+    _notifyPathChanged();
+    _loadFiles();
+  }
+
+  /// 相对文件夹根的路径（含子目录），供预览/打开使用
+  String _relativePath(String name) =>
+      _currentPath.isEmpty ? name : '${_currentPath.join('/')}/$name';
 
   void _onReorder(int oldIndex, int newIndex) {
     if (newIndex > oldIndex) newIndex--;
@@ -264,7 +293,9 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                   border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.3))),
                 ),
                 child: InkWell(
-                  onTap: isDir ? () => _enterFolder(name) : () => widget.onFileTap(name),
+                  onTap: isDir
+                      ? () => _enterFolder(name)
+                      : () => widget.onFileTap(_relativePath(name)),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     child: Row(children: [
@@ -309,7 +340,9 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
         final name = _name(f);
         final isDir = _isDir(f);
         return Card(clipBehavior: Clip.antiAlias, child: InkWell(
-          onTap: isDir ? () => _enterFolder(name) : () => widget.onFileTap(name),
+          onTap: isDir
+              ? () => _enterFolder(name)
+              : () => widget.onFileTap(_relativePath(name)),
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             Icon(getFileIcon(name, isDir: isDir), size: 48, color: getFileIconColor(name, isDir: isDir)),
             const SizedBox(height: 8),
