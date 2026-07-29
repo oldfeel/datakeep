@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/device.dart';
@@ -12,6 +11,8 @@ import 'device_detail_page.dart';
 import 'folder_detail_page.dart';
 import 'file_preview_page.dart';
 import '../../shared/widgets/accept_pending_folder_dialog.dart';
+import '../../shared/utils/open_syncthing_gui.dart';
+import '../../shared/widgets/folder_edit_dialog.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({super.key});
@@ -449,9 +450,30 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
                 ],
               ),
               IconButton(
+                icon: const Icon(Icons.qr_code_2, size: 20),
+                tooltip: '本机配对二维码',
+                onPressed: () async {
+                  try {
+                    final id = await ApiService.getLocalDeviceId();
+                    if (!context.mounted) return;
+                    await LocalDeviceQrDialog.show(
+                      context,
+                      deviceId: id,
+                      deviceName: '本机设备',
+                    );
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('获取本机 ID 失败: $e')),
+                      );
+                    }
+                  }
+                },
+              ),
+              IconButton(
                 icon: const Icon(Icons.open_in_browser, size: 20),
-                tooltip: '打开 Syncthing 管理页面',
-                onPressed: () => Process.run('xdg-open', ['http://localhost:8384']),
+                tooltip: '打开 Syncthing 管理页（高级配置）',
+                onPressed: () => openSyncthingGui(context),
               ),
               IconButton(
                 icon: const Icon(Icons.refresh, size: 20),

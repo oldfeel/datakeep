@@ -6,7 +6,12 @@
 - 进程内 API：Dart shelf（HTTPS `:8443`）
 - 同步引擎：本机 Syncthing（`127.0.0.1:8384`）
 
-详细约定见根目录 `AGENTS.md`。
+详细约定见根目录 `AGENTS.md`（含产品定位与功能取舍）。
+
+## 产品定位
+- **不追求**与原版 Syncthing Web GUI 全量对等
+- 优先日常操作与 MyData 特有能力（peer 只读、ACL）
+- 高级配置：引导打开 Syncthing 管理页（`http://127.0.0.1:8384`），勿自建完整设置中心
 
 ## Architecture Rules
 
@@ -45,4 +50,4 @@
 - 过滤设备时注意本机（`local` / 本机 deviceID）
 - 破坏性操作需要确认对话框
 - 使用明确的加载与错误提示
-- UI 模式可参考 `syncthing/gui/`
+- UI 模式可参考 `syncthing/gui/`（参考交互，非全量复刻）

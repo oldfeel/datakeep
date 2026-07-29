@@ -8,7 +8,10 @@ import '../../../core/models/folder.dart';
 import '../../../shared/widgets/folder_card.dart';
 import '../../../shared/widgets/folder_edit_dialog.dart';
 import '../../../shared/widgets/device_info_panel.dart';
+import '../../../shared/utils/open_syncthing_gui.dart';
+import '../../../core/services/api_service.dart';
 import '../../folders/screens/folder_detail_screen.dart';
+import '../../sync/screens/sync_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -445,15 +448,40 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('同步状态'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: 导航到同步状态页面
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SyncScreen()),
+                );
               },
             ),
             ListTile(
-              leading: const Icon(Icons.settings),
-              title: const Text('设置'),
+              leading: const Icon(Icons.open_in_browser),
+              title: const Text('Syncthing 管理页'),
+              subtitle: const Text('高级配置出口'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: 导航到设置页面
+                openSyncthingGui(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.qr_code_2),
+              title: const Text('本机配对二维码'),
+              onTap: () async {
+                Navigator.pop(context);
+                try {
+                  final id = await ApiService.getLocalDeviceId();
+                  if (!context.mounted) return;
+                  await LocalDeviceQrDialog.show(
+                    context,
+                    deviceId: id,
+                    deviceName: '本机设备',
+                  );
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('获取本机 ID 失败: $e')),
+                    );
+                  }
+                }
               },
             ),
             const Divider(),

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/device.dart';
+import '../../core/services/api_service.dart';
 import '../../features/devices/providers/device_provider.dart';
+import 'folder_edit_dialog.dart';
 
 /// 设备基本信息面板，可展开/收起，远程设备支持删除
 class DeviceInfoPanel extends StatefulWidget {
@@ -142,6 +144,16 @@ class _DeviceInfoPanelState extends State<DeviceInfoPanel> {
                         style: TextButton.styleFrom(foregroundColor: Colors.red),
                       ),
                     ),
+                  ] else ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: OutlinedButton.icon(
+                        onPressed: _showLocalQr,
+                        icon: const Icon(Icons.qr_code_2, size: 18),
+                        label: const Text('显示配对二维码'),
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -149,6 +161,27 @@ class _DeviceInfoPanelState extends State<DeviceInfoPanel> {
           ],
         ],
       ),
+    );
+  }
+
+  Future<void> _showLocalQr() async {
+    var id = _device.id;
+    if (id == 'local' || id.isEmpty) {
+      try {
+        id = await ApiService.getLocalDeviceId();
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    if (id.isEmpty || id == 'local') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('无法获取本机设备 ID')),
+      );
+      return;
+    }
+    await LocalDeviceQrDialog.show(
+      context,
+      deviceId: id,
+      deviceName: _device.displayName,
     );
   }
 

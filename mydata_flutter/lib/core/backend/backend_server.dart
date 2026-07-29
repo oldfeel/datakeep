@@ -44,6 +44,12 @@ class BackendServer {
       ..get('/api/folder/<folderId>/status', _handleFolderStatus)
       ..get('/api/folder/<folderId>/acl', _handleGetFolderAcl)
       ..post('/api/folder/<folderId>/acl', _handleSetFolderAcl)
+      ..get('/api/folder/<folderId>/settings', _handleGetFolderSettings)
+      ..put('/api/folder/<folderId>/settings', _handlePutFolderSettings)
+      ..get('/api/folder/<folderId>/ignores', _handleGetFolderIgnores)
+      ..post('/api/folder/<folderId>/ignores', _handleSetFolderIgnores)
+      ..post('/api/folder/<folderId>/scan', _handleFolderScan)
+      ..get('/api/folder/<folderId>/issues', _handleFolderIssues)
       ..post('/api/folder/<folderId>/fix-path', _handleFixFolderPath)
       ..get('/api/folder/<folderId>/preview', _handleFilePreview)
       ..get('/api/wifi', _handleWifiInfo)
@@ -601,6 +607,207 @@ class BackendServer {
     return _json({'code': 0, 'data': {'message': '权限已更新'}});
   }
 
+  String _decodeFolderId(String folderId) {
+    try {
+      return Uri.decodeComponent(folderId);
+    } catch (_) {
+      return folderId;
+    }
+  }
+
+  Future<Response> _handleGetFolderSettings(Request request, String folderId) async {
+    final id = _decodeFolderId(folderId);
+    final encoded = Uri.encodeComponent(id);
+    final folder = await _api.proxyGet('/rest/config/folders/$encoded', silent: true);
+    if (folder.containsKey('error')) {
+      return _json({'code': 1004, 'data': '文件夹不存在'}, status: 404);
+    }
+    return _json({
+      'code': 0,
+      'data': {
+        'id': folder['id'] ?? id,
+        'label': folder['label'] ?? id,
+        'path': folder['path'] ?? '',
+        'type': folder['type']?.toString() ?? 'sendreceive',
+        'paused': folder['paused'] == true,
+      },
+    });
+  }
+
+  Future<Response> _handlePutFolderSettings(Request request, String folderId) async {
+    final id = _decodeFolderId(folderId);
+    final encoded = Uri.encodeComponent(id);
+    final body = utf8.decode(await request.read().expand((e) => e).toList());
+    final data = json.decode(body) as Map<String, dynamic>;
+
+    final folder = await _api.proxyGet('/rest/config/folders/$encoded');
+    if (folder.containsKey('error')) {
+      return _json({'code': 1004, 'data': '文件夹不存在'}, status: 404);
+    }
+
+    const allowedTypes = {'sendreceive', 'sendonly', 'receiveonly'};
+    if (data.containsKey('type')) {
+      final t = data['type']?.toString() ?? '';
+      if (!allowedTypes.contains(t)) {
+        return _json({'code': 1001, 'data': '无效文件夹类型: $t'}, status: 400);
+      }
+      folder['type'] = t;
+    }
+    if (data.containsKey('paused')) {
+      folder['paused'] = data['paused'] == true;
+    }
+
+    final result = await _api.proxyPut('/rest/config/folders/$encoded', folder);
+    if (result.containsKey('error')) {
+      return _json({'code': 1005, 'data': '保存失败: ${result['error']}'}, status: 500);
+    }
+    return _json({
+      'code': 0,
+      'data': {
+        'id': folder['id'] ?? id,
+        'type': folder['type'] ?? 'sendreceive',
+        'paused': folder['paused'] == true,
+      },
+    });
+  }
+
+  Future<Response> _handleGetFolderIgnores(Request request, String folderId) async {
+    final id = _decodeFolderId(folderId);
+    final result = await _api.proxyGet(
+      '/rest/db/ignores',
+      queryParams: {'folder': id},
+      silent: true,
+    );
+    if (_apiIsError(result)) {
+      return _json({
+        'code': 1005,
+        'data': result['error']?.toString() ?? '读取忽略规则失败',
+      }, status: 503);
+    }
+    final ignore = (result['ignore'] as List?)?.map((e) => e.toString()).toList() ?? [];
+    return _json({'code': 0, 'data': {'ignore': ignore}});
+  }
+
+  Future<Response> _handleSetFolderIgnores(Request request, String folderId) async {
+    final id = _decodeFolderId(folderId);
+    final body = utf8.decode(await request.read().expand((e) => e).toList());
+    final data = json.decode(body) as Map<String, dynamic>;
+    final raw = data['ignore'];
+    final lines = <String>[];
+    if (raw is List) {
+      lines.addAll(raw.map((e) => e.toString()));
+    } else if (raw is String) {
+      lines.addAll(raw.split('\n'));
+    } else {
+      return _json({'code': 1001, 'data': '缺少 ignore'}, status: 400);
+    }
+
+    final result = await _api.proxyPost(
+      '/rest/db/ignores?folder=${Uri.encodeComponent(id)}',
+      {'ignore': lines},
+    );
+    if (_apiIsError(result)) {
+      return _json({
+        'code': 1005,
+        'data': result['error']?.toString() ?? '保存忽略规则失败',
+      }, status: 500);
+    }
+    final ignore = (result['ignore'] as List?)?.map((e) => e.toString()).toList() ?? lines;
+    return _json({'code': 0, 'data': {'ignore': ignore}});
+  }
+
+  Future<Response> _handleFolderScan(Request request, String folderId) async {
+    final id = _decodeFolderId(folderId);
+    await _api.triggerFolderScan(id);
+    return _json({'code': 0, 'data': {'message': '已触发扫描'}});
+  }
+
+  Future<Response> _handleFolderIssues(Request request, String folderId) async {
+    final id = _decodeFolderId(folderId);
+    final sync = await _api.getFolderSyncSummary(id);
+    final errorsRes = await _api.proxyGet(
+      '/rest/folder/errors',
+      queryParams: {'folder': id},
+      silent: true,
+    );
+    final needRes = await _api.proxyGet(
+      '/rest/db/need',
+      queryParams: {'folder': id, 'perpage': '20', 'page': '1'},
+      silent: true,
+    );
+
+    final errors = <Map<String, String>>[];
+    if (!_apiIsError(errorsRes)) {
+      final list = errorsRes['errors'] ?? errorsRes['folderErrors'] ?? errorsRes['data'];
+      if (list is List) {
+        for (final e in list.take(20)) {
+          if (e is Map) {
+            errors.add({
+              'path': e['path']?.toString() ?? e['name']?.toString() ?? '',
+              'error': e['error']?.toString() ?? e['message']?.toString() ?? '',
+            });
+          }
+        }
+      }
+    }
+
+    final pending = <String>[];
+    final conflicts = <String>[];
+    void collectNeed(dynamic list) {
+      if (list is! List) return;
+      for (final e in list.take(30)) {
+        String name = '';
+        if (e is Map) {
+          name = e['name']?.toString() ?? e['path']?.toString() ?? '';
+        } else {
+          name = e.toString();
+        }
+        if (name.isEmpty) continue;
+        if (name.contains('.sync-conflict-')) {
+          conflicts.add(name);
+        } else {
+          pending.add(name);
+        }
+      }
+    }
+
+    if (!_apiIsError(needRes)) {
+      collectNeed(needRes['progress']);
+      collectNeed(needRes['queued']);
+      collectNeed(needRes['rest']);
+      collectNeed(needRes['data']);
+    }
+
+    return _json({
+      'code': 0,
+      'data': {
+        'pullErrors': sync['pullErrors'] ?? 0,
+        'needFiles': sync['needFiles'] ?? 0,
+        'needBytes': sync['needBytes'] ?? 0,
+        'status': sync['status'] ?? 'unknown',
+        'errors': errors,
+        'pending': pending.take(20).toList(),
+        'conflicts': conflicts.take(20).toList(),
+      },
+    });
+  }
+
+  bool _apiIsError(Map<String, dynamic> result) {
+    if (result.containsKey('error') &&
+        result['error'] != null &&
+        result['error'].toString().isNotEmpty) {
+      // Syncthing 成功响应也可能带 error:""
+      final err = result['error'].toString();
+      if (err == 'null' || err.isEmpty) return false;
+      // proxy 失败时 error 是网络/HTTP 信息
+      if (result.length <= 2 && result.containsKey('error')) return true;
+      if (err.startsWith('HTTP') || err.contains('Exception') || err.contains('Socket')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// 校验 X-MyData-Device-ID 是否为已配对设备（或本机）
   Future<Response?> _authorizePeer(Request request) async {
     // shelf 将 header 名规范为小写
@@ -932,6 +1139,8 @@ class BackendServer {
       'id': folderId,
       'label': map['label'] ?? map['id'] ?? '',
       'path': map['path'] ?? '',
+      'type': map['type']?.toString() ?? 'sendreceive',
+      'paused': map['paused'] == true,
       'sharedDevices': (map['sharedDevices'] as List?) ?? [],
       'localFiles': sync['localFiles'] ?? 0,
       'localBytes': sync['localBytes'] ?? 0,

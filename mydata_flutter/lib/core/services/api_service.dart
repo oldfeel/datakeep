@@ -998,4 +998,56 @@ class ApiService {
       'permissions': permissions,
     });
   }
+
+  /// 文件夹设置（类型 / 暂停）
+  static Future<Map<String, dynamic>> getFolderSettings(String folderId) async {
+    final resp = await _get('/folder/${Uri.encodeComponent(folderId)}/settings');
+    if (resp['code'] != 0) {
+      throw Exception(resp['data']?.toString() ?? '获取文件夹设置失败');
+    }
+    return Map<String, dynamic>.from(resp['data'] as Map? ?? {});
+  }
+
+  static Future<void> updateFolderSettings(
+    String folderId, {
+    String? type,
+    bool? paused,
+  }) async {
+    await _put('/folder/${Uri.encodeComponent(folderId)}/settings', {
+      if (type != null) 'type': type,
+      if (paused != null) 'paused': paused,
+    });
+  }
+
+  /// 忽略规则（每行一条）
+  static Future<List<String>> getFolderIgnores(String folderId) async {
+    final resp = await _get('/folder/${Uri.encodeComponent(folderId)}/ignores');
+    if (resp['code'] != 0) {
+      throw Exception(resp['data']?.toString() ?? '读取忽略规则失败');
+    }
+    final data = resp['data'];
+    if (data is! Map) return [];
+    final ignore = data['ignore'];
+    if (ignore is! List) return [];
+    return ignore.map((e) => e.toString()).toList();
+  }
+
+  static Future<void> setFolderIgnores(String folderId, List<String> lines) async {
+    await _post('/folder/${Uri.encodeComponent(folderId)}/ignores', {
+      'ignore': lines,
+    });
+  }
+
+  static Future<void> scanFolder(String folderId) async {
+    await _post('/folder/${Uri.encodeComponent(folderId)}/scan', {});
+  }
+
+  /// 失败 / 待同步 / 冲突 基础信息
+  static Future<Map<String, dynamic>> getFolderIssues(String folderId) async {
+    final resp = await _get('/folder/${Uri.encodeComponent(folderId)}/issues');
+    if (resp['code'] != 0) {
+      throw Exception(resp['data']?.toString() ?? '获取问题列表失败');
+    }
+    return Map<String, dynamic>.from(resp['data'] as Map? ?? {});
+  }
 }

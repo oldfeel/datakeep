@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/services/syncthing_service_manager.dart';
+import '../utils/open_syncthing_gui.dart';
 
 /// Syncthing 服务控制组件
 class ServiceControlWidget extends StatelessWidget {
@@ -110,6 +111,24 @@ class ServiceControlWidget extends StatelessWidget {
                     ),
                   ),
                 ],
+                const SizedBox(height: 12),
+                const Divider(height: 1),
+                const SizedBox(height: 8),
+                Text(
+                  '忽略规则、限速、中继等高级项请使用原版管理页，MyData 不自建完整设置中心。',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => openSyncthingGui(context),
+                    icon: const Icon(Icons.open_in_browser, size: 18),
+                    label: const Text('打开 Syncthing 管理页'),
+                  ),
+                ),
               ],
             ),
           ),
