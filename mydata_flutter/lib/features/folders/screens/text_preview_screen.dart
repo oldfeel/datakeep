@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../shared/utils/open_system_file.dart';
 import '../../../shared/utils/preview_limits.dart';
+import '../../../shared/widgets/share_to_cloud_sheet.dart';
 
 /// 只读文本预览（大文件截断提示）
 class TextPreviewScreen extends StatefulWidget {
@@ -67,6 +68,14 @@ class _TextPreviewScreenState extends State<TextPreviewScreen> {
       appBar: AppBar(
         title: Text(widget.title, overflow: TextOverflow.ellipsis),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.share_outlined),
+            tooltip: '分享到互联网',
+            onPressed: () => showShareToCloudSheet(
+              context,
+              localAbsolutePath: widget.filePath,
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.open_in_new),
             tooltip: '系统打开',

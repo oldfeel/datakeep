@@ -263,6 +263,14 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
 
   // ── 列表视图（可拖拽排序 + 点击表头排序） ──────────────────
 
+  void _shareFile(BuildContext context, String name) {
+    showShareToCloudSheet(
+      context,
+      folderPath: widget.folder.path,
+      relativePath: _relativePath(name),
+    );
+  }
+
   Widget _buildList(BuildContext context) {
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -272,7 +280,8 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(children: [
             const SizedBox(width: 32),
-            Expanded(flex: 3, child: _sortHeader('名称', _SortField.name)),
+            Expanded(child: _sortHeader('名称', _SortField.name)),
+            const SizedBox(width: 40), // 与行内分享按钮对齐
             SizedBox(width: 100, child: _sortHeader('大小', _SortField.size)),
             SizedBox(width: 140, child: _sortHeader('创建时间', _SortField.ctime)),
             SizedBox(width: 140, child: _sortHeader('修改时间', _SortField.mtime)),
@@ -297,37 +306,41 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                   onTap: isDir
                       ? () => _enterFolder(name)
                       : () => widget.onFileTap(_relativePath(name)),
-                  onSecondaryTap: isDir
-                      ? null
-                      : () => showShareToCloudSheet(
-                            context,
-                            folderPath: widget.folder.path,
-                            relativePath: _relativePath(name),
-                          ),
+                  onSecondaryTap: isDir ? null : () => _shareFile(context, name),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                     child: Row(children: [
                       ReorderableDragStartListener(index: i, child: const Icon(Icons.drag_handle, size: 20, color: Colors.grey)),
                       const SizedBox(width: 8),
                       Icon(getFileIcon(name, isDir: isDir), size: 20, color: getFileIconColor(name, isDir: isDir)),
                       const SizedBox(width: 12),
-                      Expanded(flex: 3, child: Text(name, style: const TextStyle(fontSize: 13))),
+                      Expanded(
+                        child: Text(
+                          name,
+                          style: const TextStyle(fontSize: 13),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      SizedBox(
+                        width: 40,
+                        child: isDir
+                            ? null
+                            : IconButton(
+                                icon: const Icon(Icons.share_outlined, size: 18),
+                                tooltip: '分享到互联网',
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                                onPressed: () => _shareFile(context, name),
+                              ),
+                      ),
                       SizedBox(width: 100, child: Text(isDir ? '-' : _sizeStr(f['size']),
                         style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant))),
                       SizedBox(width: 140, child: Text(_dateStr(f['ctime']),
                         style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant))),
                       SizedBox(width: 140, child: Text(_dateStr(f['modTime'] ?? f['modified']),
                         style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant))),
-                      if (!isDir)
-                        IconButton(
-                          icon: const Icon(Icons.share_outlined, size: 18),
-                          tooltip: '分享到互联网',
-                          onPressed: () => showShareToCloudSheet(
-                            context,
-                            folderPath: widget.folder.path,
-                            relativePath: _relativePath(name),
-                          ),
-                        ),
                     ]),
                   ),
                 ),
@@ -357,22 +370,41 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
         final f = _files[i];
         final name = _name(f);
         final isDir = _isDir(f);
-        return Card(clipBehavior: Clip.antiAlias, child: InkWell(
-          onTap: isDir
-              ? () => _enterFolder(name)
-              : () => widget.onFileTap(_relativePath(name)),
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(getFileIcon(name, isDir: isDir), size: 48, color: getFileIconColor(name, isDir: isDir)),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
+        return Card(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: isDir
+                ? () => _enterFolder(name)
+                : () => widget.onFileTap(_relativePath(name)),
+            onSecondaryTap: isDir ? null : () => _shareFile(context, name),
+            child: Stack(
+              children: [
+                Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(getFileIcon(name, isDir: isDir), size: 48, color: getFileIconColor(name, isDir: isDir)),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
+                  ),
+                  Text(isDir ? '文件夹' : _sizeStr(f['size']),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey)),
+                ]),
+                if (!isDir)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: IconButton(
+                      icon: const Icon(Icons.share_outlined, size: 18),
+                      tooltip: '分享到互联网',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _shareFile(context, name),
+                    ),
+                  ),
+              ],
             ),
-            Text(isDir ? '文件夹' : _sizeStr(f['size']),
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey)),
-          ]),
-        ));
+          ),
+        );
       },
     );
   }

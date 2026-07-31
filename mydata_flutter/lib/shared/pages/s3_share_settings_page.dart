@@ -39,18 +39,27 @@ class _S3ShareSettingsPageState extends State<S3ShareSettingsPage> {
 
   Future<void> _save() async {
     setState(() => _saving = true);
-    await S3ShareConfigStore.save(S3ShareConfig(
+    final normalized = S3ShareConfig(
       endpoint: _endpoint.text.trim(),
       accessKey: _accessKey.text.trim(),
       secretKey: _secretKey.text.trim(),
       bucket: _bucket.text.trim(),
       region: _region.text.trim().isEmpty ? 'us-east-1' : _region.text.trim(),
       useSSL: _useSSL,
-    ));
+    ).normalized();
+    await S3ShareConfigStore.save(normalized);
     if (mounted) {
-      setState(() => _saving = false);
+      setState(() {
+        _saving = false;
+        _endpoint.text = normalized.endpoint;
+        _region.text = normalized.region;
+        _bucket.text = normalized.bucket;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已保存'), backgroundColor: Colors.green),
+        SnackBar(
+          content: Text('已保存（${normalized.endpoint} / ${normalized.region}）'),
+          backgroundColor: Colors.green,
+        ),
       );
       Navigator.of(context).pop();
     }
@@ -58,7 +67,8 @@ class _S3ShareSettingsPageState extends State<S3ShareSettingsPage> {
 
   void _fillQiniu() {
     setState(() {
-      _endpoint.text = 's3-cn-east-1.qiniucs.com';
+      // 官方 endpoint，不要填 bucket.s3.... 虚拟域名
+      _endpoint.text = 's3.cn-east-1.qiniucs.com';
       _region.text = 'cn-east-1';
       _useSSL = true;
     });
@@ -96,15 +106,28 @@ class _S3ShareSettingsPageState extends State<S3ShareSettingsPage> {
       appBar: AppBar(
         title: const Text('互联网分享 · 存储配置'),
         actions: [
-          TextButton(
-            onPressed: _saving ? null : _save,
-            child: _saving
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('保存'),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: TextButton.icon(
+              onPressed: _saving ? null : _save,
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+              ),
+              icon: _saving
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Theme.of(context).colorScheme.onPrimary,
+                      ),
+                    )
+                  : const Icon(Icons.check),
+              label: const Text(
+                '保存',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
           ),
         ],
       ),
@@ -129,8 +152,9 @@ class _S3ShareSettingsPageState extends State<S3ShareSettingsPage> {
           TextField(
             controller: _endpoint,
             decoration: const InputDecoration(
-              labelText: 'Endpoint（不含 https://）',
-              hintText: 's3-cn-east-1.qiniucs.com',
+              labelText: 'Endpoint（不含 https://，不要带 bucket 前缀）',
+              hintText: 's3.cn-east-1.qiniucs.com',
+              helperText: '七牛请填 s3.cn-east-1.qiniucs.com，不要填 oldfeel.s3....',
               border: OutlineInputBorder(),
             ),
           ),
@@ -138,7 +162,7 @@ class _S3ShareSettingsPageState extends State<S3ShareSettingsPage> {
           TextField(
             controller: _bucket,
             decoration: const InputDecoration(
-              labelText: 'Bucket',
+              labelText: 'Bucket（空间名）',
               border: OutlineInputBorder(),
             ),
           ),
@@ -163,7 +187,8 @@ class _S3ShareSettingsPageState extends State<S3ShareSettingsPage> {
           TextField(
             controller: _region,
             decoration: const InputDecoration(
-              labelText: 'Region',
+              labelText: 'Region（须与空间一致，七牛华东为 cn-east-1）',
+              hintText: 'cn-east-1',
               border: OutlineInputBorder(),
             ),
           ),

@@ -518,25 +518,6 @@ class _FolderEditFormState extends State<FolderEditForm> {
             ],
           ),
           body: SafeArea(child: _buildBody()),
-          bottomNavigationBar: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: FilledButton.icon(
-                onPressed: _saving ? null : _save,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.save_outlined),
-                label: Text(_dirty ? '保存修改' : '保存'),
-              ),
-            ),
-          ),
         ),
       );
     }

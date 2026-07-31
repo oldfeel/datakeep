@@ -9,6 +9,7 @@ import '../../../shared/widgets/folder_card.dart';
 import '../../../shared/widgets/folder_edit_dialog.dart';
 import '../../../shared/widgets/device_info_panel.dart';
 import '../../../shared/utils/open_syncthing_gui.dart';
+import '../../../shared/pages/s3_share_settings_page.dart';
 import '../../../core/services/api_service.dart';
 import '../../folders/screens/folder_detail_screen.dart';
 import '../../sync/screens/sync_screen.dart';
@@ -460,6 +461,19 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () {
                 Navigator.pop(context);
                 openSyncthingGui(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.cloud_outlined),
+              title: const Text('互联网分享 · 存储配置'),
+              subtitle: const Text('S3 / 七牛 / 阿里云 / 腾讯云'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const S3ShareSettingsPage(),
+                  ),
+                );
               },
             ),
             ListTile(

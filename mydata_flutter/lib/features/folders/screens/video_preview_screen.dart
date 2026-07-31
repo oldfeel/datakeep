@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../shared/widgets/share_to_cloud_sheet.dart';
 import '../../../shared/widgets/video_preview.dart';
 
 /// 移动端沉浸全屏视频播放页
@@ -48,6 +49,16 @@ class _VideoPreviewScreenState extends State<VideoPreviewScreen> {
               title: Text(widget.title, overflow: TextOverflow.ellipsis),
               backgroundColor: Colors.black54,
               foregroundColor: Colors.white,
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.share_outlined),
+                  tooltip: '分享到互联网',
+                  onPressed: () => showShareToCloudSheet(
+                    context,
+                    localAbsolutePath: widget.filePath,
+                  ),
+                ),
+              ],
             )
           : null,
       body: GestureDetector(

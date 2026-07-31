@@ -25,6 +25,52 @@ class S3ShareConfig {
       secretKey.isNotEmpty &&
       bucket.isNotEmpty;
 
+  /// 纠正常见误配：endpoint 带了 bucket、七牛连字符域名、region 与 endpoint 不一致
+  S3ShareConfig normalized() {
+    var end = endpoint.trim();
+    end = end.replaceFirst(RegExp(r'^https?://'), '');
+    end = end.split('/').first;
+    end = end.replaceAll(RegExp(r'/+$'), '');
+
+    // oldfeel.s3.cn-east-1.qiniucs.com → s3.cn-east-1.qiniucs.com
+    final qiniuVirtual = RegExp(
+      r'^([a-z0-9-]+)\.(s3\.[a-z0-9-]+\.qiniucs\.com)$',
+      caseSensitive: false,
+    ).firstMatch(end);
+    if (qiniuVirtual != null) {
+      end = qiniuVirtual.group(2)!;
+    }
+
+    // s3-cn-east-1.qiniucs.com → s3.cn-east-1.qiniucs.com
+    final hyphen = RegExp(
+      r'^s3-([a-z0-9-]+)\.qiniucs\.com$',
+      caseSensitive: false,
+    ).firstMatch(end);
+    if (hyphen != null) {
+      end = 's3.${hyphen.group(1)}.qiniucs.com';
+    }
+
+    var reg = region.trim();
+    final fromQiniu = RegExp(
+      r'^s3\.([a-z0-9-]+)\.qiniucs\.com$',
+      caseSensitive: false,
+    ).firstMatch(end);
+    if (fromQiniu != null) {
+      reg = fromQiniu.group(1)!;
+    } else if (reg.isEmpty) {
+      reg = 'us-east-1';
+    }
+
+    return S3ShareConfig(
+      endpoint: end,
+      accessKey: accessKey.trim(),
+      secretKey: secretKey.trim(),
+      bucket: bucket.trim(),
+      region: reg,
+      useSSL: useSSL,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'endpoint': endpoint,
         'accessKey': accessKey,
@@ -69,6 +115,6 @@ class S3ShareConfigStore {
 
   static Future<void> save(S3ShareConfig config) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, json.encode(config.toJson()));
+    await prefs.setString(_key, json.encode(config.normalized().toJson()));
   }
 }

@@ -12,6 +12,7 @@ import 'folder_detail_page.dart';
 import 'file_preview_page.dart';
 import '../../shared/widgets/accept_pending_folder_dialog.dart';
 import '../../shared/utils/open_syncthing_gui.dart';
+import '../../shared/pages/s3_share_settings_page.dart';
 import '../../shared/widgets/folder_edit_dialog.dart';
 
 class DesktopHomePage extends StatefulWidget {
@@ -493,6 +494,20 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
                 icon: const Icon(Icons.open_in_browser, size: 20),
                 tooltip: '打开 Syncthing 管理页（高级配置）',
                 onPressed: () => openSyncthingGui(context),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                icon: const Icon(Icons.cloud_outlined, size: 20),
+                tooltip: '互联网分享 · 存储配置',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const S3ShareSettingsPage(),
+                    ),
+                  );
+                },
               ),
               IconButton(
                 visualDensity: VisualDensity.compact,

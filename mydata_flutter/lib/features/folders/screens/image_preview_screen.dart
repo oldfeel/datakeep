@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../core/services/api_service.dart';
 import '../../../shared/utils/local_file_path.dart';
+import '../../../shared/widgets/share_to_cloud_sheet.dart';
 
 /// 全屏图片预览：双击缩放、单击显隐工具栏、左右滑邻图
 class ImagePreviewScreen extends StatefulWidget {
@@ -142,10 +143,24 @@ class _ImagePreviewScreenState extends State<ImagePreviewScreen> {
               backgroundColor: Colors.black54,
               foregroundColor: Colors.white,
               actions: [
+                IconButton(
+                  icon: const Icon(Icons.share_outlined),
+                  tooltip: '分享到互联网',
+                  onPressed: () {
+                    final abs = _resolvedPaths[_index];
+                    final rel = _paths.isEmpty ? null : _paths[_index];
+                    showShareToCloudSheet(
+                      context,
+                      folderPath: widget.folderPath ?? '',
+                      relativePath: rel ?? '',
+                      localAbsolutePath: abs,
+                    );
+                  },
+                ),
                 if (_paths.length > 1)
                   Center(
                     child: Padding(
-                      padding: const EdgeInsets.only(right: 16),
+                      padding: const EdgeInsets.only(right: 8),
                       child: Text(
                         '${_index + 1}/${_paths.length}',
                         style: const TextStyle(color: Colors.white70),

@@ -8,6 +8,7 @@ import '../../shared/utils/local_file_path.dart';
 import '../../shared/utils/open_system_file.dart';
 import '../../shared/utils/preview_limits.dart';
 import '../../shared/widgets/audio_preview.dart';
+import '../../shared/widgets/share_to_cloud_sheet.dart';
 import '../../shared/widgets/video_preview.dart';
 import '../../features/folders/screens/image_preview_screen.dart';
 import '../widgets/file_icon.dart';
@@ -310,6 +311,16 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
             tooltip: '全屏',
             onPressed: _openFullscreenImage,
           ),
+        IconButton(
+          icon: const Icon(Icons.share_outlined),
+          tooltip: '分享到互联网',
+          onPressed: () => showShareToCloudSheet(
+            context,
+            folderPath: widget.folder.path,
+            relativePath: widget.filePath,
+            localAbsolutePath: _accessibleFilePath ?? _tempFilePath,
+          ),
+        ),
         IconButton(
           icon: const Icon(Icons.open_in_new),
           tooltip: '系统打开',
