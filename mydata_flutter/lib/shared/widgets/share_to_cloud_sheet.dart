@@ -198,12 +198,12 @@ class _ShareSheetState extends State<_ShareSheet> {
       _loading = true;
       _error = null;
       _justCreated = null;
-      _progress = 0;
-      _status = forceReupload ? '重新上传…' : '准备中…';
+      _progress = forceReupload ? 0 : null;
+      _status = forceReupload ? '重新上传…' : '检查是否可复用云端文件…';
     });
     try {
       final size = await File(widget.localPath).length();
-      final record = await S3ShareService.share(
+      final result = await S3ShareService.share(
         config: _config,
         localPath: widget.localPath,
         expiry: _expiry,
@@ -221,12 +221,20 @@ class _ShareSheetState extends State<_ShareSheet> {
       await _load();
       if (mounted) {
         setState(() {
-          _justCreated = record;
+          _justCreated = result.record;
           _loading = false;
           _progress = 1;
-          _status = null;
+          _status = result.reusedObject ? '已复用云端文件，仅刷新链接' : null;
         });
-        await _copyUrl(record);
+        await _copyUrl(result.record);
+        if (mounted && result.reusedObject) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('已复用云端文件，未重新上传'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -331,9 +339,17 @@ class _ShareSheetState extends State<_ShareSheet> {
               ),
             const SizedBox(height: 16),
             if (_loading) ...[
-              LinearProgressIndicator(value: _progress),
+              if (_progress != null) LinearProgressIndicator(value: _progress),
+              if (_progress == null) const LinearProgressIndicator(),
               const SizedBox(height: 8),
               Text(_status ?? '处理中…'),
+              const SizedBox(height: 8),
+            ],
+            if (!_loading && _status != null) ...[
+              Text(
+                _status!,
+                style: TextStyle(color: Theme.of(context).colorScheme.primary),
+              ),
               const SizedBox(height: 8),
             ],
             if (_error != null) ...[
@@ -349,18 +365,22 @@ class _ShareSheetState extends State<_ShareSheet> {
             ],
             FilledButton.icon(
               onPressed: _loading ? null : () => _create(),
-              icon: const Icon(Icons.cloud_upload),
+              icon: Icon(_history.isNotEmpty ? Icons.refresh : Icons.cloud_upload),
               label: Text(
-                _history.any((r) => !r.hasPassword) && !_usePassword
-                    ? '生成 / 刷新链接'
-                    : '上传并生成链接',
+                _history.isNotEmpty ? '复用云端文件并刷新链接' : '上传并生成链接',
               ),
             ),
-            if (_history.any((r) => !r.hasPassword) && !_usePassword)
+            if (_history.isNotEmpty)
               TextButton(
                 onPressed: _loading ? null : () => _create(forceReupload: true),
                 child: const Text('强制重新上传'),
               ),
+            Text(
+              '同一文件未修改时会复用已上传对象，只刷新下载链接；改提取码或点「强制重新上传」才会再传文件。',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
           ],
         ),
       ),

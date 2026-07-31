@@ -34,7 +34,6 @@ class S3ShareService {
       region: n.region,
       useSSL: n.useSSL,
       // path-style：https://s3.cn-east-1.qiniucs.com/bucket/key
-      // 避免把 bucket 写进 endpoint 后又拼进 path 导致双重 bucket
       pathStyle: true,
     );
   }
@@ -44,19 +43,57 @@ class S3ShareService {
   static int _expirySeconds(Duration expiry) =>
       expiry.inSeconds.clamp(60, 7 * 24 * 3600);
 
-  /// 无提取码：按路径+大小+修改时间指纹复用对象
-  static Future<String> stableObjectKey(String localPath) async {
+  /// 与路径无关的文件指纹（同名+大小+修改时间未变则可复用云端对象）
+  static Future<String> fileFingerprint(String localPath) async {
     final file = File(localPath);
     final st = await file.stat();
-    final digest = sha256.convert(utf8.encode(
-      '$localPath|${st.size}|${st.modified.millisecondsSinceEpoch}',
-    ));
     final base = p.basename(localPath);
-    return 'mydata-share/${digest.toString().substring(0, 32)}_$base';
+    return sha256
+        .convert(utf8.encode(
+          '$base|${st.size}|${st.modified.millisecondsSinceEpoch}',
+        ))
+        .toString()
+        .substring(0, 32);
+  }
+
+  static String plainObjectKey(String fingerprint, String fileName) =>
+      'mydata-share/plain/${fingerprint}_${_safeObjectFileName(fileName)}';
+
+  /// 对象 key 只用安全 ASCII，避免空格/括号等导致七牛 Forbidden / 签名失败
+  /// 展示用文件名仍保存在分享记录里。
+  static String _safeObjectFileName(String fileName) {
+    final base = p.basename(fileName);
+    final ext = p.extension(base).toLowerCase().replaceAll(RegExp(r'[^a-z0-9.]'), '');
+    final name = p.basenameWithoutExtension(base);
+    var safe = name.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    safe = safe.replaceAll(RegExp(r'_+'), '_');
+    safe = safe.replaceAll(RegExp(r'^_|_$'), '');
+    if (safe.isEmpty) safe = 'file';
+    if (safe.length > 80) safe = safe.substring(0, 80);
+    return '$safe$ext';
+  }
+
+  static String _friendlyMinioError(Object e) {
+    final s = e.toString();
+    if (s.contains('Forbidden') || s.contains('AccessDenied')) {
+      return '上传被拒绝（Forbidden）。请检查：\n'
+          '1) AccessKey/SecretKey 是否有该空间写权限\n'
+          '2) Bucket 名是否正确\n'
+          '3) 已自动避开文件名中的空格/括号，可再试一次「强制重新上传」';
+    }
+    return s;
+  }
+
+  static String _passwordPrefix(String fingerprint, String password) {
+    final pwHash = sha256
+        .convert(utf8.encode(password))
+        .toString()
+        .substring(0, 16);
+    return 'mydata-share/enc/$fingerprint/$pwHash';
   }
 
   /// 上传（或复用）并生成分享记录
-  static Future<S3ShareRecord> share({
+  static Future<S3ShareResult> share({
     required S3ShareConfig config,
     required String localPath,
     required Duration expiry,
@@ -68,25 +105,43 @@ class S3ShareService {
       throw Exception('请先在设置中配置 S3 兼容存储（推荐七牛）');
     }
     final pw = password?.trim() ?? '';
-    if (pw.isNotEmpty) {
-      return _shareWithPassword(
+    try {
+      if (pw.isNotEmpty) {
+        return await _shareWithPassword(
+          config: config,
+          localPath: localPath,
+          expiry: expiry,
+          password: pw,
+          forceReupload: forceReupload,
+          onProgress: onProgress,
+        );
+      }
+      return await _sharePlain(
         config: config,
         localPath: localPath,
         expiry: expiry,
-        password: pw,
+        forceReupload: forceReupload,
         onProgress: onProgress,
       );
+    } catch (e) {
+      throw Exception(_friendlyMinioError(e));
     }
-    return _sharePlain(
-      config: config,
-      localPath: localPath,
-      expiry: expiry,
-      forceReupload: forceReupload,
-      onProgress: onProgress,
-    );
   }
 
-  /// 刷新预签名（无提取码直接改 URL；有提取码则重写解锁页）
+  static Future<bool> _objectExists(
+    Minio client,
+    String bucket,
+    String key,
+  ) async {
+    try {
+      await client.statObject(bucket, key);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 刷新预签名（无提取码直接改 URL；有提取码则重写解锁页，不重传数据文件）
   static Future<S3ShareRecord> refreshLink({
     required S3ShareConfig config,
     required S3ShareRecord record,
@@ -96,6 +151,10 @@ class S3ShareService {
       throw Exception('请先配置 S3 兼容存储');
     }
     final client = _client(config);
+    final bucket = _bucket(config);
+    if (!await _objectExists(client, bucket, record.objectKey)) {
+      throw Exception('云端文件已不存在，请使用「强制重新上传」');
+    }
     final seconds = _expirySeconds(expiry);
     final expiresAt = DateTime.now().add(Duration(seconds: seconds));
 
@@ -107,7 +166,7 @@ class S3ShareService {
         throw Exception('该提取码分享缺少元数据，请重新生成');
       }
       final dataUrl = await client.presignedGetObject(
-        _bucket(config),
+        bucket,
         record.objectKey,
         expires: seconds,
       );
@@ -118,14 +177,14 @@ class S3ShareService {
         dataUrl: dataUrl,
       ));
       await client.putObject(
-        _bucket(config),
+        bucket,
         gateKey,
         Stream<Uint8List>.value(Uint8List.fromList(html)),
         size: html.length,
         metadata: {'content-type': 'text/html; charset=utf-8'},
       );
       final gateUrl = await client.presignedGetObject(
-        _bucket(config),
+        bucket,
         gateKey,
         expires: seconds,
       );
@@ -135,7 +194,7 @@ class S3ShareService {
     }
 
     final url = await client.presignedGetObject(
-      _bucket(config),
+      bucket,
       record.objectKey,
       expires: seconds,
     );
@@ -144,39 +203,43 @@ class S3ShareService {
     return updated;
   }
 
-  static Future<S3ShareRecord> _sharePlain({
+  static Future<S3ShareResult> _sharePlain({
     required S3ShareConfig config,
     required String localPath,
     required Duration expiry,
     required bool forceReupload,
     void Function(int sent)? onProgress,
   }) async {
-    final objectKey = await stableObjectKey(localPath);
+    final fp = await fileFingerprint(localPath);
+    final fileName = p.basename(localPath);
+    final objectKey = plainObjectKey(fp, fileName);
     final client = _client(config);
     final seconds = _expirySeconds(expiry);
     final expiresAt = DateTime.now().add(Duration(seconds: seconds));
-    final fileName = p.basename(localPath);
     final fileSize = await File(localPath).length();
 
     if (!forceReupload) {
-      final existing = await S3ShareHistoryStore.forLocalPath(localPath);
-      S3ShareRecord? hit;
-      for (final r in existing) {
-        if (!r.hasPassword && r.objectKey == objectKey) {
-          hit = r;
-          break;
-        }
-      }
+      final hit = await S3ShareHistoryStore.findReusable(
+        localPath: localPath,
+        fileFingerprint: fp,
+        wantPassword: false,
+      );
       if (hit != null) {
-        final url = await client.presignedGetObject(
-          _bucket(config),
-          objectKey,
-          expires: seconds,
-        );
-        final updated = hit.copyWith(url: url, expiresAt: expiresAt);
-        await S3ShareHistoryStore.update(updated);
-        onProgress?.call(fileSize);
-        return updated;
+        try {
+          final updated = await refreshLink(
+            config: config,
+            record: hit.copyWith(
+              localPath: localPath,
+              fileFingerprint: fp,
+            ),
+            expiry: expiry,
+          );
+          onProgress?.call(fileSize);
+          return S3ShareResult(record: updated, reusedObject: true);
+        } catch (_) {
+          // 云端对象缺失，清掉失效记录后重新上传
+          await S3ShareHistoryStore.remove(hit.id);
+        }
       }
       try {
         await client.statObject(_bucket(config), objectKey);
@@ -189,6 +252,7 @@ class S3ShareService {
           id: _newId(),
           localPath: localPath,
           fileName: fileName,
+          fileFingerprint: fp,
           objectKey: objectKey,
           url: url,
           createdAt: DateTime.now(),
@@ -196,7 +260,7 @@ class S3ShareService {
         );
         await S3ShareHistoryStore.add(record);
         onProgress?.call(fileSize);
-        return record;
+        return S3ShareResult(record: record, reusedObject: true);
       } catch (_) {}
     }
 
@@ -216,20 +280,22 @@ class S3ShareService {
       id: _newId(),
       localPath: localPath,
       fileName: fileName,
+      fileFingerprint: fp,
       objectKey: objectKey,
       url: url,
       createdAt: DateTime.now(),
       expiresAt: expiresAt,
     );
     await S3ShareHistoryStore.add(record);
-    return record;
+    return S3ShareResult(record: record, reusedObject: false);
   }
 
-  static Future<S3ShareRecord> _shareWithPassword({
+  static Future<S3ShareResult> _shareWithPassword({
     required S3ShareConfig config,
     required String localPath,
     required Duration expiry,
     required String password,
+    required bool forceReupload,
     void Function(int sent)? onProgress,
   }) async {
     final file = File(localPath);
@@ -239,6 +305,38 @@ class S3ShareService {
         '带提取码的分享暂支持不超过 '
         '${maxPasswordShareBytes ~/ (1024 * 1024)}MB 的文件',
       );
+    }
+
+    final fp = await fileFingerprint(localPath);
+    final fileName = p.basename(localPath);
+    final prefix = _passwordPrefix(fp, password);
+    final dataKey = '$prefix/data.bin';
+    final gateKey = '$prefix/index.html';
+
+    if (!forceReupload) {
+      final hit = await S3ShareHistoryStore.findReusable(
+        localPath: localPath,
+        fileFingerprint: fp,
+        wantPassword: true,
+        password: password,
+      );
+      if (hit != null) {
+        try {
+          final updated = await refreshLink(
+            config: config,
+            record: hit.copyWith(
+              localPath: localPath,
+              fileFingerprint: fp,
+            ),
+            expiry: expiry,
+          );
+          onProgress?.call(size);
+          return S3ShareResult(record: updated, reusedObject: true);
+        } catch (_) {
+          // 云端 data.bin 缺失（例如早期 endpoint 误配），清记录后重传
+          await S3ShareHistoryStore.remove(hit.id);
+        }
+      }
     }
 
     onProgress?.call(0);
@@ -261,10 +359,6 @@ class S3ShareService {
     ]);
     onProgress?.call(size ~/ 3);
 
-    final shareId = _newId();
-    final fileName = p.basename(localPath);
-    final dataKey = 'mydata-share/$shareId/data.bin';
-    final gateKey = 'mydata-share/$shareId/index.html';
     final client = _client(config);
     final seconds = _expirySeconds(expiry);
     final expiresAt = DateTime.now().add(Duration(seconds: seconds));
@@ -277,6 +371,9 @@ class S3ShareService {
       Stream<Uint8List>.value(cipherWithTag),
       size: cipherWithTag.length,
     );
+    if (!await _objectExists(client, _bucket(config), dataKey)) {
+      throw Exception('加密文件上传失败，请重试');
+    }
     onProgress?.call((size * 2) ~/ 3);
 
     final dataUrl = await client.presignedGetObject(
@@ -309,6 +406,7 @@ class S3ShareService {
       id: _newId(),
       localPath: localPath,
       fileName: fileName,
+      fileFingerprint: fp,
       objectKey: dataKey,
       gateObjectKey: gateKey,
       url: gateUrl,
@@ -320,7 +418,7 @@ class S3ShareService {
       ivB64: ivB64,
     );
     await S3ShareHistoryStore.add(record);
-    return record;
+    return S3ShareResult(record: record, reusedObject: false);
   }
 
   static Uint8List _randomBytes(int n) {
@@ -395,7 +493,12 @@ document.getElementById('btn').onclick = async () => {
     a.click();
     URL.revokeObjectURL(a.href);
   } catch (e) {
-    err.textContent = '提取码错误或链接已失效';
+    const msg = (e && e.message) ? String(e.message) : String(e);
+    if (msg.indexOf('下载加密数据失败') >= 0) {
+      err.textContent = msg + '（云端文件缺失，请在 MyData 中强制重新上传后再分享）';
+    } else {
+      err.textContent = '提取码错误，或加密数据已损坏/失效';
+    }
     console.error(e);
   } finally {
     btn.disabled = false;
@@ -405,4 +508,15 @@ document.getElementById('btn').onclick = async () => {
 </body>
 </html>''';
   }
+}
+
+class S3ShareResult {
+  final S3ShareRecord record;
+  /// true：复用了已上传的数据对象，未重新上传文件本体
+  final bool reusedObject;
+
+  const S3ShareResult({
+    required this.record,
+    required this.reusedObject,
+  });
 }

@@ -6,6 +6,8 @@ class S3ShareRecord {
   final String id;
   final String localPath;
   final String fileName;
+  /// 文件指纹（basename|size|mtime），用于跨路径复用云端对象
+  final String? fileFingerprint;
   /// 数据对象 key（明文或密文）
   final String objectKey;
   /// 带提取码时的解锁页 key
@@ -25,6 +27,7 @@ class S3ShareRecord {
     required this.id,
     required this.localPath,
     required this.fileName,
+    this.fileFingerprint,
     required this.objectKey,
     this.gateObjectKey,
     required this.url,
@@ -56,6 +59,7 @@ class S3ShareRecord {
         'id': id,
         'localPath': localPath,
         'fileName': fileName,
+        'fileFingerprint': fileFingerprint,
         'objectKey': objectKey,
         'gateObjectKey': gateObjectKey,
         'url': url,
@@ -71,6 +75,7 @@ class S3ShareRecord {
         id: j['id']?.toString() ?? '',
         localPath: j['localPath']?.toString() ?? '',
         fileName: j['fileName']?.toString() ?? '',
+        fileFingerprint: j['fileFingerprint']?.toString(),
         objectKey: j['objectKey']?.toString() ?? '',
         gateObjectKey: j['gateObjectKey']?.toString(),
         url: j['url']?.toString() ?? '',
@@ -87,11 +92,14 @@ class S3ShareRecord {
   S3ShareRecord copyWith({
     String? url,
     DateTime? expiresAt,
+    String? localPath,
+    String? fileFingerprint,
   }) =>
       S3ShareRecord(
         id: id,
-        localPath: localPath,
+        localPath: localPath ?? this.localPath,
         fileName: fileName,
+        fileFingerprint: fileFingerprint ?? this.fileFingerprint,
         objectKey: objectKey,
         gateObjectKey: gateObjectKey,
         url: url ?? this.url,
@@ -135,6 +143,11 @@ class S3ShareHistoryStore {
   static Future<void> add(S3ShareRecord record) async {
     final all = await loadAll();
     all.removeWhere((r) => r.id == record.id);
+    // 同一对象 key 只保留最新一条，避免重复历史
+    all.removeWhere((r) =>
+        r.objectKey == record.objectKey &&
+        r.hasPassword == record.hasPassword &&
+        (r.password ?? '') == (record.password ?? ''));
     all.insert(0, record);
     await _saveAll(all);
   }
@@ -162,5 +175,36 @@ class S3ShareHistoryStore {
     return all
         .where((r) => r.localPath == localPath && !r.isExpired)
         .toList();
+  }
+
+  /// 查找可复用的云端对象（含已过期记录：对象通常仍在桶里）
+  static Future<S3ShareRecord?> findReusable({
+    required String localPath,
+    String? fileFingerprint,
+    required bool wantPassword,
+    String? password,
+  }) async {
+    final all = await loadAll();
+    final pw = password?.trim() ?? '';
+    for (final r in all) {
+      final pathOk = r.localPath == localPath;
+      final fpOk = fileFingerprint != null &&
+          fileFingerprint.isNotEmpty &&
+          r.fileFingerprint == fileFingerprint;
+      if (!pathOk && !fpOk) continue;
+      if (wantPassword) {
+        if (!r.hasPassword) continue;
+        if (pw.isNotEmpty && (r.password ?? '') != pw) continue;
+        if (r.gateObjectKey == null ||
+            r.saltB64 == null ||
+            r.ivB64 == null) {
+          continue;
+        }
+        return r;
+      }
+      if (r.hasPassword) continue;
+      return r;
+    }
+    return null;
   }
 }
