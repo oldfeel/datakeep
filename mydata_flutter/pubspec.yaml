@@ -43,6 +43,7 @@ dependencies:
   
   # 文件操作
   path_provider: ^2.1.0
+  path: ^1.9.0
   file_picker: ^10.3.2
   
   # 状态管理
@@ -75,6 +76,12 @@ dependencies:
   mobile_scanner: ^5.2.3
   # 本机设备 ID 二维码展示
   qr_flutter: ^4.1.0
+
+  # 系统打开文件（PDF / 未知类型等）
+  open_filex: ^4.7.0
+
+  # S3 兼容对象存储（分享链接）
+  minio: ^3.5.7
 
   # 跨平台视频播放（Linux / Android / iOS / macOS / Windows）
   media_kit: ^1.2.6

@@ -11,7 +11,12 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
 
-  if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS || Platform.isAndroid)) {
+  if (!kIsWeb &&
+      (Platform.isLinux ||
+          Platform.isWindows ||
+          Platform.isMacOS ||
+          Platform.isAndroid ||
+          Platform.isIOS)) {
     await _startPlatformServices();
   }
 
@@ -22,11 +27,54 @@ Future<void> _startPlatformServices() async {
   try {
     if (Platform.isAndroid) {
       await _startAndroidServices();
+    } else if (Platform.isIOS) {
+      await _startIosServices();
     } else {
       await _startDesktopServices();
     }
   } catch (e, st) {
     debugPrint('[startup] 启动服务异常: $e');
+    debugPrint('$st');
+  }
+}
+
+/// iOS：启 shelf 后端；Syncthing 进程内引擎待 gomobile xcframework（见 ios/SyncthingCore）
+Future<void> _startIosServices() async {
+  debugPrint('[startup] iOS 启动流程开始');
+
+  String? configPath;
+  var deviceName = '';
+  for (var i = 0; i < 5; i++) {
+    final boot = await NativeService.getSyncthingBootstrap();
+    configPath = boot.path;
+    if (boot.deviceName != null && deviceName.isEmpty) {
+      deviceName = boot.deviceName!;
+    }
+    if (configPath != null) break;
+    await Future.delayed(const Duration(milliseconds: 500));
+  }
+
+  SyncthingApi().init(
+    configPath: configPath,
+    defaultLocalDeviceName: deviceName,
+  );
+
+  try {
+    final started = await NativeService.startSyncthingService();
+    debugPrint('[startup] iOS startSyncthingService => $started');
+  } catch (e) {
+    debugPrint('[startup] iOS Syncthing 尚未实现引擎: $e');
+  }
+
+  try {
+    final backend = BackendServer();
+    await backend.start(
+      syncthingConfigPath: configPath,
+      defaultLocalDeviceName: deviceName,
+    );
+    debugPrint('[startup] Backend HTTPS 已启动 (iOS), config=$configPath');
+  } catch (e, st) {
+    debugPrint('[startup] Backend 启动失败: $e');
     debugPrint('$st');
   }
 }

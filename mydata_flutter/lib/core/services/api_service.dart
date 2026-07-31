@@ -8,6 +8,28 @@ import '../models/device.dart';
 import 'native_service.dart';
 import 'android_storage_service.dart';
 import '../../shared/utils/sync_folder_paths.dart';
+import '../../shared/utils/preview_limits.dart';
+
+/// 预览流式下载结果
+class PreviewDownloadResult {
+  final String path;
+  final String tempDirPath;
+  final String contentType;
+  final int bytes;
+
+  const PreviewDownloadResult({
+    required this.path,
+    required this.tempDirPath,
+    required this.contentType,
+    required this.bytes,
+  });
+
+  Future<void> cleanup() async {
+    try {
+      await Directory(tempDirPath).delete(recursive: true);
+    } catch (_) {}
+  }
+}
 
 /// API 服务，调用后端 API 服务器
 class ApiService {
@@ -810,7 +832,89 @@ class ApiService {
     String? deviceId,
   }) async {
     await initialize();
+    final uri = await _previewUri(folderId, filePath, deviceId: deviceId);
+    debugPrint('API GET preview: $uri');
+    return await _httpClient.get(uri).timeout(
+      const Duration(minutes: 3),
+      onTimeout: () => throw Exception('预览超时（对端需同网且已打开 MyData）'),
+    );
+  }
 
+  /// 流式下载预览文件到临时路径，避免大文件整包进内存
+  static Future<PreviewDownloadResult> previewFileToTemp(
+    String folderId,
+    String filePath, {
+    String? deviceId,
+    void Function(int received, int? total)? onProgress,
+  }) async {
+    await initialize();
+    final uri = await _previewUri(folderId, filePath, deviceId: deviceId);
+    debugPrint('API GET preview stream: $uri');
+
+    final request = http.Request('GET', uri);
+    final streamed = await _httpClient.send(request).timeout(
+      const Duration(seconds: 30),
+      onTimeout: () => throw Exception('预览连接超时（对端需同网且已打开 MyData）'),
+    );
+
+    if (streamed.statusCode == 413) {
+      final body = await streamed.stream.bytesToString();
+      throw Exception(body.isNotEmpty ? body : '文件过大，无法应用内预览');
+    }
+    if (streamed.statusCode != 200) {
+      final body = await streamed.stream.bytesToString();
+      throw Exception(
+        body.isNotEmpty ? body : 'HTTP ${streamed.statusCode}',
+      );
+    }
+
+    final contentLen = streamed.contentLength;
+    if (contentLen != null && contentLen > kMaxPreviewBytes) {
+      await streamed.stream.drain();
+      throw PreviewTooLargeException(contentLen);
+    }
+
+    final fileName = filePath.split('/').last;
+    final tempDir = await Directory.systemTemp.createTemp('mydata_preview_');
+    final tempFile = File('${tempDir.path}/$fileName');
+    final sink = tempFile.openWrite();
+    var received = 0;
+    try {
+      await for (final chunk in streamed.stream.timeout(
+        const Duration(minutes: 5),
+      )) {
+        received += chunk.length;
+        if (received > kMaxPreviewBytes) {
+          await sink.close();
+          await tempDir.delete(recursive: true);
+          throw PreviewTooLargeException(received);
+        }
+        sink.add(chunk);
+        onProgress?.call(received, contentLen);
+      }
+      await sink.flush();
+      await sink.close();
+    } catch (e) {
+      await sink.close();
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+      rethrow;
+    }
+
+    return PreviewDownloadResult(
+      path: tempFile.path,
+      tempDirPath: tempDir.path,
+      contentType: streamed.headers['content-type'] ?? 'application/octet-stream',
+      bytes: received,
+    );
+  }
+
+  static Future<Uri> _previewUri(
+    String folderId,
+    String filePath, {
+    String? deviceId,
+  }) async {
     final localId = await getLocalDeviceId();
     final isLocal = deviceId == null ||
         deviceId.isEmpty ||
@@ -825,12 +929,7 @@ class ApiService {
       uriStr =
           '$_baseUrl/device/${Uri.encodeComponent(deviceId)}/folder/${Uri.encodeComponent(folderId)}/preview?path=${Uri.encodeComponent(filePath)}';
     }
-    final uri = Uri.parse(uriStr);
-    debugPrint('API GET preview: $uri');
-    return await _httpClient.get(uri).timeout(
-      const Duration(seconds: 60),
-      onTimeout: () => throw Exception('预览超时'),
-    );
+    return Uri.parse(uriStr);
   }
 
   /// 更新文件夹

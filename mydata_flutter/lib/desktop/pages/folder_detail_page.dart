@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/models/device.dart';
 import '../../core/models/folder.dart';
 import '../../core/services/api_service.dart';
+import '../../shared/widgets/share_to_cloud_sheet.dart';
 import '../widgets/file_icon.dart';
 
 enum _SortField { name, size, mtime, ctime }
@@ -296,6 +297,13 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                   onTap: isDir
                       ? () => _enterFolder(name)
                       : () => widget.onFileTap(_relativePath(name)),
+                  onSecondaryTap: isDir
+                      ? null
+                      : () => showShareToCloudSheet(
+                            context,
+                            folderPath: widget.folder.path,
+                            relativePath: _relativePath(name),
+                          ),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     child: Row(children: [
@@ -310,6 +318,16 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                         style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant))),
                       SizedBox(width: 140, child: Text(_dateStr(f['modTime'] ?? f['modified']),
                         style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant))),
+                      if (!isDir)
+                        IconButton(
+                          icon: const Icon(Icons.share_outlined, size: 18),
+                          tooltip: '分享到互联网',
+                          onPressed: () => showShareToCloudSheet(
+                            context,
+                            folderPath: widget.folder.path,
+                            relativePath: _relativePath(name),
+                          ),
+                        ),
                     ]),
                   ),
                 ),

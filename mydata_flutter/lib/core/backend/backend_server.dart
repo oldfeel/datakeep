@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -85,7 +86,17 @@ class BackendServer {
     if (Platform.isAndroid || Platform.isIOS) {
       return (await getApplicationSupportDirectory()).path;
     }
-    return Platform.environment['MYDATA_DATA_DIR'] ?? '.';
+    // 桌面：优先已有运行目录下的数据（兼容旧 cwd）；否则用应用支持目录，避免 cwd 变化丢 ACL
+    final cwd = Directory.current.path;
+    final cwdAcl = File('$cwd/folder_acl.json');
+    final cwdCerts = Directory('$cwd/certs');
+    if (cwdAcl.existsSync() || cwdCerts.existsSync()) {
+      debugPrint('[dataDir] 使用当前目录: $cwd');
+      return cwd;
+    }
+    final support = await getApplicationSupportDirectory();
+    debugPrint('[dataDir] 使用应用支持目录: ${support.path}');
+    return support.path;
   }
 
   Future<void> stop() async {
@@ -99,7 +110,7 @@ class BackendServer {
         return Response.ok(null, headers: {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Headers': '*',
-          'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+          'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
         });
       }
       final response = await innerHandler(request);
@@ -108,7 +119,7 @@ class BackendServer {
         if (!response.headers.containsKey('Access-Control-Allow-Headers'))
           'Access-Control-Allow-Headers': '*',
         if (!response.headers.containsKey('Access-Control-Allow-Methods'))
-          'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+          'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
       });
     };
   }
@@ -450,7 +461,10 @@ class BackendServer {
     }
     final ip = PeerClient.extractLanIp(conn.address);
     if (ip == null) {
-      return Response(503, body: '无法解析对端局域网地址');
+      return Response(
+        503,
+        body: '无法解析对端局域网地址（需同网且对端已打开 MyData）',
+      );
     }
     final localId = await _api.getLocalDeviceId();
     if (localId == null || localId.isEmpty) {
@@ -459,21 +473,49 @@ class BackendServer {
     final encoded = Uri.encodeComponent(folderId);
     final q = '?path=${Uri.encodeComponent(path)}';
     debugPrint('[peer] 拉取对端预览: device=$deviceId folder=$folderId path=$path');
-    final peer = await PeerClient.getBytes(
+
+    final temp = await Directory.systemTemp.createTemp('mydata_peer_proxy_');
+    final dest = '${temp.path}/file.bin';
+    final peer = await PeerClient.downloadToFile(
       ip,
       '/api/peer/folder/$encoded/preview$q',
+      dest,
       headers: {PeerClient.deviceIdHeader: localId},
     );
     if (peer.containsKey('error')) {
+      try {
+        await temp.delete(recursive: true);
+      } catch (_) {}
       final code = peer['statusCode'] is int ? peer['statusCode'] as int : 503;
       return Response(code, body: peer['error']?.toString() ?? '对端不可达');
     }
-    final bytes = peer['bytes'];
-    if (bytes is! List<int>) {
-      return Response(502, body: '对端响应无效');
-    }
-    final contentType = peer['contentType']?.toString() ?? 'application/octet-stream';
-    return Response.ok(bytes, headers: {'Content-Type': contentType});
+    final contentType =
+        peer['contentType']?.toString() ?? 'application/octet-stream';
+    final file = File(dest);
+    final size = await file.length();
+    final stream = file.openRead().transform(
+      StreamTransformer.fromHandlers(
+        handleDone: (sink) {
+          sink.close();
+          try {
+            temp.deleteSync(recursive: true);
+          } catch (_) {}
+        },
+        handleError: (e, st, sink) {
+          try {
+            temp.deleteSync(recursive: true);
+          } catch (_) {}
+          sink.addError(e, st);
+        },
+      ),
+    );
+    return Response.ok(
+      stream,
+      headers: {
+        'Content-Type': contentType,
+        'Content-Length': '$size',
+      },
+    );
   }
 
   Future<Response> _handleGetFolderAcl(Request request, String folderId) async {
@@ -549,6 +591,10 @@ class BackendServer {
     }
 
     await _acl.setFolderPermissions(decodedId, permissions);
+    debugPrint(
+      '[acl] 已写入 ${_acl.filePath} folder=$decodedId '
+      'perms=${permissions.map((k, v) => MapEntry(k, v.apiValue))}',
+    );
 
     // 对齐 Syncthing：仅 sync 设备加入共享
     final localId = await _api.getLocalDeviceId();
@@ -923,6 +969,8 @@ class BackendServer {
     return _serveLocalFilePreview(folderId, request.url.queryParameters['path'] ?? '');
   }
 
+  static const int _maxPreviewBytes = 200 * 1024 * 1024; // 200MB
+
   Future<Response> _serveLocalFilePreview(String folderId, String filePath) async {
     if (filePath.isEmpty) return Response(400, body: '缺少 path 参数');
 
@@ -945,33 +993,139 @@ class BackendServer {
       return Response(404, body: '文件夹未找到');
     }
 
-    final base = folderPath.replaceAll(RegExp(r'[/\\]+$'), '');
-    final rel = filePath.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
-    final fullPath = '$base/$rel';
-    final file = File(fullPath);
+    final safe = _resolvePreviewPath(folderPath, filePath);
+    if (safe == null) {
+      debugPrint('[preview] 路径非法或越界: folder=$folderPath path=$filePath');
+      return Response(403, body: '非法路径');
+    }
+    final file = File(safe);
     if (!file.existsSync()) {
-      debugPrint('[preview] 文件未找到: $fullPath');
+      debugPrint('[preview] 文件未找到: $safe');
       return Response(404, body: '文件未找到');
     }
-    final bytes = await file.readAsBytes();
+    final size = await file.length();
+    if (size > _maxPreviewBytes) {
+      return Response(
+        413,
+        body: '文件过大（${(size / (1024 * 1024)).toStringAsFixed(1)} MB），'
+            '超过应用内预览上限 200 MB，请使用下载或系统打开',
+      );
+    }
     final ext = filePath.split('.').last.toLowerCase();
-    return Response.ok(bytes, headers: {'Content-Type': _mimeType(ext)});
+    final stream = file.openRead();
+    return Response.ok(
+      stream,
+      headers: {
+        'Content-Type': _mimeType(ext),
+        'Content-Length': '$size',
+      },
+    );
+  }
+
+  /// 规范化路径并确保落在 folder root 内，防止目录穿越
+  String? _resolvePreviewPath(String folderPath, String filePath) {
+    try {
+      final baseDir = Directory(folderPath);
+      if (!baseDir.existsSync()) return null;
+      final baseCanon = baseDir.resolveSymbolicLinksSync();
+      final rel = filePath
+          .replaceAll('\\', '/')
+          .replaceAll(RegExp(r'^/+'), '')
+          .split('/')
+          .where((s) => s.isNotEmpty && s != '.' && s != '..')
+          .join('/');
+      if (rel.isEmpty || filePath.contains('..')) {
+        // 含 .. 直接拒绝；空相对路径也不合法
+        if (filePath.contains('..')) return null;
+      }
+      final candidate = File('$baseCanon${Platform.pathSeparator}$rel');
+      if (!candidate.existsSync()) {
+        // 仍返回候选路径供 exists 检查（也可能是未同步）
+        final parent = candidate.parent;
+        if (!parent.existsSync()) return null;
+        final parentCanon = parent.resolveSymbolicLinksSync();
+        if (!parentCanon.startsWith(baseCanon)) return null;
+        return candidate.path;
+      }
+      final fileCanon = candidate.resolveSymbolicLinksSync();
+      if (!fileCanon.startsWith(baseCanon)) return null;
+      return fileCanon;
+    } catch (e) {
+      debugPrint('[preview] resolve 失败: $e');
+      return null;
+    }
   }
 
   String _mimeType(String ext) {
     switch (ext) {
-      case 'jpg': case 'jpeg': return 'image/jpeg';
-      case 'png': return 'image/png';
-      case 'gif': return 'image/gif';
-      case 'webp': return 'image/webp';
-      case 'svg': return 'image/svg+xml';
-      case 'pdf': return 'application/pdf';
-      case 'mp4': return 'video/mp4';
-      case 'mp3': return 'audio/mpeg';
-      case 'txt': case 'md': case 'json': case 'xml': case 'csv': case 'log':
-      case 'html': case 'css': case 'js': case 'dart': case 'py':
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'bmp':
+        return 'image/bmp';
+      case 'svg':
+        return 'image/svg+xml';
+      case 'ico':
+        return 'image/x-icon';
+      case 'pdf':
+        return 'application/pdf';
+      case 'mp4':
+      case 'm4v':
+        return 'video/mp4';
+      case 'webm':
+        return 'video/webm';
+      case 'mkv':
+        return 'video/x-matroska';
+      case 'avi':
+        return 'video/x-msvideo';
+      case 'mov':
+        return 'video/quicktime';
+      case 'wmv':
+        return 'video/x-ms-wmv';
+      case 'flv':
+        return 'video/x-flv';
+      case 'mp3':
+        return 'audio/mpeg';
+      case 'wav':
+        return 'audio/wav';
+      case 'flac':
+        return 'audio/flac';
+      case 'aac':
+        return 'audio/aac';
+      case 'ogg':
+        return 'audio/ogg';
+      case 'wma':
+        return 'audio/x-ms-wma';
+      case 'm4a':
+        return 'audio/mp4';
+      case 'txt':
+      case 'md':
+      case 'json':
+      case 'xml':
+      case 'yaml':
+      case 'yml':
+      case 'js':
+      case 'ts':
+      case 'html':
+      case 'css':
+      case 'py':
+      case 'java':
+      case 'cpp':
+      case 'c':
+      case 'go':
+      case 'rs':
+      case 'dart':
+      case 'csv':
+      case 'log':
         return 'text/plain; charset=utf-8';
-      default: return 'application/octet-stream';
+      default:
+        return 'application/octet-stream';
     }
   }
 

@@ -45,5 +45,22 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>MyData 需要本地网络以发现并同步附近设备</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_sbps._tcp</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>用于扫描设备二维码以添加同步设备</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
 </dict>
 </plist>

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/services/syncthing_service_manager.dart';
+import '../pages/s3_share_settings_page.dart';
 import '../utils/open_syncthing_gui.dart';
 
 /// Syncthing 服务控制组件
@@ -127,6 +128,20 @@ class ServiceControlWidget extends StatelessWidget {
                     onPressed: () => openSyncthingGui(context),
                     icon: const Icon(Icons.open_in_browser, size: 18),
                     label: const Text('打开 Syncthing 管理页'),
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const S3ShareSettingsPage(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.cloud_outlined, size: 18),
+                    label: const Text('互联网分享 · 存储配置'),
                   ),
                 ),
               ],

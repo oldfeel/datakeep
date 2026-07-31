@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import '../../shared/utils/preview_limits.dart';
 
 /// 局域网对端 MyData HTTPS 客户端（自签名 + 私网 IP）
 class PeerClient {
@@ -34,9 +35,9 @@ class PeerClient {
     return false;
   }
 
-  static HttpClient _client() {
+  static HttpClient _client({Duration? connectionTimeout}) {
     final c = HttpClient();
-    c.connectionTimeout = const Duration(seconds: 3);
+    c.connectionTimeout = connectionTimeout ?? const Duration(seconds: 5);
     c.badCertificateCallback = (cert, host, port) {
       return _isPrivateIpv4(host) && port == peerPort;
     };
@@ -74,9 +75,11 @@ class PeerClient {
       return {'data': decoded};
     } on SocketException catch (e) {
       debugPrint('[peer] 连接失败 $uri: $e');
-      return {'error': '对端 MyData 未运行或不可达'};
+      return {
+        'error': '对端 MyData 不可达（需同局域网且对端已打开 MyData）',
+      };
     } on TimeoutException catch (_) {
-      return {'error': '连接对端超时'};
+      return {'error': '连接对端超时（需同局域网且对端已打开 MyData）'};
     } catch (e) {
       debugPrint('[peer] 请求失败 $uri: $e');
       return {'error': e.toString()};
@@ -85,51 +88,128 @@ class PeerClient {
     }
   }
 
-  /// GET https://{ip}:8443/path → 原始字节（文件预览）
-  static Future<Map<String, dynamic>> getBytes(
+  /// 流式下载对端文件到本地路径（带大小上限）
+  static Future<Map<String, dynamic>> downloadToFile(
     String ip,
-    String path, {
+    String path,
+    String destPath, {
     Map<String, String>? headers,
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(minutes: 5),
+    void Function(int received, int? total)? onProgress,
   }) async {
     final uri = Uri.parse('https://$ip:$peerPort$path');
-    final client = _client();
-    client.connectionTimeout = const Duration(seconds: 5);
+    final client = _client(connectionTimeout: const Duration(seconds: 8));
     try {
-      final req = await client.getUrl(uri).timeout(timeout);
+      final req = await client.getUrl(uri).timeout(const Duration(seconds: 15));
       headers?.forEach(req.headers.set);
       final res = await req.close().timeout(timeout);
-      final builder = BytesBuilder(copy: false);
-      await for (final chunk in res) {
-        builder.add(chunk);
+      final contentLen = res.contentLength >= 0 ? res.contentLength : null;
+      if (contentLen != null && contentLen > kMaxPreviewBytes) {
+        await res.drain();
+        return {
+          'error': PreviewTooLargeException(contentLen).toString(),
+          'statusCode': 413,
+        };
       }
-      final bytes = builder.takeBytes();
       if (res.statusCode != 200) {
+        final body = await res.transform(utf8.decoder).join();
         String msg = 'HTTP ${res.statusCode}';
         try {
-          final decoded = json.decode(utf8.decode(bytes));
+          final decoded = json.decode(body);
           if (decoded is Map && decoded['data'] != null) {
             msg = decoded['data'].toString();
+          } else if (body.isNotEmpty) {
+            msg = body;
           }
-        } catch (_) {}
+        } catch (_) {
+          if (body.isNotEmpty) msg = body;
+        }
         return {'error': msg, 'statusCode': res.statusCode};
       }
+
+      final file = File(destPath);
+      await file.parent.create(recursive: true);
+      final sink = file.openWrite();
+      var received = 0;
+      try {
+        await for (final chunk in res.timeout(timeout)) {
+          received += chunk.length;
+          if (received > kMaxPreviewBytes) {
+            await sink.close();
+            await file.delete();
+            return {
+              'error': PreviewTooLargeException(received).toString(),
+              'statusCode': 413,
+            };
+          }
+          sink.add(chunk);
+          onProgress?.call(received, contentLen);
+        }
+        await sink.flush();
+        await sink.close();
+      } catch (e) {
+        await sink.close();
+        try {
+          await file.delete();
+        } catch (_) {}
+        rethrow;
+      }
       return {
-        'bytes': bytes,
+        'path': destPath,
         'contentType': res.headers.contentType?.mimeType ??
             res.headers.value('content-type') ??
             'application/octet-stream',
+        'bytes': received,
       };
     } on SocketException catch (e) {
       debugPrint('[peer] 下载失败 $uri: $e');
-      return {'error': '对端 MyData 未运行或不可达'};
+      return {
+        'error': '对端 MyData 不可达（需同局域网且对端已打开 MyData）',
+      };
     } on TimeoutException catch (_) {
-      return {'error': '下载对端文件超时'};
+      return {'error': '下载对端文件超时（需同局域网且对端已打开 MyData）'};
     } catch (e) {
       debugPrint('[peer] 下载失败 $uri: $e');
       return {'error': e.toString()};
     } finally {
       client.close(force: true);
+    }
+  }
+
+  /// GET → 原始字节（小文件兼容；大文件请用 downloadToFile）
+  static Future<Map<String, dynamic>> getBytes(
+    String ip,
+    String path, {
+    Map<String, String>? headers,
+    Duration timeout = const Duration(minutes: 3),
+  }) async {
+    final temp = await Directory.systemTemp.createTemp('mydata_peer_');
+    final dest = '${temp.path}/download.bin';
+    final result = await downloadToFile(
+      ip,
+      path,
+      dest,
+      headers: headers,
+      timeout: timeout,
+    );
+    if (result.containsKey('error')) {
+      try {
+        await temp.delete(recursive: true);
+      } catch (_) {}
+      return result;
+    }
+    try {
+      final bytes = await File(dest).readAsBytes();
+      await temp.delete(recursive: true);
+      return {
+        'bytes': bytes,
+        'contentType': result['contentType'],
+      };
+    } catch (e) {
+      try {
+        await temp.delete(recursive: true);
+      } catch (_) {}
+      return {'error': e.toString()};
     }
   }
 }

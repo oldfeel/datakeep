@@ -22,6 +22,16 @@
 3. ~~暂停文件夹、手动扫描~~ — 同上
 4. ~~失败/冲突文件的基础提示~~ — 文件夹编辑「问题」页
 5. ~~本机设备 ID 二维码展示~~ — 本机设备信息 / 侧栏 / 抽屉
+6. ~~多媒体预览打磨~~ — 流式预览、PDF/系统打开、邻图滑动、统一分发
+7. ~~对外分享（无公网 IP）~~ — S3 兼容上传 + 预签名链接（成本优先七牛）
+8. iOS Syncthing 进程内引擎 — 脚手架已就绪，gomobile xcframework 待 Mac 环境编入（参考 sushitrain）
+
+### 明确不做
+
+- **应用内文档编辑**（Office / Markdown 富编辑）：仅「系统打开」；外部修改后靠 Syncthing 扫描同步
+- 完整 Settings、Versioning 细配置、Override/Revert、Advanced 配置编辑器等（交给原版 GUI / config）
+- frp/ngrok 内置、把家中目录永久挂公网
+
 ### 长期不做（交给原版 GUI / config）
 
 - 完整 Settings（GUI/连接/中继/NAT/主题/语言/使用报告）
@@ -33,11 +43,11 @@
 
 | 目录 | 说明 |
 |---|---|
-| `mydata_flutter/` | **Flutter 跨平台应用** — 桌面 + Android 主力 |
+| `mydata_flutter/` | **Flutter 跨平台应用** — 桌面 + Android 主力；iOS 脚手架已就绪（引擎待编） |
+| `mydata_flutter/ios/SyncthingCore/` | iOS gomobile 引擎说明（参考 sushitrain） |
 | `mydata_flutter/lib/core/backend/` | Dart 后端 API（shelf HTTPS `:8443`，替代 Go backend） |
 | `mydata_flutter/backend/` | Go 后端旧版（已停维，参考用） |
 | `syncthing/` | Syncthing 源码（参考 + 交叉编译用） |
-| `parse_email/` | 独立工具：eml → markdown 转换 |
 | `scripts/start_avd.sh` | Android 模拟器启动脚本 |
 
 ## 开发命令

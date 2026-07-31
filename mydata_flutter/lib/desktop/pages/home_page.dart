@@ -419,37 +419,53 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           Row(
             children: [
               Icon(Icons.sync, color: Theme.of(context).colorScheme.primary),
-              const SizedBox(width: 12),
-              Text('MyData', style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              )),
-              const Spacer(),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'MyData',
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+              ),
               Stack(
+                clipBehavior: Clip.none,
                 children: [
                   IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                     icon: const Icon(Icons.notifications_outlined, size: 20),
                     tooltip: '通知历史',
                     onPressed: () => _showNotificationHistory(context),
                   ),
                   if (_notificationCount > 0)
                     Positioned(
-                      right: 6,
-                      top: 6,
+                      right: 2,
+                      top: 2,
                       child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
+                        padding: const EdgeInsets.all(3),
+                        decoration: const BoxDecoration(
                           color: Colors.red,
                           shape: BoxShape.circle,
                         ),
                         child: Text(
                           '$_notificationCount',
-                          style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
                 ],
               ),
               IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 icon: const Icon(Icons.qr_code_2, size: 20),
                 tooltip: '本机配对二维码',
                 onPressed: () async {
@@ -471,11 +487,17 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
                 },
               ),
               IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 icon: const Icon(Icons.open_in_browser, size: 20),
                 tooltip: '打开 Syncthing 管理页（高级配置）',
                 onPressed: () => openSyncthingGui(context),
               ),
               IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 icon: const Icon(Icons.refresh, size: 20),
                 tooltip: '刷新',
                 onPressed: () {

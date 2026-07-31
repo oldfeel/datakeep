@@ -94,6 +94,7 @@ class _FolderEditFormState extends State<FolderEditForm> {
   final Map<String, FolderAccess> _permissions = {};
   List<Map<String, dynamic>> _devices = [];
   bool _loading = true;
+  bool _dirty = false;
 
   String _folderType = 'sendreceive';
   bool _paused = false;
@@ -103,6 +104,10 @@ class _FolderEditFormState extends State<FolderEditForm> {
   bool _saving = false;
 
   String _normId(String id) => id.replaceAll(RegExp(r'[\s-]'), '').toUpperCase();
+
+  void _markDirty() {
+    if (!_dirty && mounted) setState(() => _dirty = true);
+  }
 
   bool get _showSyncExtras =>
       _devices.isEmpty ||
@@ -188,39 +193,64 @@ class _FolderEditFormState extends State<FolderEditForm> {
     setState(() {
       _permissions.removeWhere((k, _) => _normId(k) == _normId(deviceId));
       _permissions[deviceId] = access;
+      _dirty = true;
     });
   }
 
   Future<void> _save() async {
     if (_saving) return;
     setState(() => _saving = true);
+    String? settingsError;
     try {
       final payload = <String, String>{
         for (final e in _permissions.entries) e.key: e.value.apiValue,
       };
+      debugPrint('[folder-edit] 保存 ACL: ${widget.folder.id} => $payload');
       await ApiService.setFolderAcl(widget.folder.id, payload);
 
       if (_showSyncExtras) {
-        await ApiService.updateFolderSettings(
-          widget.folder.id,
-          type: _folderType,
-          paused: _paused,
-        );
-        final lines = _ignoresController.text
-            .split('\n')
-            .map((e) => e.trimRight())
-            .toList();
-        while (lines.isNotEmpty && lines.last.trim().isEmpty) {
-          lines.removeLast();
+        try {
+          await ApiService.updateFolderSettings(
+            widget.folder.id,
+            type: _folderType,
+            paused: _paused,
+          );
+          final lines = _ignoresController.text
+              .split('\n')
+              .map((e) => e.trimRight())
+              .toList();
+          while (lines.isNotEmpty && lines.last.trim().isEmpty) {
+            lines.removeLast();
+          }
+          await ApiService.setFolderIgnores(widget.folder.id, lines);
+        } catch (e) {
+          settingsError = e.toString();
+          debugPrint('[folder-edit] 同步设置/忽略保存失败: $e');
         }
-        await ApiService.setFolderIgnores(widget.folder.id, lines);
       }
 
-      if (mounted) {
-        Navigator.of(context).pop();
-        widget.onDone();
+      if (!mounted) return;
+      setState(() => _dirty = false);
+      if (settingsError != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('共享权限已保存，但同步设置失败: $settingsError'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('已保存'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
+      Navigator.of(context).pop();
+      widget.onDone();
     } catch (e) {
+      debugPrint('[folder-edit] 保存失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('保存失败: $e'), backgroundColor: Colors.red),
@@ -229,6 +259,35 @@ class _FolderEditFormState extends State<FolderEditForm> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Future<bool> _confirmDiscard() async {
+    if (!_dirty) return true;
+    final r = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('有未保存的修改'),
+        content: const Text('共享权限等修改尚未保存，要放弃吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('继续编辑'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('放弃'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop(false);
+              await _save();
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    return r == true;
   }
 
   Future<void> _scanNow() async {
@@ -341,7 +400,12 @@ class _FolderEditFormState extends State<FolderEditForm> {
             ],
             selected: {_folderType},
             onSelectionChanged: (s) {
-              if (s.isNotEmpty) setState(() => _folderType = s.first);
+              if (s.isNotEmpty) {
+                setState(() {
+                  _folderType = s.first;
+                  _dirty = true;
+                });
+              }
             },
           ),
           const SizedBox(height: 8),
@@ -354,7 +418,10 @@ class _FolderEditFormState extends State<FolderEditForm> {
             title: const Text('暂停同步'),
             subtitle: const Text('暂停后本机文件夹不再与其他设备同步'),
             value: _paused,
-            onChanged: (v) => setState(() => _paused = v),
+            onChanged: (v) => setState(() {
+              _paused = v;
+              _dirty = true;
+            }),
           ),
           Align(
             alignment: Alignment.centerLeft,
@@ -381,6 +448,7 @@ class _FolderEditFormState extends State<FolderEditForm> {
             controller: _ignoresController,
             minLines: 5,
             maxLines: 12,
+            onChanged: (_) => _markDirty(),
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
               hintText: '# 忽略临时文件\n(?d)*.tmp\n(?d)*.bak',
@@ -406,61 +474,125 @@ class _FolderEditFormState extends State<FolderEditForm> {
   @override
   Widget build(BuildContext context) {
     if (widget.asPage) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text('编辑: ${widget.folder.name}'),
-          actions: [
-            TextButton(
-              onPressed: _saving ? null : _save,
-              child: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('保存'),
+      return PopScope(
+        canPop: !_dirty,
+        onPopInvokedWithResult: (didPop, _) async {
+          if (didPop) return;
+          if (await _confirmDiscard() && mounted) {
+            Navigator.of(context).pop();
+          }
+        },
+        child: Scaffold(
+          appBar: AppBar(
+            title: Text(
+              _dirty
+                  ? '编辑: ${widget.folder.name} *'
+                  : '编辑: ${widget.folder.name}',
             ),
-          ],
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: TextButton.icon(
+                  onPressed: _saving ? null : _save,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                  icon: _saving
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Theme.of(context).colorScheme.onPrimary,
+                          ),
+                        )
+                      : const Icon(Icons.check),
+                  label: Text(
+                    '保存',
+                    style: TextStyle(
+                      fontWeight: _dirty ? FontWeight.bold : FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          body: SafeArea(child: _buildBody()),
+          bottomNavigationBar: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              child: FilledButton.icon(
+                onPressed: _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.save_outlined),
+                label: Text(_dirty ? '保存修改' : '保存'),
+              ),
+            ),
+          ),
         ),
-        body: SafeArea(child: _buildBody()),
       );
     }
 
-    return AlertDialog(
-      title: Text('编辑: ${widget.folder.name}'),
-      content: SizedBox(
-        width: 480,
-        height: 460,
-        child: _buildBody(),
+    return PopScope(
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        if (await _confirmDiscard() && mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: AlertDialog(
+        title: Text(
+          _dirty
+              ? '编辑: ${widget.folder.name} *'
+              : '编辑: ${widget.folder.name}',
+        ),
+        content: SizedBox(
+          width: 480,
+          height: 460,
+          child: _buildBody(),
+        ),
+        actionsAlignment: MainAxisAlignment.spaceBetween,
+        actions: [
+          TextButton(
+            onPressed: _confirmDelete,
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('删除文件夹'),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton(
+                onPressed: () async {
+                  if (await _confirmDiscard() && mounted) {
+                    Navigator.of(context).pop();
+                  }
+                },
+                child: const Text('取消'),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: _saving ? null : _save,
+                child: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('保存'),
+              ),
+            ],
+          ),
+        ],
       ),
-      actionsAlignment: MainAxisAlignment.spaceBetween,
-      actions: [
-        TextButton(
-          onPressed: _confirmDelete,
-          style: TextButton.styleFrom(foregroundColor: Colors.red),
-          child: const Text('删除文件夹'),
-        ),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('取消'),
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton(
-              onPressed: _saving ? null : _save,
-              child: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('保存'),
-            ),
-          ],
-        ),
-      ],
     );
   }
 

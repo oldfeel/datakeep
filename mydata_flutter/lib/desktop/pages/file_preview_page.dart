@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../core/models/device.dart';
@@ -6,8 +5,11 @@ import '../../core/models/folder.dart';
 import '../../core/services/api_service.dart';
 import '../../shared/utils/file_types.dart';
 import '../../shared/utils/local_file_path.dart';
+import '../../shared/utils/open_system_file.dart';
+import '../../shared/utils/preview_limits.dart';
 import '../../shared/widgets/audio_preview.dart';
 import '../../shared/widgets/video_preview.dart';
+import '../../features/folders/screens/image_preview_screen.dart';
 import '../widgets/file_icon.dart';
 
 class FilePreviewPage extends StatefulWidget {
@@ -15,6 +17,7 @@ class FilePreviewPage extends StatefulWidget {
   final Folder folder;
   final String filePath;
   final VoidCallback onBack;
+  final List<String>? siblingImagePaths;
 
   const FilePreviewPage({
     super.key,
@@ -22,6 +25,7 @@ class FilePreviewPage extends StatefulWidget {
     required this.folder,
     required this.filePath,
     required this.onBack,
+    this.siblingImagePaths,
   });
 
   @override
@@ -30,11 +34,13 @@ class FilePreviewPage extends StatefulWidget {
 
 class _FilePreviewPageState extends State<FilePreviewPage> {
   String? _tempFilePath;
+  String? _tempDirPath;
   String? _textContent;
   String? _mediaPlayPath;
   bool _isLoading = false;
   bool _mediaLoading = false;
   String? _error;
+  double? _progress;
 
   String get _fileName => widget.filePath.split('/').last;
   bool get _isImage => FileTypes.isImage(widget.filePath);
@@ -43,11 +49,12 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
   bool get _isPdf => FileTypes.isPdf(widget.filePath);
   bool get _isText => FileTypes.isText(widget.filePath);
   bool get _isPlayableMedia => _isVideo || _isAudio;
-  bool get _needsDownloadPreview => FileTypes.needsDownloadPreview(widget.filePath);
+  bool get _needsDownloadPreview =>
+      FileTypes.needsDownloadPreview(widget.filePath) || _isPdf;
 
-  String get _localFilePath => joinLocalFilePath(widget.folder.path, widget.filePath);
+  String get _localFilePath =>
+      joinLocalFilePath(widget.folder.path, widget.filePath);
 
-  /// 本机文件夹且本地文件存在时，可直接读盘（远程/只读对端则走 API）
   bool get _canUseLocalFile =>
       widget.device.isLocal &&
       widget.folder.path.isNotEmpty &&
@@ -68,7 +75,6 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
         if (_isText) {
           _loadLocalText();
         }
-        // 图片：直接用本地路径，无需下载
       } else {
         _loadFile();
       }
@@ -79,28 +85,48 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
   }
 
   Future<void> _loadLocalText() async {
-    setState(() { _isLoading = true; _error = null; });
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
     try {
-      _textContent = await File(_localFilePath).readAsString();
-      if (mounted) setState(() { _isLoading = false; });
+      final size = await File(_localFilePath).length();
+      if (size > kMaxPreviewBytes) throw PreviewTooLargeException(size);
+      var text = await File(_localFilePath).readAsString();
+      if (text.length > 500000) {
+        text = '${text.substring(0, 500000)}\n\n…（已截断）';
+      }
+      _textContent = text;
+      if (mounted) setState(() => _isLoading = false);
     } catch (e) {
-      // 本地读失败则回退 API
       await _loadFile();
     }
   }
 
   Future<void> _loadFile() async {
-    setState(() { _isLoading = true; _error = null; });
+    setState(() {
+      _isLoading = true;
+      _error = null;
+      _progress = null;
+    });
     try {
       await _fetchToTemp(decodeText: _isText);
-      if (mounted) setState(() { _isLoading = false; });
+      if (mounted) setState(() => _isLoading = false);
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
     }
   }
 
   Future<void> _loadMediaForPlayback() async {
-    setState(() { _mediaLoading = true; _error = null; });
+    setState(() {
+      _mediaLoading = true;
+      _error = null;
+    });
     try {
       await _fetchToTemp();
       if (mounted) {
@@ -110,27 +136,36 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _mediaLoading = false; });
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _mediaLoading = false;
+        });
+      }
     }
   }
 
   Future<void> _fetchToTemp({bool decodeText = false}) async {
     if (_tempFilePath != null) return;
-    final response = await ApiService.previewFile(
+    final result = await ApiService.previewFileToTemp(
       widget.folder.id,
       widget.filePath,
       deviceId: widget.device.id,
+      onProgress: (received, total) {
+        if (!mounted) return;
+        setState(() {
+          _progress = total != null && total > 0 ? received / total : null;
+        });
+      },
     );
-    if (response.statusCode != 200) throw Exception('HTTP ${response.statusCode}');
-
-    final bytes = response.bodyBytes;
-    final tempDir = await Directory.systemTemp.createTemp('mydata_');
-    final tempFile = File('${tempDir.path}/$_fileName');
-    await tempFile.writeAsBytes(bytes);
-    _tempFilePath = tempFile.path;
-
+    _tempFilePath = result.path;
+    _tempDirPath = result.tempDirPath;
     if (decodeText) {
-      _textContent = utf8.decode(bytes);
+      var text = await File(result.path).readAsString();
+      if (text.length > 500000) {
+        text = '${text.substring(0, 500000)}\n\n…（已截断）';
+      }
+      _textContent = text;
     }
   }
 
@@ -153,20 +188,11 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
   Future<void> _openInSystemApp() async {
     final path = await _ensureAccessiblePath();
     if (path == null) return;
-    try {
-      if (Platform.isLinux) {
-        await Process.run('xdg-open', [path]);
-      } else if (Platform.isMacOS) {
-        await Process.run('open', [path]);
-      } else if (Platform.isWindows) {
-        await Process.run('start', [path], runInShell: true);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('打开文件失败: $e'), backgroundColor: Colors.red),
-        );
-      }
+    final err = await openSystemFile(path);
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('打开文件失败: $err'), backgroundColor: Colors.red),
+      );
     }
   }
 
@@ -174,7 +200,8 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
     final src = await _ensureAccessiblePath();
     if (src == null) return;
     try {
-      final home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '.';
+      final home =
+          Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '.';
       final downloadDir = Directory('$home/Downloads');
       if (!await downloadDir.exists()) {
         await downloadDir.create(recursive: true);
@@ -183,7 +210,11 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
       await File(src).copy(dest.path);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已下载到: ${dest.path}'), backgroundColor: Colors.green, duration: const Duration(seconds: 4)),
+          SnackBar(
+            content: Text('已下载到: ${dest.path}'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
+          ),
         );
       }
     } catch (e) {
@@ -195,10 +226,33 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
     }
   }
 
+  Future<void> _openFullscreenImage() async {
+    final path = _accessibleFilePath;
+    if (path == null) return;
+    final siblings = widget.siblingImagePaths ?? [path];
+    final idx = siblings.indexOf(widget.filePath);
+    await showDesktopImageFullscreen(
+      context,
+      filePath: path,
+      siblingPaths: siblings.map((p) {
+        if (p.startsWith('/') || (p.length > 2 && p[1] == ':')) return p;
+        final local = joinLocalFilePath(widget.folder.path, p);
+        return File(local).existsSync() ? local : p;
+      }).toList(),
+      initialIndex: idx >= 0 ? idx : 0,
+    );
+  }
+
   @override
   void dispose() {
-    if (_tempFilePath != null) {
-      try { Directory(_tempFilePath!).parent.deleteSync(recursive: true); } catch (_) {}
+    if (_tempDirPath != null) {
+      try {
+        Directory(_tempDirPath!).deleteSync(recursive: true);
+      } catch (_) {}
+    } else if (_tempFilePath != null) {
+      try {
+        Directory(_tempFilePath!).parent.deleteSync(recursive: true);
+      } catch (_) {}
     }
     super.dispose();
   }
@@ -221,20 +275,51 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
   Widget _buildHeader(BuildContext context) {
     return Row(
       children: [
-        IconButton(icon: const Icon(Icons.arrow_back), onPressed: widget.onBack, tooltip: '返回'),
+        IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: widget.onBack,
+          tooltip: '返回',
+        ),
         const SizedBox(width: 12),
-        Icon(getFileIcon(widget.filePath), color: getFileIconColor(widget.filePath)),
+        Icon(
+          getFileIcon(widget.filePath),
+          color: getFileIconColor(widget.filePath),
+        ),
         const SizedBox(width: 12),
-        Expanded(child: Text(_fileName, style: Theme.of(context).textTheme.titleMedium?.copyWith(
-          fontWeight: FontWeight.w600,
-        ), overflow: TextOverflow.ellipsis)),
+        Expanded(
+          child: Text(
+            _fileName,
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.w600),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
         const SizedBox(width: 8),
-        Text(_fileTypeLabel(), style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        )),
+        Text(
+          _fileTypeLabel(),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
         const Spacer(),
-        IconButton(icon: const Icon(Icons.open_in_new), tooltip: '系统打开', onPressed: _openInSystemApp),
-        IconButton(icon: const Icon(Icons.download), tooltip: '下载到 Downloads', onPressed: _downloadFile),
+        if (_isImage && _accessibleFilePath != null)
+          IconButton(
+            icon: const Icon(Icons.fullscreen),
+            tooltip: '全屏',
+            onPressed: _openFullscreenImage,
+          ),
+        IconButton(
+          icon: const Icon(Icons.open_in_new),
+          tooltip: '系统打开',
+          onPressed: _openInSystemApp,
+        ),
+        IconButton(
+          icon: const Icon(Icons.download),
+          tooltip: '下载到 Downloads',
+          onPressed: _downloadFile,
+        ),
       ],
     );
   }
@@ -255,15 +340,43 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
       return _buildExternalOnlyPreview(context);
     }
 
-    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    if (_isLoading) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            if (_progress != null) ...[
+              const SizedBox(height: 16),
+              SizedBox(
+                width: 200,
+                child: LinearProgressIndicator(value: _progress),
+              ),
+              const SizedBox(height: 8),
+              Text('${(_progress! * 100).toStringAsFixed(0)}%'),
+            ],
+          ],
+        ),
+      );
+    }
     if (_error != null) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.error_outline, size: 64, color: Theme.of(context).colorScheme.error),
+            Icon(Icons.error_outline,
+                size: 64, color: Theme.of(context).colorScheme.error),
             const SizedBox(height: 16),
-            Text(_error!, style: Theme.of(context).textTheme.titleMedium),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(_error!, textAlign: TextAlign.center),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _openInSystemApp,
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('系统打开'),
+            ),
           ],
         ),
       );
@@ -272,9 +385,19 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
     if (_isImage) {
       final path = _accessibleFilePath;
       if (path != null) {
-        return InteractiveViewer(
-          child: Center(child: Image.file(File(path), fit: BoxFit.contain)),
+        return GestureDetector(
+          onDoubleTap: _openFullscreenImage,
+          child: InteractiveViewer(
+            child: Center(child: Image.file(File(path), fit: BoxFit.contain)),
+          ),
         );
+      }
+    }
+
+    if (_isPdf) {
+      final path = _accessibleFilePath;
+      if (path != null) {
+        return _buildExternalOnlyPreview(context);
       }
     }
 
@@ -284,7 +407,10 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
           width: double.infinity,
           padding: const EdgeInsets.all(16),
           child: SingleChildScrollView(
-            child: SelectableText(_textContent!, style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
+            child: SelectableText(
+              _textContent!,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            ),
           ),
         ),
       );
@@ -309,7 +435,21 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
     }
 
     if (_mediaLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            if (_progress != null) ...[
+              const SizedBox(height: 16),
+              SizedBox(
+                width: 200,
+                child: LinearProgressIndicator(value: _progress),
+              ),
+            ],
+          ],
+        ),
+      );
     }
 
     final icon = _isVideo ? Icons.videocam : Icons.audiotrack;
@@ -319,19 +459,22 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 80, color: Theme.of(context).colorScheme.primary.withOpacity(0.5)),
+          Icon(icon,
+              size: 80,
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.5)),
           const SizedBox(height: 24),
           Text(label, style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
           Text(
             '文件可能尚未同步完成，可尝试下载后播放',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            Text(_error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ],
           const SizedBox(height: 24),
           ElevatedButton.icon(
@@ -350,23 +493,27 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
     );
   }
 
-  /// PDF / dump 等：占位提示 + 操作按钮
   Widget _buildExternalOnlyPreview(BuildContext context) {
     final icon = _isPdf ? Icons.picture_as_pdf : Icons.help_outline;
     final label = _isPdf ? 'PDF 文档' : '不支持预览此类型的文件';
-    final hint = _isPdf ? '点击"系统打开"按钮查看' : '请使用下载或系统打开';
+    final hint = _isPdf ? '点击「系统打开」或下载后查看' : '请使用下载或系统打开';
 
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 80, color: Theme.of(context).colorScheme.primary.withOpacity(0.5)),
+          Icon(icon,
+              size: 80,
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.5)),
           const SizedBox(height: 24),
           Text(label, style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
-          Text(hint, style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          )),
+          Text(
+            hint,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+          ),
           const SizedBox(height: 24),
           ElevatedButton.icon(
             onPressed: _openInSystemApp,

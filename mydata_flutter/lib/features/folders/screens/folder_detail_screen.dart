@@ -1,13 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/android_storage_service.dart';
 import '../../../core/models/folder.dart';
 import '../../../shared/utils/file_types.dart';
-import '../../../shared/utils/local_file_path.dart';
-import '../../../shared/utils/media_file_opener.dart';
-import 'image_preview_screen.dart';
+import '../../../shared/utils/file_opener.dart';
+import '../../../shared/widgets/share_to_cloud_sheet.dart';
 
 class FolderDetailScreen extends StatefulWidget {
   final String deviceId;
@@ -143,170 +141,32 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     _loadFiles();
   }
 
-  Future<void> _openMediaPreview(String filePath) async {
-    await openMediaPreview(
+  Future<void> _previewFile(String filePath) async {
+    final images = _files
+        .where((f) {
+          final t = f['type']?.toString();
+          final isDir = t == 'dir' || f['isDir'] == true;
+          if (isDir) return false;
+          final name = f['name']?.toString() ?? '';
+          final path = _currentPath.isEmpty ? name : '${_currentPath.join('/')}/$name';
+          return FileTypes.isImage(path);
+        })
+        .map((f) {
+          final name = f['name']?.toString() ?? '';
+          return _currentPath.isEmpty ? name : '${_currentPath.join('/')}/$name';
+        })
+        .toList();
+
+    await openFilePreview(
       context,
       folderId: widget.folderId,
       folderPath: _folderInfo?.path ?? '',
       filePath: filePath,
       deviceId: widget.deviceId,
+      siblingImagePaths: images,
     );
   }
 
-  Future<void> _openImagePreview(String filePath) async {
-    final fileName = filePath.split('/').last;
-    final folderPath = _folderInfo?.path ?? '';
-
-    if (folderPath.isNotEmpty) {
-      final localPath = joinLocalFilePath(folderPath, filePath);
-      if (await File(localPath).exists()) {
-        if (!mounted) return;
-        await Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => ImagePreviewScreen(
-              title: fileName,
-              filePath: localPath,
-            ),
-          ),
-        );
-        return;
-      }
-    }
-
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-
-    try {
-      final response = await ApiService.previewFile(
-        widget.folderId,
-        filePath,
-        deviceId: widget.deviceId,
-      );
-      if (!mounted) return;
-      Navigator.of(context).pop(); // 关闭 loading
-
-      if (response.statusCode != 200) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
-
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ImagePreviewScreen(
-            title: fileName,
-            bytes: response.bodyBytes,
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.of(context).pop(); // 关闭 loading
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('图片加载失败: $e'), backgroundColor: Colors.red),
-      );
-    }
-  }
-
-  void _previewFile(String filePath) async {
-    if (FileTypes.isVideo(filePath) || FileTypes.isAudio(filePath)) {
-      await _openMediaPreview(filePath);
-      return;
-    }
-
-    if (FileTypes.isImage(filePath)) {
-      await _openImagePreview(filePath);
-      return;
-    }
-
-    try {
-      final response = await ApiService.previewFile(
-        widget.folderId,
-        filePath,
-        deviceId: widget.deviceId,
-      );
-
-      if (!mounted) return;
-
-      if (response.statusCode == 200) {
-        final contentType = response.headers['content-type'] ?? 'text/plain';
-        
-        if (contentType.startsWith('image/')) {
-          final fileName = filePath.split('/').last;
-          await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => ImagePreviewScreen(
-                title: fileName,
-                bytes: response.bodyBytes,
-              ),
-            ),
-          );
-        } else if (contentType.startsWith('text/') ||
-            contentType.contains('json') ||
-            contentType.contains('xml') ||
-            contentType.contains('javascript')) {
-          // 文本预览
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: Text(filePath.split('/').last),
-              content: SizedBox(
-                width: MediaQuery.of(context).size.width * 0.8,
-                height: MediaQuery.of(context).size.height * 0.6,
-                child: SingleChildScrollView(
-                  child: Text(
-                    response.body,
-                    style: const TextStyle(fontFamily: 'monospace'),
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('关闭'),
-                ),
-              ],
-            ),
-          );
-        } else {
-          // 其他文件类型，显示信息
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('文件预览'),
-              content: Text('文件类型: $contentType\n文件大小: ${_formatFileSize(response.bodyBytes.length)}'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('关闭'),
-                ),
-              ],
-            ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('预览失败: ${response.statusCode}'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('预览失败: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
 
   Future<void> _fixFolderPath() async {
     if (_fixingPath) return;
@@ -702,14 +562,33 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       ),
       trailing: isDir
           ? const Icon(Icons.chevron_right)
-          : IconButton(
-              icon: const Icon(Icons.preview),
-              onPressed: () {
-                final path = _currentPath.isEmpty
-                    ? name
-                    : '${_currentPath.join('/')}/$name';
-                _previewFile(path);
-              },
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.share_outlined),
+                  tooltip: '分享到互联网',
+                  onPressed: () {
+                    final path = _currentPath.isEmpty
+                        ? name
+                        : '${_currentPath.join('/')}/$name';
+                    showShareToCloudSheet(
+                      context,
+                      folderPath: _folderInfo?.path ?? '',
+                      relativePath: path,
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.preview),
+                  onPressed: () {
+                    final path = _currentPath.isEmpty
+                        ? name
+                        : '${_currentPath.join('/')}/$name';
+                    _previewFile(path);
+                  },
+                ),
+              ],
             ),
       onTap: () {
         if (isDir) {
