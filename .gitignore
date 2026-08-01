@@ -1,5 +1,8 @@
 example
 
+# macOS
+.DS_Store
+
 # 日志
 logs
 
