@@ -53,11 +53,9 @@ class FolderProvider with ChangeNotifier {
   }
 
   bool _needsStartupRetry(List<Folder> folders) {
-    // 仅本机：启动中空列表或统计未就绪时重试
-    // 远程空列表可能是真实空，由对端 API 决定，不再盲重试
-    if (_loadedDeviceId == null) return folders.isEmpty;
-    // 粗略：远程错误会走 catch；此处只对「全 unknown」重试（本机 Syncthing 未就绪）
-    if (folders.isEmpty) return true;
+    // 空列表是合法状态（尚未添加文件夹），不要当成 Syncthing 未就绪
+    if (folders.isEmpty) return false;
+    // 有文件夹但统计全是 unknown：启动中，稍后重试
     return folders.every((f) => f.status == 'unknown');
   }
 
@@ -75,7 +73,7 @@ class FolderProvider with ChangeNotifier {
     _retryTimer?.cancel();
     final delaySec = (_retryCount < 3) ? 2 : 3;
     _retryCount++;
-    debugPrint('[folders] Syncthing 未就绪，${delaySec}s 后重试 ($_retryCount/$_maxRetries)');
+    debugPrint('[folders] 等待文件夹统计就绪，${delaySec}s 后重试 ($_retryCount/$_maxRetries)');
     _retryTimer = Timer(Duration(seconds: delaySec), () {
       if (_loadedDeviceId == deviceId || _loadedDeviceId == null) {
         fetchDeviceFolders(deviceId, silent: true);

@@ -24,7 +24,7 @@
 5. ~~本机设备 ID 二维码展示~~ — 本机设备信息 / 侧栏 / 抽屉
 6. ~~多媒体预览打磨~~ — 流式预览、PDF/系统打开、邻图滑动、统一分发
 7. ~~对外分享（无公网 IP）~~ — S3 兼容上传 + 预签名链接（成本优先七牛）
-8. iOS Syncthing 进程内引擎 — 脚手架已就绪，gomobile xcframework 待 Mac 环境编入（参考 sushitrain）
+8. iOS Syncthing 进程内引擎 — Go 薄封装 + `make -C ios/SyncthingCore` 产出 xcframework；`./start_ios.sh` 一键构建并运行（参考 sushitrain）
 
 ### 明确不做
 

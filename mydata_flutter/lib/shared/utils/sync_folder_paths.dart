@@ -12,7 +12,8 @@ Future<String> defaultSyncFolderPath(String folderId) async {
     return media;
   }
   if (Platform.isIOS) {
-    final dir = await getApplicationSupportDirectory();
+    // Documents/sync/<id>：Files App 可见，与 SyncthingCore filesPath 一致
+    final dir = await getApplicationDocumentsDirectory();
     return '${dir.path}/sync/$folderId';
   }
   final dir = await getApplicationSupportDirectory();

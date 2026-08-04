@@ -38,18 +38,19 @@ Future<void> _startPlatformServices() async {
   }
 }
 
-/// iOS：启 shelf 后端；Syncthing 进程内引擎待 gomobile xcframework（见 ios/SyncthingCore）
+/// iOS：gomobile 进程内 Syncthing + 进程内 shelf（见 ios/SyncthingCore）
 Future<void> _startIosServices() async {
   debugPrint('[startup] iOS 启动流程开始');
 
   String? configPath;
   var deviceName = '';
-  for (var i = 0; i < 5; i++) {
+  for (var i = 0; i < 10; i++) {
     final boot = await NativeService.getSyncthingBootstrap();
     configPath = boot.path;
     if (boot.deviceName != null && deviceName.isEmpty) {
       deviceName = boot.deviceName!;
     }
+    debugPrint('[startup] iOS bootstrap 尝试 ${i + 1}/10 => path=$configPath');
     if (configPath != null) break;
     await Future.delayed(const Duration(milliseconds: 500));
   }
@@ -59,11 +60,23 @@ Future<void> _startIosServices() async {
     defaultLocalDeviceName: deviceName,
   );
 
-  try {
-    final started = await NativeService.startSyncthingService();
-    debugPrint('[startup] iOS startSyncthingService => $started');
-  } catch (e) {
-    debugPrint('[startup] iOS Syncthing 尚未实现引擎: $e');
+  if (!await SyncthingApi().isRunning()) {
+    try {
+      final started = await NativeService.startSyncthingService();
+      debugPrint('[startup] iOS startSyncthingService => $started');
+    } catch (e, st) {
+      debugPrint('[startup] iOS startSyncthingService 失败: $e');
+      debugPrint('$st');
+    }
+  } else {
+    debugPrint('[startup] iOS Syncthing 已在运行，跳过 start');
+  }
+
+  if (deviceName.isEmpty) {
+    deviceName = await NativeService.getDefaultDeviceName() ?? '';
+  }
+  if (deviceName.isEmpty && configPath != null) {
+    deviceName = NativeService.readLocalDeviceNameFromConfig(configPath) ?? '';
   }
 
   try {
@@ -76,6 +89,23 @@ Future<void> _startIosServices() async {
   } catch (e, st) {
     debugPrint('[startup] Backend 启动失败: $e');
     debugPrint('$st');
+    return;
+  }
+
+  if (deviceName.isNotEmpty) {
+    try {
+      for (var i = 0; i < 20; i++) {
+        if (await SyncthingApi().isRunning()) {
+          debugPrint('[startup] iOS Syncthing API 就绪 (${i + 1}/20)');
+          break;
+        }
+        await Future.delayed(const Duration(seconds: 1));
+      }
+      await SyncthingApi().ensureLocalDeviceName(deviceName);
+    } catch (e, st) {
+      debugPrint('[startup] iOS 写入本机设备名失败: $e');
+      debugPrint('$st');
+    }
   }
 }
 

@@ -72,8 +72,8 @@ dependencies:
   # JSON 处理
   json_annotation: ^4.8.1
   
-  # 二维码扫描（Android/iOS）
-  mobile_scanner: ^5.2.3
+  # 二维码扫描（Android/iOS）；7.x 起 iOS 用 Vision，支持 Apple Silicon 模拟器 arm64
+  mobile_scanner: ^7.0.0
   # 本机设备 ID 二维码展示
   qr_flutter: ^4.1.0
 
