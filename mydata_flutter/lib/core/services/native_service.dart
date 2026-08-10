@@ -151,6 +151,7 @@ class NativeService {
   // ========== 桌面端实现 ==========
 
   /// 桌面端：启动 Syncthing
+  /// 桌面：启动系统 syncthing 二进制（移动端为 gomobile 进程内，见 syncthing_core）
   static Future<bool> _startSyncthingDesktop() async {
     try {
       // 以 8384 API 为准判断是否在运行（不用 pgrep -f，会误匹配含 syncthing 字样的 shell 命令）

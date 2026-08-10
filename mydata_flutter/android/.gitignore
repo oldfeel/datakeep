@@ -13,4 +13,7 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
-app/libs
+
+# gomobile 产物（本地 make -C syncthing_core android）
+app/libs/*.aar
+app/libs/*-sources.jar

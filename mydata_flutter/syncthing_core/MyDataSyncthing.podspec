@@ -1,7 +1,7 @@
 Pod::Spec.new do |s|
   s.name             = 'MyDataSyncthing'
   s.version          = '0.1.0'
-  s.summary          = 'In-process Syncthing engine for MyData iOS (gomobile)'
+  s.summary          = 'In-process Syncthing engine for MyData (gomobile, shared with Android)'
   s.homepage         = 'https://gitee.com/yuncommunity/mydata'
   s.license          = { :type => 'MPL-2.0' }
   s.author           = { 'MyData' => 'dev@local' }

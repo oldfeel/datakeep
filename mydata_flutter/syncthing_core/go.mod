@@ -71,7 +71,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/syncthing/syncthing => ../../../syncthing
+replace github.com/syncthing/syncthing => ../../syncthing
 
 tool (
 	golang.org/x/mobile/cmd/gobind

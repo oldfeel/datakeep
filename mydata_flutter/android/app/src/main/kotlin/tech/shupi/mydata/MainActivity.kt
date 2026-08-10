@@ -11,6 +11,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import tech.shupi.mydata.service.ConfigHelper
 import tech.shupi.mydata.service.Constants
+import tech.shupi.mydata.service.SyncthingEngine
 import tech.shupi.mydata.service.SyncthingService
 import tech.shupi.mydata.util.PermissionUtil
 import tech.shupi.mydata.util.StoragePathUtils
@@ -89,7 +90,9 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                 }
                 "getServiceStatus" -> {
-                    result.success("running")
+                    result.success(
+                        if (SyncthingEngine.isRunning()) "running" else "stopped",
+                    )
                 }
                 "getSyncthingConfigPath" -> {
                     // 不在 Syncthing 运行时写 config，避免热重启导致 native 崩溃

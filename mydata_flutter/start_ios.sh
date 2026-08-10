@@ -30,8 +30,8 @@ if [[ -n "${https_proxy:-}${http_proxy:-}" ]]; then
 fi
 export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
 
-echo -e "${GREEN}1/2 构建 SyncthingCore xcframework${NC}"
-make -C ios/SyncthingCore build
+echo -e "${GREEN}1/2 构建 syncthing_core xcframework${NC}"
+make -C syncthing_core ios
 
 echo -e "${GREEN}2/2 flutter pub get + 运行 iOS${NC}"
 flutter pub get

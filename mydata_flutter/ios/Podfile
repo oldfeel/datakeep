@@ -26,18 +26,18 @@ require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelpe
 
 flutter_ios_podfile_setup
 
-# 进程内 Syncthing（gomobile xcframework）；缺失时先 make
-syncthing_core = File.expand_path('SyncthingCore', __dir__)
+# 进程内 Syncthing（gomobile xcframework，与 Android 共用 syncthing_core）
+syncthing_core = File.expand_path('../syncthing_core', __dir__)
 xcframework = File.join(syncthing_core, 'build', 'MyDataSyncthing.xcframework')
 unless File.directory?(xcframework)
   puts '→ 构建 MyDataSyncthing.xcframework …'
-  system('make', '-C', syncthing_core, 'build') || raise('SyncthingCore 构建失败，请检查 Go / Xcode / 网络代理')
+  system('make', '-C', syncthing_core, 'ios') || raise('syncthing_core 构建失败，请检查 Go / Xcode / 网络代理')
 end
 
 target 'Runner' do
   use_frameworks!
 
-  pod 'MyDataSyncthing', :path => 'SyncthingCore'
+  pod 'MyDataSyncthing', :path => '../syncthing_core'
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths

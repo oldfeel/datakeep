@@ -9,8 +9,11 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * 运行 syncthing 原生二进制文件，并将其输出打印到 logcat
+ * 【已弃用】旧版通过 exec `libsyncthing.so` 子进程运行 Syncthing。
+ * 现改为 gomobile 进程内引擎，见 [SyncthingEngine] / [SyncthingService]。
+ * 保留本文件仅供对照；请勿再调用。
  */
+@Deprecated("使用 SyncthingEngine（gomobile AAR）")
 class SyncthingRunnable(private val context: Context, private val command: Command) : Runnable {
     
     companion object {

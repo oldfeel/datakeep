@@ -10,13 +10,17 @@ import android.content.Intent
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import tech.shupi.mydata.MainActivity
 import tech.shupi.mydata.R
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 
-/** 前台服务，运行 Syncthing 原生库 */
+/**
+ * 前台服务：在进程内运行 gomobile Syncthing（不再 exec libsyncthing.so）。
+ */
 class SyncthingService : Service() {
 
     companion object {
@@ -33,9 +37,11 @@ class SyncthingService : Service() {
     enum class State { INIT, STARTING, ACTIVE, STOPPING, STOPPED, ERROR }
 
     private var currentState = State.INIT
-    private val syncthingRunnable = AtomicReference<SyncthingRunnable>()
-    private var syncthingThread: Thread? = null
     private val binder = SyncthingServiceBinder()
+    private val executor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "SyncthingEngine").apply { isDaemon = true }
+    }
+    private val wakeLockRef = AtomicReference<PowerManager.WakeLock?>()
 
     inner class SyncthingServiceBinder : Binder() {
         fun getService(): SyncthingService = this@SyncthingService
@@ -58,71 +64,72 @@ class SyncthingService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
-        stopSyncthingProcessOnly(force = true)
+        stopEngineOnly()
+        executor.shutdownNow()
         super.onDestroy()
     }
 
     private fun startSyncthing() {
-        if (syncthingThread?.isAlive == true && currentState == State.ACTIVE) {
-            Log.i(TAG, "Syncthing 线程已在运行，跳过")
+        if (currentState == State.ACTIVE && SyncthingEngine.isRunning()) {
+            Log.i(TAG, "Syncthing 已在运行，跳过")
             return
         }
 
-        Log.i(TAG, "启动 Syncthing")
-        stopSyncthingProcessOnly(force = true)
-        SyncthingRunnable.killOrphanProcesses()
-
+        Log.i(TAG, "启动 Syncthing（gomobile 进程内）")
         currentState = State.STARTING
         startForeground(NOTIFICATION_ID, createNotification("正在启动 Syncthing..."))
 
-        try {
-            ConfigHelper.ensureConfigExists(this)
-            ConfigHelper.ensureLocalDeviceName(this)
-            ConfigHelper.ensureAndroidFoldersReady(this)
-            val runnable = SyncthingRunnable(this, SyncthingRunnable.Command.MAIN)
-            syncthingRunnable.set(runnable)
-            syncthingThread = Thread(runnable, "SyncthingThread").apply { start() }
-            currentState = State.ACTIVE
-            updateNotification("Syncthing 正在运行")
-        } catch (e: Exception) {
-            Log.e(TAG, "启动 Syncthing 失败", e)
-            currentState = State.ERROR
-            updateNotification("Syncthing 启动失败")
+        executor.execute {
+            try {
+                ConfigHelper.ensureConfigExists(this)
+                ConfigHelper.ensureLocalDeviceName(this)
+                ConfigHelper.ensureAndroidFoldersReady(this)
+                acquireWakeLock()
+                SyncthingEngine.start(this)
+                currentState = State.ACTIVE
+                updateNotification("Syncthing 正在运行")
+            } catch (e: Exception) {
+                Log.e(TAG, "启动 Syncthing 失败", e)
+                currentState = State.ERROR
+                releaseWakeLock()
+                updateNotification("Syncthing 启动失败: ${e.message ?: ""}")
+            }
         }
     }
 
-    /** 仅停止 Syncthing 进程，不销毁 Service（用于 restart） */
-    private fun stopSyncthingProcessOnly(force: Boolean = false) {
-        if (!force && (currentState == State.STOPPED || currentState == State.INIT)) return
+    private fun stopEngineOnly() {
         currentState = State.STOPPING
         try {
-            syncthingRunnable.get()?.killSyncthing()
-            syncthingThread?.join(8000)
+            SyncthingEngine.stop()
         } catch (e: Exception) {
-            Log.e(TAG, "停止 Syncthing 进程失败", e)
+            Log.e(TAG, "停止 Syncthing 失败", e)
         } finally {
-            syncthingRunnable.set(null)
-            syncthingThread = null
+            releaseWakeLock()
             currentState = State.STOPPED
-            SyncthingRunnable.killOrphanProcesses()
         }
     }
 
     private fun restartSyncthing() {
-        stopSyncthingProcessOnly(force = true)
-        android.os.Handler(mainLooper).postDelayed({
-            SyncthingRunnable.killOrphanProcesses()
-            startSyncthing()
-        }, 3000)
+        executor.execute {
+            stopEngineOnly()
+            try {
+                Thread.sleep(500)
+            } catch (_: InterruptedException) {
+            }
+            // 回到主线程发 START，走统一路径
+            android.os.Handler(mainLooper).post { startSyncthing() }
+        }
     }
 
     private fun stopSyncthing() {
-        stopSyncthingProcessOnly(force = true)
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        executor.execute {
+            stopEngineOnly()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
-    fun isRunning(): Boolean = currentState == State.ACTIVE
+    fun isRunning(): Boolean = currentState == State.ACTIVE && SyncthingEngine.isRunning()
 
     fun getSyncthingInfo(): String = when (currentState) {
         State.ACTIVE -> "running"
@@ -130,6 +137,29 @@ class SyncthingService : Service() {
         State.STOPPING -> "stopping"
         State.ERROR -> "error"
         else -> "stopped"
+    }
+
+    private fun acquireWakeLock() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyData:SyncthingEngine")
+            wl.acquire()
+            wakeLockRef.getAndSet(wl)?.let { old ->
+                if (old.isHeld) old.release()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "wakeLock 失败", e)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            wakeLockRef.getAndSet(null)?.let { wl ->
+                if (wl.isHeld) wl.release()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "release wakeLock 失败", e)
+        }
     }
 
     private fun createNotificationChannel() {

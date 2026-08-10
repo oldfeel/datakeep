@@ -24,7 +24,7 @@
 5. ~~本机设备 ID 二维码展示~~ — 本机设备信息 / 侧栏 / 抽屉
 6. ~~多媒体预览打磨~~ — 流式预览、PDF/系统打开、邻图滑动、统一分发
 7. ~~对外分享（无公网 IP）~~ — S3 兼容上传 + 预签名链接（成本优先七牛）
-8. iOS Syncthing 进程内引擎 — Go 薄封装 + `make -C ios/SyncthingCore` 产出 xcframework；`./start_ios.sh` 一键构建并运行（参考 sushitrain）
+8. ~~移动端 Syncthing 进程内引擎~~ — 共用 `syncthing_core`（gomobile：iOS xcframework + Android AAR）；桌面仍用系统 syncthing
 
 ### 明确不做
 
@@ -43,30 +43,30 @@
 
 | 目录 | 说明 |
 |---|---|
-| `mydata_flutter/` | **Flutter 跨平台应用** — 桌面 + Android 主力；iOS 脚手架已就绪（引擎待编） |
-| `mydata_flutter/ios/SyncthingCore/` | iOS gomobile 引擎说明（参考 sushitrain） |
+| `mydata_flutter/` | **Flutter 跨平台应用** — 桌面 + Android 主力；iOS 可用 |
+| `mydata_flutter/syncthing_core/` | **共用** gomobile Syncthing 引擎（iOS + Android） |
 | `mydata_flutter/lib/core/backend/` | Dart 后端 API（shelf HTTPS `:8443`，替代 Go backend） |
 | `mydata_flutter/backend/` | Go 后端旧版（已停维，参考用） |
-| `syncthing/` | Syncthing 源码（参考 + 交叉编译用） |
+| `syncthing/` | Syncthing 源码（供 syncthing_core replace） |
 | `scripts/start_avd.sh` | Android 模拟器启动脚本 |
 
 ## 开发命令
 
 ```bash
-# Flutter 桌面调试（backend 由 Flutter 进程内启动，无需 air）
+# Flutter 桌面调试（backend 由 Flutter 进程内启动；Syncthing 用系统二进制）
 cd mydata_flutter && flutter run -d linux
 
-# Flutter Android 调试
-cd mydata_flutter && flutter run -d android
+# Android：先 gomobile AAR，再跑（或 ./start_android.sh）
+cd mydata_flutter && make -C syncthing_core android && flutter run -d android
+
+# iOS（需 Mac）
+cd mydata_flutter && ./start_ios.sh
 
 # Flutter 依赖安装
 cd mydata_flutter && flutter pub get
 
-# Syncthing 编译（必须指定版本，否则 git describe 会取错 hash）
+# Syncthing 源码树（desktop 或其它工具若需独立二进制）
 cd syncthing && /snap/go/current/bin/go run build.go -version v2.1.0
-
-# Android Syncthing 原生库交叉编译（写入 jniLibs）
-cd mydata_flutter && ./start_android.sh
 
 # Android 模拟器
 scripts/start_avd.sh <AVD名称>
@@ -91,8 +91,8 @@ scripts/start_avd.sh <AVD名称>
 
 ## 注意点
 
-- **后端已改为纯 Dart**（shelf），不再需要 Go 编译工具链和 air
+- **后端已改为纯 Dart**（shelf），不再需要 Go 编译工具链和 air（移动端 Syncthing 引擎仍需 Go + gomobile）
 - **Syncthing 编译坑**：`syncthing/` 不是独立 git 仓库，`go run build.go` 会取 mydata 的 git hash 作为版本号导致启动失败。必须传 `-version v2.1.0`
-- Android 原生库由 `mydata_flutter/start_android.sh` 交叉编译（版本如 `v1.28.1-mydata`）
+- 移动端引擎：`make -C mydata_flutter/syncthing_core android|ios`（共用 Go；勿再依赖 jniLibs `libsyncthing.so`）
 - `parse_email/` 独立于主项目，读取 `mail.eml` → 输出 `chat.md`
 - **Go snap 权限问题**：系统 `go` 命令来自 snap 且权限受限，使用 `/snap/go/current/bin/go` 直接调用二进制

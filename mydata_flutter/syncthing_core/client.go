@@ -1,11 +1,13 @@
 // Package mdst 提供 gomobile 可用的 Syncthing 进程内薄封装。
 // 架构对齐 sushitrain（进程内节点 + 简单类型 API），实现自写，不复制其源码。
+// 同一套代码供 iOS（xcframework）与 Android（AAR）使用；桌面暂用外置 syncthing。
 package mdst
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 
 	"github.com/syncthing/syncthing/lib/build"
@@ -19,28 +21,28 @@ import (
 	"github.com/thejerf/suture/v4"
 )
 
-// Client 是 iOS/macOS 侧持有的进程内 Syncthing 节点。
+// Client 是移动端持有的进程内 Syncthing 节点。
 type Client struct {
 	homePath  string
 	filesPath string
 	deviceName string
 
-	mu     sync.Mutex
-	app    *syncthing.App
-	cancel context.CancelFunc
-	cfg    config.Wrapper
+	mu      sync.Mutex
+	app     *syncthing.App
+	cancel  context.CancelFunc
+	cfg     config.Wrapper
 	running bool
 	lastErr string
 	deviceID string
 }
 
 // NewClient 创建客户端。
-// homePath: Application Support/syncthing（config/db/cert）
-// filesPath: Documents（默认同步根，Files App 可见）
+// homePath: 配置/证书/数据库目录（Android filesDir；iOS Application Support/syncthing）
+// filesPath: 默认同步数据根（可为 ""）
 func NewClient(homePath, filesPath string) *Client {
 	build.Version = "v1.28.1-mydata"
 	build.User = "mydata"
-	build.Host = "ios"
+	build.Host = "mydata-" + runtime.GOOS
 
 	return &Client{
 		homePath:  homePath,

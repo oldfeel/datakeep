@@ -37,12 +37,6 @@ android {
             useLegacyPackaging = true
         }
     }
-
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDirs("src/main/jniLibs")
-        }
-    }
 }
 
 flutter {
@@ -51,4 +45,21 @@ flutter {
 
 dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
+    // gomobile：make -C syncthing_core android
+    implementation(files("libs/syncthingcore.aar"))
 }
+
+tasks.register("checkSyncthingAar") {
+    doLast {
+        val aar = file("libs/syncthingcore.aar")
+        if (!aar.exists()) {
+            throw GradleException(
+                "缺少 syncthingcore.aar。请先执行:\n" +
+                    "  make -C mydata_flutter/syncthing_core android\n" +
+                    "（需 Go + Android NDK）"
+            )
+        }
+    }
+}
+
+tasks.named("preBuild").configure { dependsOn("checkSyncthingAar") }
