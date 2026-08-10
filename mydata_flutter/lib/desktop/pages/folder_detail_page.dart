@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/models/device.dart';
 import '../../core/models/folder.dart';
 import '../../core/services/api_service.dart';
+import '../../features/folders/providers/folder_provider.dart';
+import '../../shared/utils/app_dir.dart';
+import '../../shared/widgets/add_item_dialog.dart';
 import '../../shared/widgets/share_to_cloud_sheet.dart';
 import '../widgets/file_icon.dart';
 
@@ -138,6 +143,54 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
   String _relativePath(String name) =>
       _currentPath.isEmpty ? name : '${_currentPath.join('/')}/$name';
 
+  /// 当前浏览目录的本机绝对路径
+  String get _absoluteCurrentPath {
+    final root = widget.folder.path;
+    if (_currentPath.isEmpty) return root;
+    return p.join(root, p.joinAll(_currentPath));
+  }
+
+  bool get _canAddHere =>
+      widget.device.isLocal &&
+      widget.folder.path.isNotEmpty &&
+      !widget.folder.isReadonlyAccess;
+
+  /// 子目录是否为应用（已注册 kind=app 或含 app.json）
+  bool _entryIsApp(String name) {
+    if (!widget.device.isLocal) return false;
+    final abs = p.join(_absoluteCurrentPath, name);
+    final registered = findRegisteredApp(
+      context.read<FolderProvider>().folders,
+      abs,
+    );
+    if (registered != null) return true;
+    return isAppDirectory(abs);
+  }
+
+  void _openEntryApp(String name) {
+    final abs = p.join(_absoluteCurrentPath, name);
+    final registered = findRegisteredApp(
+      context.read<FolderProvider>().folders,
+      abs,
+    );
+    openAppAtPath(
+      context,
+      absolutePath: abs,
+      title: registered?.name ?? name,
+      folder: registered,
+    );
+  }
+
+  void _showAddDialog() {
+    AddItemDialog.show(
+      context,
+      scope: AddItemScope.insideFolder,
+      parentPath: _absoluteCurrentPath,
+      parentFolderId: widget.folder.id,
+      onDone: _loadFiles,
+    );
+  }
+
   void _onReorder(int oldIndex, int newIndex) {
     if (newIndex > oldIndex) newIndex--;
     setState(() { final item = _files.removeAt(oldIndex); _files.insert(newIndex, item); });
@@ -218,6 +271,16 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
           color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ],
       const Spacer(),
+      if (_canAddHere)
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: FilledButton.tonalIcon(
+            onPressed: _showAddDialog,
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('添加'),
+            style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
+          ),
+        ),
       IconButton(
         icon: Icon(_isGrid ? Icons.view_list : Icons.grid_view, size: 20),
         tooltip: _isGrid ? '列表视图' : '网格视图',
@@ -236,10 +299,26 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
       const SizedBox(height: 8), Text(_error!),
       const SizedBox(height: 8), ElevatedButton(onPressed: _loadFiles, child: const Text('重试')),
     ]));
-    if (_files.isEmpty) return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Icon(Icons.folder_open, size: 64, color: Theme.of(context).colorScheme.primary.withOpacity(0.5)),
-      const SizedBox(height: 16), Text('该目录为空', style: Theme.of(context).textTheme.titleMedium),
-    ]));
+    if (_files.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.folder_open, size: 64, color: Theme.of(context).colorScheme.primary.withOpacity(0.5)),
+            const SizedBox(height: 16),
+            Text('该目录为空', style: Theme.of(context).textTheme.titleMedium),
+            if (_canAddHere) ...[
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _showAddDialog,
+                icon: const Icon(Icons.add),
+                label: const Text('添加文件夹或应用'),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
     return _isGrid ? _buildGrid(context) : _buildList(context);
   }
 
@@ -297,6 +376,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
               final f = _files[i];
               final name = _name(f);
               final isDir = _isDir(f);
+              final isApp = isDir && _entryIsApp(name);
               return Container(
                 key: ValueKey('f_$i'),
                 decoration: BoxDecoration(
@@ -312,28 +392,55 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                     child: Row(children: [
                       ReorderableDragStartListener(index: i, child: const Icon(Icons.drag_handle, size: 20, color: Colors.grey)),
                       const SizedBox(width: 8),
-                      Icon(getFileIcon(name, isDir: isDir), size: 20, color: getFileIconColor(name, isDir: isDir)),
+                      Icon(
+                        isApp ? Icons.apps : getFileIcon(name, isDir: isDir),
+                        size: 20,
+                        color: isApp
+                            ? Theme.of(context).colorScheme.tertiary
+                            : getFileIconColor(name, isDir: isDir),
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: Text(
-                          name,
-                          style: const TextStyle(fontSize: 13),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        child: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                name,
+                                style: const TextStyle(fontSize: 13),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (isApp) ...[
+                              const SizedBox(width: 8),
+                              Text(
+                                '应用',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(context).colorScheme.tertiary,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                       SizedBox(
-                        width: 40,
-                        child: isDir
-                            ? null
-                            : IconButton(
-                                icon: const Icon(Icons.share_outlined, size: 18),
-                                tooltip: '分享到互联网',
-                                visualDensity: VisualDensity.compact,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                onPressed: () => _shareFile(context, name),
-                              ),
+                        width: isApp ? 80 : 40,
+                        child: isApp
+                            ? TextButton(
+                                onPressed: () => _openEntryApp(name),
+                                child: const Text('打开'),
+                              )
+                            : (isDir
+                                ? null
+                                : IconButton(
+                                    icon: const Icon(Icons.share_outlined, size: 18),
+                                    tooltip: '分享到互联网',
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                                    onPressed: () => _shareFile(context, name),
+                                  )),
                       ),
                       SizedBox(width: 100, child: Text(isDir ? '-' : _sizeStr(f['size']),
                         style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant))),
@@ -370,6 +477,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
         final f = _files[i];
         final name = _name(f);
         final isDir = _isDir(f);
+        final isApp = isDir && _entryIsApp(name);
         return Card(
           clipBehavior: Clip.antiAlias,
           child: InkWell(
@@ -379,18 +487,48 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
             onSecondaryTap: isDir ? null : () => _shareFile(context, name),
             child: Stack(
               children: [
-                Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  Icon(getFileIcon(name, isDir: isDir), size: 48, color: getFileIconColor(name, isDir: isDir)),
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
+                SizedBox.expand(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Icon(
+                        isApp ? Icons.apps : getFileIcon(name, isDir: isDir),
+                        size: 48,
+                        color: isApp
+                            ? Theme.of(context).colorScheme.tertiary
+                            : getFileIconColor(name, isDir: isDir),
+                      ),
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Text(
+                          name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      Text(
+                        isApp ? '应用' : (isDir ? '文件夹' : _sizeStr(f['size'])),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey),
+                      ),
+                    ],
                   ),
-                  Text(isDir ? '文件夹' : _sizeStr(f['size']),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey)),
-                ]),
-                if (!isDir)
+                ),
+                if (isApp)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: IconButton(
+                      icon: const Icon(Icons.play_arrow, size: 20),
+                      tooltip: '打开应用',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _openEntryApp(name),
+                    ),
+                  )
+                else if (!isDir)
                   Positioned(
                     top: 0,
                     right: 0,

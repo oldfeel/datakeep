@@ -13,6 +13,9 @@ import '../../../shared/pages/s3_share_settings_page.dart';
 import '../../../core/services/api_service.dart';
 import '../../folders/screens/folder_detail_screen.dart';
 import '../../sync/screens/sync_screen.dart';
+import '../../apps/open_app.dart';
+import '../../apps/screens/market_screen.dart';
+import '../../../shared/widgets/add_item_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -128,7 +131,14 @@ class _HomeScreenState extends State<HomeScreen> {
       floatingActionButton: _isSelectedLocalDevice(context)
           ? FloatingActionButton(
               onPressed: () {
-                _showAddFolderDialog(context);
+                AddItemDialog.show(
+                  context,
+                  onDone: () {
+                    if (_selectedDeviceId != null) {
+                      _loadDeviceFolders(_selectedDeviceId!);
+                    }
+                  },
+                );
               },
               child: const Icon(Icons.add),
             )
@@ -400,6 +410,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     }
                   : null,
+              onOpenApp: folder.isApp && selectedIsLocal
+                  ? () => openFolderApp(context, folder)
+                  : null,
               onTap: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
@@ -451,6 +464,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.pop(context);
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const SyncScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.storefront_outlined),
+              title: const Text('应用市场'),
+              subtitle: const Text('浏览并安装应用'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const MarketScreen()),
                 );
               },
             ),
@@ -525,73 +549,6 @@ class _HomeScreenState extends State<HomeScreen> {
       orElse: () => Device(id: '', name: ''),
     );
     return local.id == _selectedDeviceId;
-  }
-
-  // 显示添加文件夹对话框
-  void _showAddFolderDialog(BuildContext context) {
-    final idController = TextEditingController();
-    final nameController = TextEditingController();
-    final pathController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('添加同步文件夹'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: idController,
-                decoration: const InputDecoration(
-                  labelText: '文件夹 ID',
-                  hintText: '请输入文件夹 ID（唯一标识）',
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: '文件夹名称',
-                  hintText: '请输入文件夹名称',
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: pathController,
-                decoration: const InputDecoration(
-                  labelText: '文件夹路径',
-                  hintText: '请输入文件夹路径',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (idController.text.isNotEmpty &&
-                  nameController.text.isNotEmpty &&
-                  pathController.text.isNotEmpty &&
-                  _selectedDeviceId != null) {
-                context.read<FolderProvider>().createFolder(
-                      id: idController.text,
-                      name: nameController.text,
-                      path: pathController.text,
-                    );
-                Navigator.of(context).pop();
-                _loadDeviceFolders(_selectedDeviceId!);
-              }
-            },
-            child: const Text('添加'),
-          ),
-        ],
-      ),
-    );
   }
 }
 

@@ -1,10 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+import 'package:provider/provider.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/android_storage_service.dart';
 import '../../../core/models/folder.dart';
+import '../../../features/folders/providers/folder_provider.dart';
+import '../../../shared/utils/app_dir.dart';
 import '../../../shared/utils/file_types.dart';
 import '../../../shared/utils/file_opener.dart';
+import '../../../shared/widgets/add_item_dialog.dart';
 import '../../../shared/widgets/share_to_cloud_sheet.dart';
 
 class FolderDetailScreen extends StatefulWidget {
@@ -139,6 +144,52 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       _currentPath = _currentPath.sublist(0, index + 1);
     });
     _loadFiles();
+  }
+
+  String get _absoluteCurrentPath {
+    final root = _folderInfo?.path ?? '';
+    if (_currentPath.isEmpty) return root;
+    return p.join(root, p.joinAll(_currentPath));
+  }
+
+  bool get _canAddHere =>
+      _folderInfo?.isLocal == true &&
+      (_folderInfo?.path.isNotEmpty ?? false) &&
+      _folderInfo?.isReadonlyAccess != true;
+
+  void _showAddDialog() {
+    AddItemDialog.show(
+      context,
+      scope: AddItemScope.insideFolder,
+      parentPath: _absoluteCurrentPath,
+      parentFolderId: widget.folderId,
+      onDone: _loadFiles,
+    );
+  }
+
+  bool _entryIsApp(String name) {
+    if (_folderInfo?.isLocal != true) return false;
+    final abs = p.join(_absoluteCurrentPath, name);
+    final registered = findRegisteredApp(
+      context.read<FolderProvider>().folders,
+      abs,
+    );
+    if (registered != null) return true;
+    return isAppDirectory(abs);
+  }
+
+  void _openEntryApp(String name) {
+    final abs = p.join(_absoluteCurrentPath, name);
+    final registered = findRegisteredApp(
+      context.read<FolderProvider>().folders,
+      abs,
+    );
+    openAppAtPath(
+      context,
+      absolutePath: abs,
+      title: registered?.name ?? name,
+      folder: registered,
+    );
   }
 
   Future<void> _previewFile(String filePath) async {
@@ -339,6 +390,12 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
           ),
         ],
       ),
+      floatingActionButton: (!isDesktop && _canAddHere && !_isLoading && _error == null)
+          ? FloatingActionButton(
+              onPressed: _showAddDialog,
+              child: const Icon(Icons.add),
+            )
+          : null,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
@@ -397,6 +454,15 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                                   ),
                             ),
                             const Spacer(),
+                            if (_canAddHere)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: ElevatedButton.icon(
+                                  onPressed: _showAddDialog,
+                                  icon: const Icon(Icons.add),
+                                  label: const Text('添加'),
+                                ),
+                              ),
                             ElevatedButton.icon(
                               onPressed: _loadData,
                               icon: const Icon(Icons.refresh),
@@ -424,6 +490,14 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                                     '该目录为空',
                                     style: Theme.of(context).textTheme.headlineSmall,
                                   ),
+                                  if (_canAddHere) ...[
+                                    const SizedBox(height: 16),
+                                    FilledButton.icon(
+                                      onPressed: _showAddDialog,
+                                      icon: const Icon(Icons.add),
+                                      label: const Text('添加文件夹或应用'),
+                                    ),
+                                  ],
                                 ],
                               ),
                             )
@@ -539,20 +613,38 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     final name = file['name'] as String? ?? '未知';
     final size = file['size'] as int? ?? 0;
     final modTime = file['modTime'] as int? ?? 0;
+    final isApp = isDir && _entryIsApp(name);
 
     return ListTile(
       leading: CircleAvatar(
-        backgroundColor: isDir
-            ? Theme.of(context).colorScheme.primaryContainer
-            : Theme.of(context).colorScheme.secondaryContainer,
+        backgroundColor: isApp
+            ? Theme.of(context).colorScheme.tertiaryContainer
+            : (isDir
+                ? Theme.of(context).colorScheme.primaryContainer
+                : Theme.of(context).colorScheme.secondaryContainer),
         child: Icon(
-          isDir ? Icons.folder : _getFileIcon(name),
-          color: isDir
-              ? Theme.of(context).colorScheme.onPrimaryContainer
-              : Theme.of(context).colorScheme.onSecondaryContainer,
+          isApp ? Icons.apps : (isDir ? Icons.folder : _getFileIcon(name)),
+          color: isApp
+              ? Theme.of(context).colorScheme.onTertiaryContainer
+              : (isDir
+                  ? Theme.of(context).colorScheme.onPrimaryContainer
+                  : Theme.of(context).colorScheme.onSecondaryContainer),
         ),
       ),
-      title: Text(name),
+      title: Row(
+        children: [
+          Flexible(child: Text(name)),
+          if (isApp) ...[
+            const SizedBox(width: 8),
+            Text(
+              '应用',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.tertiary,
+                  ),
+            ),
+          ],
+        ],
+      ),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -560,36 +652,41 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
           Text(_formatDate(modTime)),
         ],
       ),
-      trailing: isDir
-          ? const Icon(Icons.chevron_right)
-          : Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.share_outlined),
-                  tooltip: '分享到互联网',
-                  onPressed: () {
-                    final path = _currentPath.isEmpty
-                        ? name
-                        : '${_currentPath.join('/')}/$name';
-                    showShareToCloudSheet(
-                      context,
-                      folderPath: _folderInfo?.path ?? '',
-                      relativePath: path,
-                    );
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.preview),
-                  onPressed: () {
-                    final path = _currentPath.isEmpty
-                        ? name
-                        : '${_currentPath.join('/')}/$name';
-                    _previewFile(path);
-                  },
-                ),
-              ],
-            ),
+      trailing: isApp
+          ? TextButton(
+              onPressed: () => _openEntryApp(name),
+              child: const Text('打开'),
+            )
+          : (isDir
+              ? const Icon(Icons.chevron_right)
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.share_outlined),
+                      tooltip: '分享到互联网',
+                      onPressed: () {
+                        final path = _currentPath.isEmpty
+                            ? name
+                            : '${_currentPath.join('/')}/$name';
+                        showShareToCloudSheet(
+                          context,
+                          folderPath: _folderInfo?.path ?? '',
+                          relativePath: path,
+                        );
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.preview),
+                      onPressed: () {
+                        final path = _currentPath.isEmpty
+                            ? name
+                            : '${_currentPath.join('/')}/$name';
+                        _previewFile(path);
+                      },
+                    ),
+                  ],
+                )),
       onTap: () {
         if (isDir) {
           _navigateToFolder(name);

@@ -7,6 +7,8 @@ import '../../../core/models/folder.dart';
 import '../../../core/models/device.dart';
 import '../../../shared/widgets/folder_card.dart';
 import '../../../shared/widgets/folder_edit_dialog.dart';
+import '../../../shared/widgets/add_item_dialog.dart';
+import '../../apps/open_app.dart';
 import 'folder_detail_screen.dart';
 
 class FoldersScreen extends StatelessWidget {
@@ -106,7 +108,10 @@ class FoldersScreen extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          _showAddFolderDialog(context);
+          AddItemDialog.show(
+            context,
+            onDone: () => context.read<FolderProvider>().fetchFolders(),
+          );
         },
         child: const Icon(Icons.add),
       ),
@@ -162,6 +167,7 @@ class FoldersScreen extends StatelessWidget {
                         context.read<FolderProvider>().fetchFolders(silent: true),
                   );
                 },
+                onOpenApp: folder.isApp ? () => openFolderApp(context, folder) : null,
                 onTap: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
@@ -204,6 +210,7 @@ class FoldersScreen extends StatelessWidget {
                         context.read<FolderProvider>().fetchFolders(silent: true),
                   );
                 },
+                onOpenApp: folder.isApp ? () => openFolderApp(context, folder) : null,
                 onTap: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
@@ -323,70 +330,6 @@ class FoldersScreen extends StatelessWidget {
           // 调用 DevicesScreen 的添加设备对话框
           DevicesScreen.showAddDeviceDialog(context);
         },
-      ),
-    );
-  }
-
-  void _showAddFolderDialog(BuildContext context) {
-    final idController = TextEditingController();
-    final nameController = TextEditingController();
-    final pathController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('添加同步文件夹'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: idController,
-                decoration: const InputDecoration(
-                  labelText: '文件夹 ID',
-                  hintText: '请输入文件夹 ID（唯一标识）',
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: '文件夹名称',
-                  hintText: '请输入文件夹名称',
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: pathController,
-                decoration: const InputDecoration(
-                  labelText: '文件夹路径',
-                  hintText: '请输入文件夹路径',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (idController.text.isNotEmpty &&
-                  nameController.text.isNotEmpty &&
-                  pathController.text.isNotEmpty) {
-                context.read<FolderProvider>().createFolder(
-                      id: idController.text,
-                      name: nameController.text,
-                      path: pathController.text,
-                    );
-                Navigator.of(context).pop();
-              }
-            },
-            child: const Text('添加'),
-          ),
-        ],
       ),
     );
   }

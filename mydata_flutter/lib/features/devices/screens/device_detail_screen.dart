@@ -5,6 +5,7 @@ import '../../../core/services/api_service.dart';
 import '../../folders/screens/folder_detail_screen.dart';
 import '../../../shared/widgets/folder_card.dart';
 import '../../../shared/widgets/device_info_panel.dart';
+import '../../apps/open_app.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
   final String deviceId;
@@ -218,6 +219,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         return FolderCard(
           folder: folder,
           showPath: _device?.isLocal ?? false,
+          onOpenApp: folder.isApp && (_device?.isLocal ?? false)
+              ? () => openFolderApp(context, folder)
+              : null,
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute(
@@ -243,6 +247,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         return FolderCard(
           folder: folder,
           showPath: _device?.isLocal ?? false,
+          onOpenApp: folder.isApp && (_device?.isLocal ?? false)
+              ? () => openFolderApp(context, folder)
+              : null,
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute(

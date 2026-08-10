@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:file_picker/file_picker.dart';
 import '../../core/models/device.dart';
 import '../../core/models/folder.dart';
+import '../../features/apps/open_app.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../shared/widgets/device_info_panel.dart';
 import '../../shared/widgets/folder_edit_dialog.dart';
+import '../../shared/widgets/add_item_dialog.dart';
+
 class DeviceDetailPage extends StatefulWidget {
   final Device device;
   final void Function(Folder folder) onFolderTap;
@@ -128,9 +130,11 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
             if (widget.device.isLocal) ...[
               const SizedBox(height: 8),
               ElevatedButton.icon(
-                onPressed: _showAddFolderDialog,
+                onPressed: () {
+                  AddItemDialog.show(context, onDone: _loadFolders);
+                },
                 icon: const Icon(Icons.add),
-                label: const Text('添加文件夹'),
+                label: const Text('添加'),
               ),
             ],
           ],
@@ -152,7 +156,9 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
             const Spacer(),
             if (widget.device.isLocal)
               ElevatedButton.icon(
-                onPressed: _showAddFolderDialog,
+                onPressed: () {
+                  AddItemDialog.show(context, onDone: _loadFolders);
+                },
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('添加'),
                 style: ElevatedButton.styleFrom(visualDensity: VisualDensity.compact),
@@ -175,14 +181,31 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                 margin: const EdgeInsets.only(bottom: 8),
                 child: ListTile(
                   leading: CircleAvatar(
-                    backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                    child: Icon(Icons.folder, color: Theme.of(context).colorScheme.primary),
+                    backgroundColor: folder.isApp
+                        ? Theme.of(context).colorScheme.tertiaryContainer
+                        : Theme.of(context).colorScheme.primaryContainer,
+                    child: Icon(
+                      folder.isApp ? Icons.apps : Icons.folder,
+                      color: folder.isApp
+                          ? Theme.of(context).colorScheme.onTertiaryContainer
+                          : Theme.of(context).colorScheme.primary,
+                    ),
                   ),
                   title: Row(
                     children: [
                       Expanded(
                         child: Text(folder.name, style: const TextStyle(fontWeight: FontWeight.w500)),
                       ),
+                      if (folder.isApp)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Text(
+                            '应用',
+                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  color: Theme.of(context).colorScheme.tertiary,
+                                ),
+                          ),
+                        ),
                       if (folder.isReadonlyAccess)
                         Text(
                           '只读',
@@ -203,10 +226,21 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                       : null,
                   isThreeLine: folder.path.isNotEmpty,
                   trailing: widget.device.isLocal
-                      ? IconButton(
-                          icon: const Icon(Icons.edit_outlined, size: 20),
-                          tooltip: '编辑',
-                          onPressed: () => _showSharingDialog(context, folder),
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (folder.isApp)
+                              IconButton(
+                                icon: const Icon(Icons.play_arrow, size: 22),
+                                tooltip: '打开应用',
+                                onPressed: () => openFolderApp(context, folder),
+                              ),
+                            IconButton(
+                              icon: const Icon(Icons.edit_outlined, size: 20),
+                              tooltip: '编辑',
+                              onPressed: () => _showSharingDialog(context, folder),
+                            ),
+                          ],
                         )
                       : null,
                   onTap: () => widget.onFolderTap(folder),
@@ -226,81 +260,6 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
-  }
-
-  void _showAddFolderDialog() {
-    final idController = TextEditingController();
-    final nameController = TextEditingController();
-    final pathController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('添加同步文件夹'),
-        content: SizedBox(
-          width: 400,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: idController, decoration: const InputDecoration(labelText: '文件夹 ID（英文标识）')),
-              const SizedBox(height: 16),
-              TextField(controller: nameController, decoration: const InputDecoration(labelText: '文件夹名称')),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(controller: pathController, decoration: const InputDecoration(labelText: '文件夹路径')),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.folder_open),
-                    tooltip: '浏览',
-                    onPressed: () async {
-                      final result = await FilePicker.platform.getDirectoryPath();
-                      if (result != null) {
-                        pathController.text = result;
-                        final dirName = result.split('/').last;
-                        if (idController.text.isEmpty) idController.text = dirName;
-                        if (nameController.text.isEmpty) nameController.text = dirName;
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('取消')),
-          ElevatedButton(
-            onPressed: () async {
-              if (idController.text.isEmpty || nameController.text.isEmpty || pathController.text.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('请填写完整信息'), backgroundColor: Colors.orange),
-                );
-                return;
-              }
-              try {
-                await context.read<FolderProvider>().createFolder(
-                  id: idController.text,
-                  name: nameController.text,
-                  path: pathController.text,
-                );
-                if (ctx.mounted) Navigator.of(ctx).pop();
-                _loadFolders();
-              } catch (e) {
-                if (ctx.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('添加失败: $e'), backgroundColor: Colors.red),
-                  );
-                }
-              }
-            },
-            child: const Text('添加'),
-          ),
-        ],
-      ),
-    );
   }
 
   void _showSharingDialog(BuildContext context, Folder folder) {

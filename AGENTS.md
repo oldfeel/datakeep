@@ -47,6 +47,10 @@
 | `mydata_flutter/syncthing_core/` | **共用** gomobile Syncthing 引擎（iOS + Android） |
 | `mydata_flutter/lib/core/backend/` | Dart 后端 API（shelf HTTPS `:8443`，替代 Go backend） |
 | `mydata_flutter/backend/` | Go 后端旧版（已停维，参考用） |
+| `market_server/` | 应用市场 API（Go Fiber + GORM + Postgres） |
+| `market_admin/` | 应用市场管理后台（Vite + React + MUI） |
+| `docs/app-package-spec.md` | 应用包规范 |
+| `examples/hello-app/` | 示例应用 |
 | `syncthing/` | Syncthing 源码（供 syncthing_core replace） |
 | `scripts/start_avd.sh` | Android 模拟器启动脚本 |
 

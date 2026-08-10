@@ -328,6 +328,7 @@ class ApiService {
               (json['globalBytes'] as num?)?.toInt() ??
               0,
           access: json['access']?.toString(),
+          kind: json['kind']?.toString() ?? 'folder',
         );
       }).toList();
     } catch (e) {
@@ -378,6 +379,7 @@ class ApiService {
     required String id,
     required String name,
     required String path,
+    String kind = 'folder',
     List<String>? sharedDevices,
   }) async {
     try {
@@ -386,6 +388,7 @@ class ApiService {
         'label': name,
         'path': path,
         'type': 'sendreceive',
+        'kind': kind,
         if (sharedDevices != null) 'sharedDevices': sharedDevices,
       });
       
@@ -401,6 +404,7 @@ class ApiService {
         status: 'synced',
         fileCount: 0,
         totalSize: 0,
+        kind: data['kind']?.toString() ?? kind,
       );
     } catch (e) {
       debugPrint('创建文件夹失败: $e');
@@ -1033,6 +1037,11 @@ class ApiService {
       debugPrint('API 请求失败: $e');
       rethrow;
     }
+  }
+
+  /// 设置文件夹类型 folder | app
+  static Future<void> setFolderKind(String folderId, String kind) async {
+    await _post('/folder/${Uri.encodeComponent(folderId)}/kind', {'kind': kind});
   }
 
   /// 删除文件夹（使用正确的端点）

@@ -100,6 +100,7 @@ class FolderProvider with ChangeNotifier {
     required String id,
     required String name,
     required String path,
+    String kind = 'folder',
   }) async {
     try {
       _isLoading = true;
@@ -110,6 +111,7 @@ class FolderProvider with ChangeNotifier {
         id: id,
         name: name,
         path: path,
+        kind: kind,
       );
       
       _folders.add(newFolder);

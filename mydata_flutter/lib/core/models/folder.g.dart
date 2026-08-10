@@ -18,6 +18,7 @@ Folder _$FolderFromJson(Map<String, dynamic> json) => Folder(
   fileCount: (json['fileCount'] as num).toInt(),
   totalSize: (json['totalSize'] as num).toInt(),
   access: json['access'] as String?,
+  kind: json['kind'] as String? ?? 'folder',
 );
 
 Map<String, dynamic> _$FolderToJson(Folder instance) => <String, dynamic>{
@@ -32,4 +33,5 @@ Map<String, dynamic> _$FolderToJson(Folder instance) => <String, dynamic>{
   'fileCount': instance.fileCount,
   'totalSize': instance.totalSize,
   'access': instance.access,
+  'kind': instance.kind,
 };

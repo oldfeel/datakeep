@@ -5,6 +5,7 @@ class FolderCard extends StatelessWidget {
   final Folder folder;
   final VoidCallback? onEdit;
   final VoidCallback? onTap;
+  final VoidCallback? onOpenApp;
   final bool isDesktop;
   /// 是否显示路径与统计（本机或已从对端拉取的真实数据）。
   final bool showPath;
@@ -14,6 +15,7 @@ class FolderCard extends StatelessWidget {
     required this.folder,
     this.onEdit,
     this.onTap,
+    this.onOpenApp,
     this.isDesktop = false,
     this.showPath = true,
   });
@@ -27,7 +29,6 @@ class FolderCard extends StatelessWidget {
     }
   }
 
-  // 桌面端卡片 - 更紧凑的网格布局
   Widget _buildDesktopCard(BuildContext context) {
     return Card(
       elevation: 2,
@@ -39,28 +40,47 @@ class FolderCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 头部：图标和状态
               Row(
                 children: [
                   CircleAvatar(
-                    backgroundColor: _getStatusColor(folder.status),
+                    backgroundColor: folder.isApp
+                        ? Theme.of(context).colorScheme.tertiary
+                        : _getStatusColor(folder.status),
                     child: Icon(
-                      _getStatusIcon(folder.status),
+                      folder.isApp ? Icons.apps : _getStatusIcon(folder.status),
                       color: Colors.white,
                       size: 20,
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      folder.name,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          folder.name,
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (folder.isApp)
+                          Text(
+                            '应用',
+                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  color: Theme.of(context).colorScheme.tertiary,
+                                ),
+                          ),
+                      ],
                     ),
                   ),
+                  if (folder.isApp && onOpenApp != null)
+                    IconButton(
+                      icon: const Icon(Icons.play_arrow, size: 22),
+                      tooltip: '打开应用',
+                      onPressed: onOpenApp,
+                    ),
                   if (onEdit != null)
                     IconButton(
                       icon: const Icon(Icons.edit_outlined, size: 20),
@@ -74,8 +94,8 @@ class FolderCard extends StatelessWidget {
                 Text(
                   folder.path,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -114,15 +134,16 @@ class FolderCard extends StatelessWidget {
     );
   }
 
-  // 移动端卡片 - 列表布局
   Widget _buildMobileCard(BuildContext context) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: _getStatusColor(folder.status),
+          backgroundColor: folder.isApp
+              ? Theme.of(context).colorScheme.tertiary
+              : _getStatusColor(folder.status),
           child: Icon(
-            _getStatusIcon(folder.status),
+            folder.isApp ? Icons.apps : _getStatusIcon(folder.status),
             color: Colors.white,
           ),
         ),
@@ -134,14 +155,25 @@ class FolderCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
+            if (folder.isApp)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Chip(
+                  label: const Text('应用'),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: EdgeInsets.zero,
+                  labelStyle: Theme.of(context).textTheme.labelSmall,
+                ),
+              ),
             if (folder.isReadonlyAccess)
               Padding(
                 padding: const EdgeInsets.only(left: 8),
                 child: Text(
                   '只读',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: Theme.of(context).colorScheme.tertiary,
-                  ),
+                        color: Theme.of(context).colorScheme.tertiary,
+                      ),
                 ),
               ),
           ],
@@ -187,13 +219,23 @@ class FolderCard extends StatelessWidget {
                 ],
               )
             : null,
-        trailing: onEdit != null
-            ? IconButton(
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (folder.isApp && onOpenApp != null)
+              IconButton(
+                icon: const Icon(Icons.play_arrow),
+                tooltip: '打开应用',
+                onPressed: onOpenApp,
+              ),
+            if (onEdit != null)
+              IconButton(
                 icon: const Icon(Icons.edit_outlined, size: 20),
                 tooltip: '编辑',
                 onPressed: onEdit,
-              )
-            : null,
+              ),
+          ],
+        ),
         onTap: onTap,
       ),
     );

@@ -14,6 +14,7 @@ import '../../shared/widgets/accept_pending_folder_dialog.dart';
 import '../../shared/utils/open_syncthing_gui.dart';
 import '../../shared/pages/s3_share_settings_page.dart';
 import '../../shared/widgets/folder_edit_dialog.dart';
+import '../../features/apps/screens/market_screen.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({super.key});
@@ -485,6 +486,18 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
                       );
                     }
                   }
+                },
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                icon: const Icon(Icons.storefront_outlined, size: 20),
+                tooltip: '应用市场',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MarketScreen()),
+                  );
                 },
               ),
               IconButton(

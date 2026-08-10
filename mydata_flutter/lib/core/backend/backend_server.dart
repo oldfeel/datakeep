@@ -10,11 +10,13 @@ import 'cert_manager.dart';
 import 'syncthing_api.dart';
 import 'peer_client.dart';
 import 'folder_acl_store.dart';
+import 'folder_kind_store.dart';
 import '../../shared/utils/sync_folder_paths.dart';
 
 class BackendServer {
   final SyncthingApi _api = SyncthingApi();
   final FolderAclStore _acl = FolderAclStore();
+  final FolderKindStore _kind = FolderKindStore();
   late CertManager _certMgr;
   HttpServer? _server;
   String? _defaultLocalDeviceName;
@@ -31,6 +33,7 @@ class BackendServer {
     _certMgr = CertManager('$dataDir/certs');
     await _certMgr.ensureReady();
     await _acl.init(dataDir);
+    await _kind.init(dataDir);
 
     final router = Router()
       ..get('/api/devices', _handleDevices)
@@ -45,6 +48,7 @@ class BackendServer {
       ..get('/api/folder/<folderId>/status', _handleFolderStatus)
       ..get('/api/folder/<folderId>/acl', _handleGetFolderAcl)
       ..post('/api/folder/<folderId>/acl', _handleSetFolderAcl)
+      ..post('/api/folder/<folderId>/kind', _handleSetFolderKind)
       ..get('/api/folder/<folderId>/settings', _handleGetFolderSettings)
       ..put('/api/folder/<folderId>/settings', _handlePutFolderSettings)
       ..get('/api/folder/<folderId>/ignores', _handleGetFolderIgnores)
@@ -232,16 +236,16 @@ class BackendServer {
     return _json({'code': 0, 'data': await _buildLocalFoldersPayload()});
   }
 
-  /// 本机文件夹列表（含同步统计）
+  /// 本机文件夹列表（含同步统计）；隐藏嵌套在其他同步文件夹内的项（如装在 test/ 下的应用）
   Future<List<Map<String, dynamic>>> _buildLocalFoldersPayload() async {
     final localId = await _api.getLocalDeviceId();
     final result = await _api.proxyGet('/rest/config/folders', silent: true);
     if (result.containsKey('error')) {
-      return _localFoldersPayload();
+      return _filterNestedFolders(_localFoldersPayload());
     }
 
     final rawList = result['data'] as List? ?? [];
-    if (rawList.isEmpty) return _localFoldersPayload();
+    if (rawList.isEmpty) return _filterNestedFolders(_localFoldersPayload());
 
     final folders = <Map<String, dynamic>>[];
     for (final f in rawList) {
@@ -258,7 +262,42 @@ class BackendServer {
       map['sharedDevices'] = sharedDevices;
       folders.add(await _folderPayload(map));
     }
-    return folders;
+    return _filterNestedFolders(folders);
+  }
+
+  /// 路径落在另一同步文件夹内部的项不出现在首页列表
+  List<Map<String, dynamic>> _filterNestedFolders(
+    List<Map<String, dynamic>> folders,
+  ) {
+    String norm(String path) {
+      var s = path.trim();
+      while (s.length > 1 && (s.endsWith('/') || s.endsWith('\\'))) {
+        s = s.substring(0, s.length - 1);
+      }
+      return s;
+    }
+
+    bool inside(String child, String parent) {
+      final c = norm(child);
+      final p = norm(parent);
+      if (c.isEmpty || p.isEmpty || c == p) return false;
+      return c.startsWith('$p/') || c.startsWith('$p\\');
+    }
+
+    return folders.where((f) {
+      final path = f['path']?.toString() ?? '';
+      if (path.isEmpty) return true;
+      for (final other in folders) {
+        if (identical(f, other)) continue;
+        if ((f['id']?.toString() ?? '') == (other['id']?.toString() ?? '')) {
+          continue;
+        }
+        final op = other['path']?.toString() ?? '';
+        if (op.isEmpty) continue;
+        if (inside(path, op)) return false;
+      }
+      return true;
+    }).toList();
   }
 
   /// 经局域网 HTTPS 拉取对端真实文件夹列表
@@ -1306,6 +1345,7 @@ class BackendServer {
       'needFiles': sync['needFiles'] ?? 0,
       'state': sync['state'] ?? 'unknown',
       'pullErrors': sync['pullErrors'] ?? 0,
+      'kind': _kind.getKind(folderId),
     };
   }
 
@@ -1513,6 +1553,7 @@ class BackendServer {
     final id = data['id'] ?? '';
     final label = data['label'] ?? data['name'] ?? id;
     final path = data['path'] ?? '';
+    final kind = (data['kind']?.toString() == 'app') ? 'app' : 'folder';
     if (id.isEmpty || path.isEmpty) {
       return _json({'code': 1002, 'data': '缺少必填字段'}, status: 400);
     }
@@ -1544,8 +1585,9 @@ class BackendServer {
     if (result.containsKey('error')) {
       return _json({'code': 1003, 'data': '添加文件夹失败: ${result['error']}'}, status: 500);
     }
+    await _kind.setKind(id, kind);
     await _api.triggerFolderScan(id);
-    return _json({'code': 0, 'data': {'id': id, 'label': label, 'path': path}});
+    return _json({'code': 0, 'data': {'id': id, 'label': label, 'path': path, 'kind': kind}});
   }
 
   Future<Response> _handleDeleteFolder(Request request, String deviceId, String folderId) async {
@@ -1553,7 +1595,17 @@ class BackendServer {
     if (result.containsKey('error')) {
       return _json({'code': 1003, 'data': '删除文件夹失败: ${result['error']}'}, status: 500);
     }
+    await _kind.remove(folderId);
     return _json({'code': 0, 'data': {'message': '文件夹已删除'}});
+  }
+
+  Future<Response> _handleSetFolderKind(Request request, String folderId) async {
+    final id = _decodeFolderId(folderId);
+    final body = utf8.decode(await request.read().expand((e) => e).toList());
+    final data = json.decode(body) as Map<String, dynamic>;
+    final kind = data['kind']?.toString() == 'app' ? 'app' : 'folder';
+    await _kind.setKind(id, kind);
+    return _json({'code': 0, 'data': {'id': id, 'kind': kind}});
   }
 
   Future<Response> _handleHealth(Request request) async =>

@@ -16,6 +16,8 @@ class Folder {
   final int totalSize; // 字节数
   /// 对端可见权限：sync / readonly（本机列表通常为空）
   final String? access;
+  /// folder | app
+  final String kind;
 
   Folder({
     required this.id,
@@ -29,11 +31,13 @@ class Folder {
     required this.fileCount,
     required this.totalSize,
     this.access,
+    this.kind = 'folder',
   });
 
   factory Folder.fromJson(Map<String, dynamic> json) => _$FolderFromJson(json);
   Map<String, dynamic> toJson() => _$FolderToJson(this);
 
+  bool get isApp => kind == 'app';
   bool get isReadonlyAccess => access == 'readonly';
   bool get isSyncAccess => access == null || access == 'sync';
 
@@ -49,6 +53,7 @@ class Folder {
     int? fileCount,
     int? totalSize,
     String? access,
+    String? kind,
   }) {
     return Folder(
       id: id ?? this.id,
@@ -62,6 +67,7 @@ class Folder {
       fileCount: fileCount ?? this.fileCount,
       totalSize: totalSize ?? this.totalSize,
       access: access ?? this.access,
+      kind: kind ?? this.kind,
     );
   }
 }

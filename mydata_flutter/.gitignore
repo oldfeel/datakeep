@@ -51,3 +51,5 @@ app.*.map.json
 
 mydata.db
 mydata.db-journal
+# 本机文件夹类型标记
+folder_kind.json
