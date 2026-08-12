@@ -8,3 +8,8 @@ logs
 
 # 运行时文件夹 ACL
 **/folder_acl.json
+certs/
+market_server/market_server
+market_server/.env
+market_admin/node_modules/
+market_admin/dist/
