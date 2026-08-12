@@ -1,4 +1,4 @@
-package tech.shupi.datakeep
+package site.datakeep
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
@@ -9,16 +9,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import tech.shupi.datakeep.service.ConfigHelper
-import tech.shupi.datakeep.service.Constants
-import tech.shupi.datakeep.service.SyncthingEngine
-import tech.shupi.datakeep.service.SyncthingService
-import tech.shupi.datakeep.util.PermissionUtil
-import tech.shupi.datakeep.util.StoragePathUtils
+import site.datakeep.service.ConfigHelper
+import site.datakeep.service.Constants
+import site.datakeep.service.SyncthingEngine
+import site.datakeep.service.SyncthingService
+import site.datakeep.util.PermissionUtil
+import site.datakeep.util.StoragePathUtils
 import java.io.File
 
 class MainActivity : FlutterFragmentActivity() {
-    private val channel = "tech.shupi.datakeep/api"
+    private val channel = "site.datakeep/api"
     private val tag = "MainActivity"
     private var pendingPickResult: MethodChannel.Result? = null
 

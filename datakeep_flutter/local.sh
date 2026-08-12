@@ -53,7 +53,7 @@ fi
 
 # 检查并卸载旧版本应用（如果存在）
 echo -e "${YELLOW}🔍 检查旧版本应用...${NC}"
-OLD_PACKAGES=$(adb shell pm list packages | grep -E "(com.example.datakeep_flutter|tech.shupi.datakeep)" | cut -d: -f2)
+OLD_PACKAGES=$(adb shell pm list packages | grep -E "(com\.example\.datakeep_flutter|tech\.shupi\.datakeep|site\.datakeep)" | cut -d: -f2)
 if [ -n "$OLD_PACKAGES" ]; then
     echo -e "${YELLOW}🗑️  发现旧版本，正在卸载...${NC}"
     echo "$OLD_PACKAGES" | while read -r package; do
@@ -111,7 +111,7 @@ if [ -f "$APK_PATH" ]; then
     
     # 启动应用
     echo -e "\n${YELLOW}🚀 启动应用...${NC}"
-    adb shell am start -n tech.shupi.datakeep/.MainActivity
+    adb shell am start -n site.datakeep/.MainActivity
     
     echo -e "\n${GREEN}✅ 完成！应用已安装并启动${NC}"
 else

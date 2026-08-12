@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 
 /// Android 存储：All files access、SAF 选目录、native 写测试（对齐 Syncthing Android）
 class AndroidStorageService {
-  static const MethodChannel _channel = MethodChannel('tech.shupi.datakeep/api');
+  static const MethodChannel _channel = MethodChannel('site.datakeep/api');
 
   static bool get isAndroid => !kIsWeb && Platform.isAndroid;
 

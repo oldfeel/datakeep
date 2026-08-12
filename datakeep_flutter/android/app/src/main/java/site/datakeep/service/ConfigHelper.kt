@@ -1,11 +1,11 @@
-package tech.shupi.datakeep.service
+package site.datakeep.service
 
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
-import tech.shupi.datakeep.util.PermissionUtil
-import tech.shupi.datakeep.util.StoragePathUtils
+import site.datakeep.util.PermissionUtil
+import site.datakeep.util.StoragePathUtils
 import java.io.File
 
 /** 修正 Syncthing config.xml 中的本机设备名称（Android 默认 hostname 常为 localhost） */

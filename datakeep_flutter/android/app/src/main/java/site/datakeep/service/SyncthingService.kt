@@ -1,4 +1,4 @@
-package tech.shupi.datakeep.service
+package site.datakeep.service
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -13,8 +13,8 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import tech.shupi.datakeep.MainActivity
-import tech.shupi.datakeep.R
+import site.datakeep.MainActivity
+import site.datakeep.R
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 
@@ -29,9 +29,9 @@ class SyncthingService : Service() {
         private const val CHANNEL_ID = "syncthing_service_channel"
         private const val CHANNEL_NAME = "Syncthing Service"
 
-        const val ACTION_START = "tech.shupi.datakeep.service.START"
-        const val ACTION_STOP = "tech.shupi.datakeep.service.STOP"
-        const val ACTION_RESTART = "tech.shupi.datakeep.service.RESTART"
+        const val ACTION_START = "site.datakeep.service.START"
+        const val ACTION_STOP = "site.datakeep.service.STOP"
+        const val ACTION_RESTART = "site.datakeep.service.RESTART"
     }
 
     enum class State { INIT, STARTING, ACTIVE, STOPPING, STOPPED, ERROR }

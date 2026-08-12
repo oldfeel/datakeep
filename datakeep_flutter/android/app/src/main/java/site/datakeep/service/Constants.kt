@@ -1,4 +1,4 @@
-package tech.shupi.datakeep.service
+package site.datakeep.service
 
 import android.content.Context
 import android.os.Build
@@ -10,9 +10,9 @@ object Constants {
     const val FILENAME_SYNCTHING_BINARY = "libsyncthing.so"
     
     // 服务状态
-    const val ACTION_RESTART = "tech.shupi.datakeep.service.SyncthingService.RESTART"
-    const val ACTION_RESET_DATABASE = "tech.shupi.datakeep.service.SyncthingService.RESET_DATABASE"
-    const val ACTION_RESET_DELTAS = "tech.shupi.datakeep.service.SyncthingService.RESET_DELTAS"
+    const val ACTION_RESTART = "site.datakeep.service.SyncthingService.RESTART"
+    const val ACTION_RESET_DATABASE = "site.datakeep.service.SyncthingService.RESET_DATABASE"
+    const val ACTION_RESET_DELTAS = "site.datakeep.service.SyncthingService.RESET_DELTAS"
     
     // 配置相关
     const val CONFIG_FILE = "config.xml"

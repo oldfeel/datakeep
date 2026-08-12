@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "tech.shupi.datakeep"
+    namespace = "site.datakeep"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -19,7 +19,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "tech.shupi.datakeep"
+        applicationId = "site.datakeep"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

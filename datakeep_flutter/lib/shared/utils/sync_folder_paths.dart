@@ -8,7 +8,7 @@ Future<String> defaultSyncFolderPath(String folderId) async {
     final path = await AndroidStorageService.getDefaultSyncFolderPath(folderId);
     if (path.isNotEmpty) return path;
     // Platform Channel 不可用时的回退
-    final media = '/storage/emulated/0/Android/media/tech.shupi.datakeep/sync/$folderId';
+    final media = '/storage/emulated/0/Android/media/site.datakeep/sync/$folderId';
     return media;
   }
   if (Platform.isIOS) {

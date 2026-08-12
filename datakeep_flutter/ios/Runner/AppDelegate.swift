@@ -4,7 +4,7 @@ import DataKeepSyncthing
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
-  private let channelName = "tech.shupi.datakeep/api"
+  private let channelName = "site.datakeep/api"
   private var client: MdstClient?
   private var status: String = "stopped"
 

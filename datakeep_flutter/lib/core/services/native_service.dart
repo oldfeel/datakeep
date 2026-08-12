@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 /// Platform Channel 服务，用于与原生代码通信
 /// 桌面端使用系统命令，移动端使用 Platform Channel
 class NativeService {
-  static const MethodChannel _channel = MethodChannel('tech.shupi.datakeep/api');
+  static const MethodChannel _channel = MethodChannel('site.datakeep/api');
   static bool _isDesktop = !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
 
   /// 启动 Syncthing 服务

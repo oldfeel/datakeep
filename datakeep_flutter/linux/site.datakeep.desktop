@@ -5,4 +5,4 @@ Exec=datakeep_flutter
 Icon=app_icon
 Type=Application
 Categories=Utility;FileTransfer;
-StartupWMClass=com.example.datakeep_flutter
+StartupWMClass=site.datakeep

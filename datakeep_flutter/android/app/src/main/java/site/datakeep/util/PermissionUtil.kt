@@ -1,4 +1,4 @@
-package tech.shupi.datakeep.util
+package site.datakeep.util
 
 import android.app.Activity
 import android.content.ActivityNotFoundException

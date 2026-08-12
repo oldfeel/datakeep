@@ -1,4 +1,4 @@
-module tech.shupi.datakeep/syncthingcore
+module site.datakeep/syncthingcore
 
 go 1.25.0
 
