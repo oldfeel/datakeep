@@ -7,6 +7,7 @@
 - 同步引擎：本机 Syncthing（`127.0.0.1:8384`）
 
 详细约定见根目录 `AGENTS.md`（含产品定位与功能取舍）。
+应用市场服务端在私有仓 `datakeep-market`，勿在本开源仓再加 `market_server` / `market_admin`。
 
 ## 产品定位
 - **不追求**与原版 Syncthing Web GUI 全量对等

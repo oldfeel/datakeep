@@ -12,6 +12,7 @@ DataKeep 是易用的跨平台同步客户端，**不实现**原版 Syncthing We
 - **设备管理**：局域网发现、连接状态、共享与访问权限（同步 / 只读 / 隐藏）
 - **文件浏览**：浏览本机与对端文件夹
 - **多平台**：Linux / Windows / macOS / Android（Flutter）
+- **应用市场客户端**：可配置外部市场 API；服务端与管理后台在私有仓 [datakeep-market](https://github.com/oldfeel/datakeep-market)
 
 ## 技术架构
 
