@@ -8,11 +8,11 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/yuncommunity/mydata/market_server/config"
-	"github.com/yuncommunity/mydata/market_server/database"
-	"github.com/yuncommunity/mydata/market_server/handlers"
-	"github.com/yuncommunity/mydata/market_server/routes"
-	"github.com/yuncommunity/mydata/market_server/storage"
+	"github.com/oldfeel/datakeep/market_server/config"
+	"github.com/oldfeel/datakeep/market_server/database"
+	"github.com/oldfeel/datakeep/market_server/handlers"
+	"github.com/oldfeel/datakeep/market_server/routes"
+	"github.com/oldfeel/datakeep/market_server/storage"
 )
 
 func main() {
@@ -22,7 +22,7 @@ func main() {
 	h := &handlers.Handler{DB: db, Cfg: cfg, Sto: sto}
 	h.LoadStorageFromDB()
 
-	app := fiber.New(fiber.Config{AppName: "mydata-market"})
+	app := fiber.New(fiber.Config{AppName: "datakeep-market"})
 	app.Use(recover.New())
 	app.Use(logger.New())
 	app.Use(cors.New(cors.Config{

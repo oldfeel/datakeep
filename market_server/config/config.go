@@ -32,7 +32,7 @@ func Load() Config {
 	loadDotEnv(".env")
 	return Config{
 		Addr:             env("ADDR", ":8088"),
-		DatabaseURL:      env("DATABASE_URL", "host=127.0.0.1 user=postgres password=postgres dbname=mydata_market port=5432 sslmode=disable"),
+		DatabaseURL:      env("DATABASE_URL", "host=127.0.0.1 user=postgres password=postgres dbname=datakeep_market port=5432 sslmode=disable"),
 		JWTSecret:        env("JWT_SECRET", "change-me-market-jwt-secret"),
 		AdminUsername:    env("ADMIN_USERNAME", "admin"),
 		AdminPassword:    env("ADMIN_PASSWORD", "admin123"),

@@ -1,10 +1,10 @@
-# MyData - 跨平台文件同步应用
+# DataKeep - 跨平台文件同步应用
 
 基于 Syncthing 的跨平台文件同步应用，桌面与移动端共用同一套 Flutter 代码。
 
 ## 产品定位
 
-MyData 是易用的跨平台同步客户端，**不实现**原版 Syncthing Web GUI 的全部功能。高级配置请使用应用内「打开 Syncthing 管理页」入口（`http://127.0.0.1:8384`）。功能取舍详见 [AGENTS.md](AGENTS.md)。
+DataKeep 是易用的跨平台同步客户端，**不实现**原版 Syncthing Web GUI 的全部功能。高级配置请使用应用内「打开 Syncthing 管理页」入口（`http://127.0.0.1:8384`）。功能取舍详见 [AGENTS.md](AGENTS.md)。
 
 ## 功能特性
 
@@ -24,8 +24,8 @@ MyData 是易用的跨平台同步客户端，**不实现**原版 Syncthing Web 
 ### 项目结构
 
 ```
-mydata/
-├── mydata_flutter/          # Flutter 跨平台应用（主力）
+datakeep/
+├── datakeep_flutter/          # Flutter 跨平台应用（主力）
 │   ├── lib/                 # Dart UI + 进程内后端
 │   ├── android/             # Android 工程（含 jniLibs/Syncthing）
 │   └── backend/             # Go 后端旧版（已停维）
@@ -45,7 +45,7 @@ mydata/
 ### 桌面调试
 
 ```bash
-cd mydata_flutter
+cd datakeep_flutter
 flutter pub get
 flutter run -d linux
 ```
@@ -53,7 +53,7 @@ flutter run -d linux
 ### Android 调试
 
 ```bash
-cd mydata_flutter
+cd datakeep_flutter
 ./start_android.sh          # 必要时交叉编译 libsyncthing.so 并运行
 # 或已有 jniLibs 时：
 flutter run -d android
@@ -68,7 +68,7 @@ cd syncthing
 
 ## API 约定
 
-- 本机 MyData API：`https://localhost:8443`（自签名证书）
+- 本机 DataKeep API：`https://localhost:8443`（自签名证书）
 - 成功：`{"code": 0, "data": ...}`
 - 失败：`{"code": 非0, "data": "错误信息"}`
 - Syncthing REST：`http://127.0.0.1:8384`

@@ -2,8 +2,8 @@ package routes
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"github.com/yuncommunity/mydata/market_server/handlers"
-	"github.com/yuncommunity/mydata/market_server/middleware"
+	"github.com/oldfeel/datakeep/market_server/handlers"
+	"github.com/oldfeel/datakeep/market_server/middleware"
 )
 
 func Setup(app *fiber.App, h *handlers.Handler) {

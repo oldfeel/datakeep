@@ -22,7 +22,7 @@ export default function AdminLayout() {
       <AppBar position="static" color="primary">
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            MyData 应用市场
+            DataKeep 应用市场
           </Typography>
           <Button
             color="inherit"

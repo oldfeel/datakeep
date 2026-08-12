@@ -1,4 +1,4 @@
-module github.com/yuncommunity/mydata/market_server
+module github.com/oldfeel/datakeep/market_server
 
 go 1.26.5
 

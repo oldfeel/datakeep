@@ -1,0 +1,40 @@
+# Air 配置文件 — Go 后端热重载
+# 运行: air
+# 输出: bin/datakeep_backend（与 NativeService 路径一致）
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  bin = "bin/datakeep_backend"
+  cmd = "cd backend && /snap/go/current/bin/go build -o ../bin/datakeep_backend ./cmd"
+  delay = 1000
+  include_dir = ["backend"]
+  exclude_dir = ["assets", "tmp", "vendor"]
+  exclude_file = []
+  exclude_regex = [".*_test.go"]
+  exclude_unchanged = false
+  follow_symlink = false
+  full_bin = ""
+  include_ext = ["go", "tpl", "tmpl", "html"]
+  kill_delay = "0s"
+  log = "build-errors.log"
+  poll = false
+  poll_interval = 0
+  post_cmd = []
+  pre_cmd = []
+  rerun = false
+  rerun_delay = 500
+  send_interrupt = false
+  stop_on_error = false
+
+[color]
+  app = ""
+  build = "yellow"
+  main = "magenta"
+  runner = "green"
+  watcher = "cyan"
+
+[log]
+  main_only = false
+  time = false

@@ -1,4 +1,4 @@
-# MyData 路线图：预览 → iOS → 对外分享 → 文档
+# DataKeep 路线图：预览 → iOS → 对外分享 → 文档
 
 > 原 Cursor 计划文件在本机 `~/.cursor/plans/`，不随仓库同步。已归档到本路径，方便换机继续。  
 > **进度（2026-08）**：Phase 1 / 3 / 4 主体已合入；Phase 2 已落地 Go 薄封装 + gomobile xcframework + AppDelegate 桥接，可用 `./start_ios.sh` 在 Mac 上构建真机/模拟器验证（前台同步，后台尽力）。
@@ -24,14 +24,14 @@ flowchart LR
 
 ### 1.1 大文件与预览传输（P0）
 
-现状：[backend_server.dart](mydata_flutter/lib/core/backend/backend_server.dart) 用 `File.readAsBytes()` 整文件进内存；客户端 `previewFile` / peer 同样整包缓冲。
+现状：[backend_server.dart](datakeep_flutter/lib/core/backend/backend_server.dart) 用 `File.readAsBytes()` 整文件进内存；客户端 `previewFile` / peer 同样整包缓冲。
 
 做法：
-- 后端预览改为 `openRead` 流式响应；补全音视频 MIME（与 [file_types.dart](mydata_flutter/lib/shared/utils/file_types.dart) 对齐）
+- 后端预览改为 `openRead` 流式响应；补全音视频 MIME（与 [file_types.dart](datakeep_flutter/lib/shared/utils/file_types.dart) 对齐）
 - 路径 canonicalize，拒绝逃出 folder root
 - 客户端流式落盘，禁止大文件 `bodyBytes`；展示下载进度
 - 超过阈值（建议 200MB）禁止应用内预览，提示「下载 / 系统打开」
-- Peer：拉长超时、进度 UI、失败文案标明「需同网且对端 MyData 在线」；[media_file_opener.dart](mydata_flutter/lib/shared/utils/media_file_opener.dart) 临时文件在预览关闭后删除
+- Peer：拉长超时、进度 UI、失败文案标明「需同网且对端 DataKeep 在线」；[media_file_opener.dart](datakeep_flutter/lib/shared/utils/media_file_opener.dart) 临时文件在预览关闭后删除
 
 ### 1.2 PDF 与未知类型（P0）
 
@@ -41,7 +41,7 @@ flowchart LR
 
 ### 1.3 图片手势与邻文件（P1）
 
-- [image_preview_screen.dart](mydata_flutter/lib/features/folders/screens/image_preview_screen.dart) / 桌面 [file_preview_page.dart](mydata_flutter/lib/desktop/pages/file_preview_page.dart)：双击缩放、单击显隐工具栏
+- [image_preview_screen.dart](datakeep_flutter/lib/features/folders/screens/image_preview_screen.dart) / 桌面 [file_preview_page.dart](datakeep_flutter/lib/desktop/pages/file_preview_page.dart)：双击缩放、单击显隐工具栏
 - 同目录图片左右滑切换（传入当前目录图片列表 + 索引）
 - 桌面图片支持真全屏 overlay（Esc 退出）
 
@@ -76,7 +76,7 @@ flowchart TB
     SwiftUI -->|gomobile_bindings| Core
     Core --> ST
   end
-  subgraph mydata_ios [MyData_iOS_target]
+  subgraph datakeep_ios [DataKeep_iOS_target]
     Flutter[Flutter_UI]
     Channel[MethodChannel_Swift薄桥]
     MyCore[自研或裁剪的_Go_Core]
@@ -95,7 +95,7 @@ flowchart TB
 - **可选后续能力**（Phase 2 首版可不做，但文档记下）：selective sync（`.stignore` 的 `!/path` + `*`）、按需下载 + 本机 HTTP Range 流媒体
 
 **不要整仓 fork / 照搬 UI**：
-- 对方是 **SwiftUI 整应用**；MyData 保持 **Flutter UI + Dart shelf**，只借鉴 **Go Core 嵌入与桥接**
+- 对方是 **SwiftUI 整应用**；DataKeep 保持 **Flutter UI + Dart shelf**，只借鉴 **Go Core 嵌入与桥接**
 - 相册虚拟 FS（photo-fs）、Shortcuts、Continuity 等 Apple 深度集成首版不做
 - 若直接复制其 MPL-2.0 源文件，需保留文件级版权与许可证声明；更稳妥是自写同构薄封装，仅对照其启动/`Client` 设计
 
@@ -104,8 +104,8 @@ flowchart TB
 ### 工作块
 
 1. **引擎嵌入**：对照 SushitrainCore，用 gomobile 将 Syncthing 编为 iOS `xcframework`；Swift 薄桥对接 Flutter MethodChannel（禁止子进程）
-2. **MethodChannel**：对齐现有 Android bootstrap / start / stop / config home（对照 [native_service.dart](mydata_flutter/lib/core/services/native_service.dart)）
-3. **启动路径**：[main.dart](mydata_flutter/lib/main.dart) 纳入 iOS：启 Syncthing + shelf `:8443`；配置 Application Support，同步目录 Documents
+2. **MethodChannel**：对齐现有 Android bootstrap / start / stop / config home（对照 [native_service.dart](datakeep_flutter/lib/core/services/native_service.dart)）
+3. **启动路径**：[main.dart](datakeep_flutter/lib/main.dart) 纳入 iOS：启 Syncthing + shelf `:8443`；配置 Application Support，同步目录 Documents
 4. **权限**：Info.plist 声明 Local Network、相机（扫码加设备）；Files App 可见同步目录
 5. **文档**：AGENTS.md / README 写明「iOS 仅前台同步，后台尽力」及「引擎嵌入参考 sushitrain」；修正「已支持 iOS」的夸大表述
 
@@ -121,14 +121,14 @@ flowchart TB
 
 | 场景 | Syncthing 够不够 | 说明 |
 |------|------------------|------|
-| 自己的手机/另一台电脑访问家中文件 | 够（中继/直连） | 对方也要装 MyData/Syncthing，并互加设备 |
+| 自己的手机/另一台电脑访问家中文件 | 够（中继/直连） | 对方也要装 DataKeep/Syncthing，并互加设备 |
 | **发给同事/客户一个链接，浏览器就能下** | **不够** | 对方没有 Device ID，也不会装同步客户端 |
 
-无公网固定 IP 时，**浏览器可打开的链接**只能来自：有公网入口的第三方（云对象存储、临时隧道），或对方也走 P2P 工具。MyData 产品选定前者。
+无公网固定 IP 时，**浏览器可打开的链接**只能来自：有公网入口的第三方（云对象存储、临时隧道），或对方也走 P2P 工具。DataKeep 产品选定前者。
 
 ### 可选技术（评估后选定）
 
-| 方案 | 对方体验 | 本机要公网 IP？ | 与 MyData 契合度 |
+| 方案 | 对方体验 | 本机要公网 IP？ | 与 DataKeep 契合度 |
 |------|----------|-----------------|------------------|
 | **上传云盘 + 预签名/临时分享链接** | 浏览器打开即下 | 否 | **选定**：实现清晰、可控过期与流量 |
 | Cloudflare Tunnel / frp / ngrok 暴露本机 HTTP | 浏览器可下，文件仍在本机 | 否（靠隧道） | 运维重、安全面大、App 内难产品化 |
@@ -139,7 +139,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-  PC[无公网电脑_MyData]
+  PC[无公网电脑_DataKeep]
   OSS[对象存储_有公网]
   User[互联网用户_浏览器]
   PC -->|"上传选中文件"| OSS
@@ -202,7 +202,7 @@ frp/ngrok 内置、把家中目录永久挂公网、用 Syncthing 冒充「给�
 - 文本/Office/PDF 等统一提供「用系统应用打开」
 - 若用户在外部修改，依赖 Syncthing 正常扫描同步（已有手动扫描能力）
 
-文档中写清：MyData 是同步与浏览，不是文档套件。
+文档中写清：DataKeep 是同步与浏览，不是文档套件。
 
 ---
 

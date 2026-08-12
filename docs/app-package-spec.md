@@ -1,4 +1,4 @@
-# MyData 应用包规范
+# DataKeep 应用包规范
 
 应用是可同步的特殊文件夹（客户端 `kind=app`），以 zip 分发，由应用市场安装。
 
@@ -18,7 +18,7 @@ zip 解压后根目录（或唯一顶层目录）须包含：
 ```json
 {
   "id": "hello",
-  "name": "Hello MyData",
+  "name": "Hello DataKeep",
   "version": "1.0.0",
   "entry": "index.html",
   "description": "示例应用",
@@ -42,7 +42,7 @@ zip 解压后根目录（或唯一顶层目录）须包含：
 
 ## 安装约定（客户端）
 
-- 解压到：应用文档目录下 `MyDataApps/<app.id>/`
+- 解压到：应用文档目录下 `DataKeepApps/<app.id>/`
 - Syncthing 文件夹 id：`app-<app.id>`
 - 标记 `kind=app`
 - 更新：覆盖非 `data/` 文件；保留已有 `data/`

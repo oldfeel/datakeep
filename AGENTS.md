@@ -1,18 +1,18 @@
-# AGENTS.md — MyData
+# AGENTS.md — DataKeep
 
 跨平台文件同步应用（基于 Syncthing）。Dart 后端（shelf）+ Flutter 前端。
 
-**长期维护方向**：桌面 + 移动均使用 `mydata_flutter/`（同一套 Flutter 代码）。
-`mydata_flutter/backend/`（Go 后端旧版）已停维，仅作参考。
+**长期维护方向**：桌面 + 移动均使用 `datakeep_flutter/`（同一套 Flutter 代码）。
+`datakeep_flutter/backend/`（Go 后端旧版）已停维，仅作参考。
 
 ## 产品定位（功能取舍）
 
-**不追求与原版 Syncthing Web GUI 功能对等。** MyData 是引擎之上的轻量客户端，面向日常「加设备、加文件夹、看文件、管共享」；深度配置继续交给 Syncthing 原版 Web UI（`http://127.0.0.1:8384`）或手改 `config.xml`。
+**不追求与原版 Syncthing Web GUI 功能对等。** DataKeep 是引擎之上的轻量客户端，面向日常「加设备、加文件夹、看文件、管共享」；深度配置继续交给 Syncthing 原版 Web UI（`http://127.0.0.1:8384`）或手改 `config.xml`。
 
 ### 原则
 
 1. 只做「没有 UI 就严重影响日常使用」的能力
-2. MyData 特有能力（peer 只读浏览、文件夹 ACL：同步/只读/隐藏）优先于追平原版设置页
+2. DataKeep 特有能力（peer 只读浏览、文件夹 ACL：同步/只读/隐藏）优先于追平原版设置页
 3. 高级能力：应用内提供「打开 Syncthing 管理页」出口，而不是在 Flutter 里 1:1 复刻
 
 ### 若补功能时的优先级（基础能力已落地）
@@ -43,10 +43,10 @@
 
 | 目录 | 说明 |
 |---|---|
-| `mydata_flutter/` | **Flutter 跨平台应用** — 桌面 + Android 主力；iOS 可用 |
-| `mydata_flutter/syncthing_core/` | **共用** gomobile Syncthing 引擎（iOS + Android） |
-| `mydata_flutter/lib/core/backend/` | Dart 后端 API（shelf HTTPS `:8443`，替代 Go backend） |
-| `mydata_flutter/backend/` | Go 后端旧版（已停维，参考用） |
+| `datakeep_flutter/` | **Flutter 跨平台应用** — 桌面 + Android 主力；iOS 可用 |
+| `datakeep_flutter/syncthing_core/` | **共用** gomobile Syncthing 引擎（iOS + Android） |
+| `datakeep_flutter/lib/core/backend/` | Dart 后端 API（shelf HTTPS `:8443`，替代 Go backend） |
+| `datakeep_flutter/backend/` | Go 后端旧版（已停维，参考用） |
 | `market_server/` | 应用市场 API（Go Fiber + GORM + Postgres） |
 | `market_admin/` | 应用市场管理后台（Vite + React + MUI） |
 | `docs/app-package-spec.md` | 应用包规范 |
@@ -58,16 +58,16 @@
 
 ```bash
 # Flutter 桌面调试（backend 由 Flutter 进程内启动；Syncthing 用系统二进制）
-cd mydata_flutter && flutter run -d linux
+cd datakeep_flutter && flutter run -d linux
 
 # Android：先 gomobile AAR，再跑（或 ./start_android.sh）
-cd mydata_flutter && make -C syncthing_core android && flutter run -d android
+cd datakeep_flutter && make -C syncthing_core android && flutter run -d android
 
 # iOS（需 Mac）
-cd mydata_flutter && ./start_ios.sh
+cd datakeep_flutter && ./start_ios.sh
 
 # Flutter 依赖安装
-cd mydata_flutter && flutter pub get
+cd datakeep_flutter && flutter pub get
 
 # Syncthing 源码树（desktop 或其它工具若需独立二进制）
 cd syncthing && /snap/go/current/bin/go run build.go -version v2.1.0
@@ -96,7 +96,7 @@ scripts/start_avd.sh <AVD名称>
 ## 注意点
 
 - **后端已改为纯 Dart**（shelf），不再需要 Go 编译工具链和 air（移动端 Syncthing 引擎仍需 Go + gomobile）
-- **Syncthing 编译坑**：`syncthing/` 不是独立 git 仓库，`go run build.go` 会取 mydata 的 git hash 作为版本号导致启动失败。必须传 `-version v2.1.0`
-- 移动端引擎：`make -C mydata_flutter/syncthing_core android|ios`（共用 Go；勿再依赖 jniLibs `libsyncthing.so`）
+- **Syncthing 编译坑**：`syncthing/` 不是独立 git 仓库，`go run build.go` 会取 datakeep 的 git hash 作为版本号导致启动失败。必须传 `-version v2.1.0`
+- 移动端引擎：`make -C datakeep_flutter/syncthing_core android|ios`（共用 Go；勿再依赖 jniLibs `libsyncthing.so`）
 - `parse_email/` 独立于主项目，读取 `mail.eml` → 输出 `chat.md`
 - **Go snap 权限问题**：系统 `go` 命令来自 snap 且权限受限，使用 `/snap/go/current/bin/go` 直接调用二进制

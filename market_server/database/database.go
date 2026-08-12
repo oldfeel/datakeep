@@ -3,8 +3,8 @@ package database
 import (
 	"log"
 
-	"github.com/yuncommunity/mydata/market_server/config"
-	"github.com/yuncommunity/mydata/market_server/models"
+	"github.com/oldfeel/datakeep/market_server/config"
+	"github.com/oldfeel/datakeep/market_server/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

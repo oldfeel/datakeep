@@ -1,7 +1,7 @@
 {
   "id": "hello",
-  "name": "Hello MyData",
+  "name": "Hello DataKeep",
   "version": "1.0.0",
   "entry": "index.html",
-  "description": "MyData 应用市场示例"
+  "description": "DataKeep 应用市场示例"
 }

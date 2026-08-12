@@ -12,9 +12,9 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/yuncommunity/mydata/market_server/config"
-	"github.com/yuncommunity/mydata/market_server/models"
-	"github.com/yuncommunity/mydata/market_server/storage"
+	"github.com/oldfeel/datakeep/market_server/config"
+	"github.com/oldfeel/datakeep/market_server/models"
+	"github.com/oldfeel/datakeep/market_server/storage"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )

@@ -1,4 +1,4 @@
-# Hello MyData 示例应用
+# Hello DataKeep 示例应用
 
 符合 [应用包规范](../../docs/app-package-spec.md)。
 

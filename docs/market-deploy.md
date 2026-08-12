@@ -11,7 +11,7 @@
 ## 1. Postgres
 
 ```bash
-sudo -u postgres createdb mydata_market
+sudo -u postgres createdb datakeep_market
 # 按需设置用户密码，写入下方 DATABASE_URL
 ```
 
@@ -20,7 +20,7 @@ sudo -u postgres createdb mydata_market
 ```bash
 cd market_server
 export ADDR=0.0.0.0:8088
-export DATABASE_URL="host=127.0.0.1 user=postgres password=postgres dbname=mydata_market port=5432 sslmode=disable"
+export DATABASE_URL="host=127.0.0.1 user=postgres password=postgres dbname=datakeep_market port=5432 sslmode=disable"
 export JWT_SECRET=change-me
 export ADMIN_USERNAME=admin
 export ADMIN_PASSWORD=admin123
