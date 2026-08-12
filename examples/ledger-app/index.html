@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>简单记账</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main>
+    <h1>简单记账</h1>
+    <p class="hint">数据保存在应用目录 <code>data/ledger.db</code>（可随同步）</p>
+    <p id="status" class="status">加载中…</p>
+
+    <section class="summary" id="summary">
+      <div><span>收入</span><strong id="sum-in">¥0.00</strong></div>
+      <div><span>支出</span><strong id="sum-out">¥0.00</strong></div>
+      <div><span>结余</span><strong id="sum-bal">¥0.00</strong></div>
+    </section>
+
+    <form id="form" class="form">
+      <div class="row">
+        <label>
+          类型
+          <select name="kind" required>
+            <option value="expense">支出</option>
+            <option value="income">收入</option>
+          </select>
+        </label>
+        <label>
+          金额
+          <input name="amount" type="number" step="0.01" min="0.01" required placeholder="0.00" />
+        </label>
+      </div>
+      <label>
+        日期
+        <input name="day" type="date" required />
+      </label>
+      <label>
+        备注
+        <input name="note" type="text" maxlength="120" placeholder="可选" />
+      </label>
+      <button type="submit">添加</button>
+    </form>
+
+    <ul id="list" class="list"></ul>
+  </main>
+  <script src="vendor/sql-wasm.js"></script>
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

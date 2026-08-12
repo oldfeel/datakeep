@@ -1,0 +1,7 @@
+{
+  "id": "ledger",
+  "name": "简单记账",
+  "version": "1.0.1",
+  "entry": "index.html",
+  "description": "收入支出记账示例（SQLite；数据变更自动刷新）"
+}

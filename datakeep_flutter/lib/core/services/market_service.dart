@@ -247,6 +247,8 @@ class MarketService {
       } catch (e) {
         debugPrint('[market] 取消注册（可忽略）: $e');
       }
+      // 仍写入本目录 .stignore；父文件夹需自行忽略或接受 *.db 被同步
+      await _writeLocalStignore(target.path);
       try {
         await ApiService.scanFolder(enclosing.id);
       } catch (e) {
@@ -267,6 +269,71 @@ class MarketService {
     } else {
       await ApiService.setFolderKind(folderId, 'app');
       debugPrint('应用文件夹已存在，已更新 kind: $folderId');
+    }
+
+    await _applySyncIgnoreFromAppJson(folderId, target.path);
+  }
+
+  static Future<List<String>> _readSyncIgnoreRules(String appPath) async {
+    final meta = File(p.join(appPath, 'app.json'));
+    if (!meta.existsSync()) return const [];
+    try {
+      final m = json.decode(await meta.readAsString());
+      if (m is Map && m['syncIgnore'] is List) {
+        return (m['syncIgnore'] as List)
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+      }
+    } catch (_) {}
+    return const [];
+  }
+
+  static Future<void> _writeLocalStignore(String appPath) async {
+    final rules = await _readSyncIgnoreRules(appPath);
+    if (rules.isEmpty) return;
+    try {
+      final stignore = File(p.join(appPath, '.stignore'));
+      final existingLines = stignore.existsSync()
+          ? (await stignore.readAsLines())
+              .map((e) => e.trim())
+              .where((e) => e.isNotEmpty)
+              .toList()
+          : <String>[];
+      final fileMerged = <String>[...existingLines];
+      for (final r in rules) {
+        if (!fileMerged.contains(r)) fileMerged.add(r);
+      }
+      if (fileMerged.length != existingLines.length || !stignore.existsSync()) {
+        await stignore.writeAsString('${fileMerged.join('\n')}\n');
+      }
+    } catch (e) {
+      debugPrint('[market] 写 .stignore: $e');
+    }
+  }
+
+  /// 读取 app.json 的 syncIgnore，合并进该同步文件夹的忽略规则。
+  static Future<void> _applySyncIgnoreFromAppJson(
+    String folderId,
+    String appPath,
+  ) async {
+    final rules = await _readSyncIgnoreRules(appPath);
+    if (rules.isEmpty) return;
+
+    await _writeLocalStignore(appPath);
+
+    try {
+      final existing = await ApiService.getFolderIgnores(folderId);
+      final merged = <String>[...existing];
+      for (final r in rules) {
+        if (!merged.contains(r)) merged.add(r);
+      }
+      if (merged.length != existing.length) {
+        await ApiService.setFolderIgnores(folderId, merged);
+        debugPrint('[market] 已合并 syncIgnore: $rules');
+      }
+    } catch (e) {
+      debugPrint('[market] setFolderIgnores（可忽略）: $e');
     }
   }
 

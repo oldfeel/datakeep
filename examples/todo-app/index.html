@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>待办清单</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main>
+    <h1>待办清单</h1>
+    <p class="hint">数据在 <code>data/todo.db</code>（随同步）；若出现冲突副本，按任务 id + 更新时间自动合并</p>
+    <p id="status" class="status">加载中…</p>
+
+    <form id="form" class="form">
+      <input name="title" type="text" maxlength="200" required placeholder="新任务…" autocomplete="off" />
+      <button type="submit">添加</button>
+    </form>
+
+    <div class="filters" id="filters">
+      <button type="button" data-filter="all" class="active">全部</button>
+      <button type="button" data-filter="open">未完成</button>
+      <button type="button" data-filter="done">已完成</button>
+    </div>
+
+    <ul id="list" class="list"></ul>
+  </main>
+  <script src="vendor/sql-wasm.js"></script>
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

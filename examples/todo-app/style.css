@@ -1,0 +1,124 @@
+:root {
+  color-scheme: light;
+  --bg: #f0f7f6;
+  --ink: #0f172a;
+  --muted: #64748b;
+  --primary: #0f766e;
+  --card: #ffffff;
+  --line: #d1e0dd;
+  font-family: "Source Sans 3", "Noto Sans SC", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(165deg, #e8f4f2 0%, #f5f7fa 50%, #eef2f6 100%);
+  color: var(--ink);
+}
+main {
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+h1 {
+  margin: 0 0 0.35rem;
+  font-size: 1.65rem;
+  color: #1e3a5f;
+}
+.hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.hint code { font-size: 0.8em; }
+.status {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+  color: var(--primary);
+}
+.status.error { color: #b91c1c; }
+.form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.form input {
+  flex: 1;
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  padding: 0.55rem 0.65rem;
+}
+.form button {
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: #fff;
+  padding: 0.55rem 0.9rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+.filters {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+.filters button {
+  font: inherit;
+  font-size: 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+.filters button.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 650;
+}
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.list li {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem 0.85rem;
+  border-bottom: 1px solid var(--line);
+}
+.list li:last-child { border-bottom: none; }
+.list label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  cursor: pointer;
+}
+.list .title.done {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.list button.del {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.list button.del:hover { color: #b91c1c; }
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 1.5rem;
+  font-size: 0.95rem;
+  border: none;
+}

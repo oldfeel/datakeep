@@ -17,6 +17,7 @@ Future<AcceptPendingFolderResult?> showAcceptPendingFolderDialog({
   required String folderId,
   required String deviceName,
   required String label,
+  String? existingPath,
 }) {
   return showDialog<AcceptPendingFolderResult>(
     context: context,
@@ -25,6 +26,7 @@ Future<AcceptPendingFolderResult?> showAcceptPendingFolderDialog({
       folderId: folderId,
       deviceName: deviceName,
       label: label,
+      existingPath: existingPath,
     ),
   );
 }
@@ -33,11 +35,13 @@ class _AcceptPendingFolderDialog extends StatefulWidget {
   final String folderId;
   final String deviceName;
   final String label;
+  final String? existingPath;
 
   const _AcceptPendingFolderDialog({
     required this.folderId,
     required this.deviceName,
     required this.label,
+    this.existingPath,
   });
 
   @override
@@ -58,7 +62,10 @@ class _AcceptPendingFolderDialogState extends State<_AcceptPendingFolderDialog> 
   }
 
   Future<void> _loadDefaultPath() async {
-    final path = await defaultSyncFolderPath(widget.folderId);
+    final existing = widget.existingPath?.trim();
+    final path = (existing != null && existing.isNotEmpty)
+        ? existing
+        : await defaultSyncFolderPath(widget.folderId);
     if (!mounted) return;
     _pathController.text = path;
     await _checkWrite(path);
@@ -172,6 +179,15 @@ class _AcceptPendingFolderDialogState extends State<_AcceptPendingFolderDialog> 
                     Text('设备 "${widget.deviceName}" 邀请你同步文件夹：'),
                     const SizedBox(height: 12),
                     Text(displayLabel, style: Theme.of(context).textTheme.titleMedium),
+                    if (widget.existingPath != null && widget.existingPath!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '本机已有同 ID 文件夹，接受后将把该设备加入现有同步（例如两端都叫 Default Folder）。',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Text('文件夹 ID', style: Theme.of(context).textTheme.labelMedium),
                     SelectableText(

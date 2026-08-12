@@ -83,6 +83,7 @@ class SyncthingService : Service() {
             try {
                 ConfigHelper.ensureConfigExists(this)
                 ConfigHelper.ensureLocalDeviceName(this)
+                ConfigHelper.ensureNoQuicListenAddresses(this)
                 ConfigHelper.ensureAndroidFoldersReady(this)
                 acquireWakeLock()
                 SyncthingEngine.start(this)

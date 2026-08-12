@@ -121,10 +121,16 @@ func (c *Client) Start() error {
 	}
 	early.Add(cfgWrapper)
 
-	// 固定 GUI 到本机 8384，供 Dart shelf 代理
+	// 固定 GUI 到本机 8384，供 Dart shelf 代理。
+	// 移动端禁用 QUIC：Go 1.25.6+/1.26 与旧版 quic-go 会 panic
+	//（crypto/tls bug: where's my session ticket?）。
 	cfgWrapper.Modify(func(cfg *config.Configuration) {
 		cfg.GUI.RawAddress = "127.0.0.1:8384"
 		cfg.GUI.Enabled = true
+		cfg.Options.RawListenAddresses = []string{
+			"tcp://0.0.0.0:22000",
+			"dynamic+https://relays.syncthing.net/endpoint",
+		}
 		if c.deviceName != "" {
 			for i := range cfg.Devices {
 				if cfg.Devices[i].DeviceID == protocol.NewDeviceID(cert.Certificate[0]) {

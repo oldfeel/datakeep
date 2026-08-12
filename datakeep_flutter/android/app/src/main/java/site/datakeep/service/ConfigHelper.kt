@@ -116,12 +116,44 @@ object ConfigHelper {
     }
 
     /**
+     * 禁用 QUIC 监听：Go 1.25.6+/1.26 与旧版 quic-go 会 panic
+     *（crypto/tls bug: where's my session ticket?），导致进程闪退。
+     * 保留 TCP + 中继即可正常同步。
+     */
+    fun ensureNoQuicListenAddresses(context: Context) {
+        val configFile = Constants.getConfigFile(context)
+        if (!configFile.exists()) return
+
+        var xml = configFile.readText()
+        val original = xml
+
+        // 去掉显式 quic 监听
+        xml = xml.replace(Regex("""\s*<listenAddress>quic[^<]*</listenAddress>"""), "")
+
+        // default 会展开为 tcp + relay + quic，改为仅 tcp + relay
+        if (xml.contains("<listenAddress>default</listenAddress>")) {
+            xml = xml.replace(
+                "<listenAddress>default</listenAddress>",
+                "<listenAddress>tcp://0.0.0.0:22000</listenAddress>\n" +
+                    "        <listenAddress>dynamic+https://relays.syncthing.net/endpoint</listenAddress>",
+            )
+        }
+
+        if (xml != original) {
+            configFile.writeText(xml)
+            Log.i(TAG, "已禁用 QUIC 监听（规避 Go/quic-go session ticket 崩溃）")
+        }
+    }
+
+    /**
      * Syncthing 启动前：ignorePerms=true、预建 .stfolder、检查写权限。
      * 与 Syncthing Android 一致，避免 Android 上 chmod / marker 导致同步失败。
      */
     fun ensureAndroidFoldersReady(context: Context) {
         val configFile = Constants.getConfigFile(context)
         if (!configFile.exists()) return
+
+        ensureNoQuicListenAddresses(context)
 
         val hasAllFiles = PermissionUtil.haveStoragePermission(context)
         Log.i(TAG, "ensureAndroidFoldersReady: allFilesAccess=$hasAllFiles")

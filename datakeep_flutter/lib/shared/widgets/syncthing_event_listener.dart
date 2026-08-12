@@ -231,14 +231,16 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
     }
   }
 
-  Future<bool> _isFolderConfiguredLocally(String folderId) async {
+  /// 本机是否已有该 folderId（仅用于提示文案；不因已存在而跳过邀请）
+  Future<String?> _localFolderPathIfAny(String folderId) async {
     try {
       final localId = await ApiService.getLocalDeviceId();
       final folders = await ApiService.getDeviceFolders(localId);
-      return folders.any((f) => f.id == folderId);
-    } catch (_) {
-      return false;
-    }
+      for (final f in folders) {
+        if (f.id == folderId) return f.path;
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<void> _checkPendingFolders() async {
@@ -250,10 +252,6 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
 
     for (final entry in pending.entries) {
       final folderId = entry.key;
-      if (await _isFolderConfiguredLocally(folderId)) {
-        debugPrint('[pending] 文件夹 $folderId 已配置，跳过通知');
-        continue;
-      }
       final info = entry.value;
       if (info is! Map) continue;
       final offeredBy = info['offeredBy'];
@@ -265,7 +263,17 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
         if (folderInfo is Map && folderInfo['label'] != null) {
           label = folderInfo['label'].toString();
         }
-        await _showPendingFolderDialog(folderId: folderId, deviceId: deviceId, label: label);
+        // Syncthing 仍放在 pending 即表示尚未与对端完成共享（即使本机已有同 id 的 Default Folder）
+        final existingPath = await _localFolderPathIfAny(folderId);
+        if (existingPath != null) {
+          debugPrint('[pending] 文件夹 $folderId 本机已有，仍需确认加入对端设备');
+        }
+        await _showPendingFolderDialog(
+          folderId: folderId,
+          deviceId: deviceId,
+          label: label,
+          existingPath: existingPath,
+        );
       }
     }
   }
@@ -287,10 +295,19 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
         final folderId = item['folderID']?.toString() ?? '';
         final deviceId = item['deviceID']?.toString() ?? '';
         if (folderId.isEmpty || deviceId.isEmpty) continue;
-        if (await _isFolderConfiguredLocally(folderId)) continue;
         final label = item['folderLabel']?.toString() ?? folderId;
-        _showSnack('收到共享文件夹邀请: $label');
-        _showPendingFolderDialog(folderId: folderId, deviceId: deviceId, label: label);
+        final existingPath = await _localFolderPathIfAny(folderId);
+        _showSnack(
+          existingPath != null
+              ? '收到共享邀请（本机已有同名文件夹）: $label'
+              : '收到共享文件夹邀请: $label',
+        );
+        _showPendingFolderDialog(
+          folderId: folderId,
+          deviceId: deviceId,
+          label: label,
+          existingPath: existingPath,
+        );
       }
     } else {
       _checkPendingFolders();
@@ -301,6 +318,7 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
     required String folderId,
     required String deviceId,
     required String label,
+    String? existingPath,
   }) async {
     final key = _pendingFolderKey(folderId, deviceId);
     if (_shownPendingFolders.contains(key)) return;
@@ -315,6 +333,7 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
       folderId: folderId,
       deviceName: deviceName,
       label: displayLabel,
+      existingPath: existingPath,
     );
 
     if (!mounted) return;
