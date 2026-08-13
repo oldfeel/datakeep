@@ -17,6 +17,8 @@
 #   - Flutter 官方不支持跨 OS 交叉编译桌面端（Linux 编不出 Windows/macOS 安装包）
 #   - Android 可在 Linux / macOS / Windows 上构建（需 Android SDK + syncthing_core AAR）
 #   - 桌面端依赖系统已安装的 syncthing；移动端内嵌 syncthing_core
+#   - 也可用 GitHub Actions（公开仓免费）: 仓库 → Actions → Build packages
+#     或: gh workflow run build.yml
 
 set -euo pipefail
 
