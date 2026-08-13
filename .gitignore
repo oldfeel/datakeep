@@ -13,3 +13,6 @@ market_server/market_server
 market_server/.env
 market_admin/node_modules/
 market_admin/dist/
+
+# 构建产物
+dist/

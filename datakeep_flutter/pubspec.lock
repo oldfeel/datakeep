@@ -1146,6 +1146,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "3.0.3"
+  webview_cef:
+    dependency: "direct main"
+    description:
+      name: webview_cef
+      sha256: "9acc26754ecb03796eb268b33ec4c033a3fe6689ce9a3c05fed78e4d836cef36"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "0.6.1"
   webview_flutter:
     dependency: "direct main"
     description:

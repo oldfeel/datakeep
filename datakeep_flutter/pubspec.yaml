@@ -94,6 +94,7 @@ dependencies:
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
   cryptography: ^2.9.0
+  webview_cef: ^0.6.1
 
 dev_dependencies:
   flutter_test:

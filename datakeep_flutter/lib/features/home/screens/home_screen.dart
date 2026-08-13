@@ -410,10 +410,23 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     }
                   : null,
-              onOpenApp: folder.isApp && selectedIsLocal
-                  ? () => openFolderApp(context, folder)
+              onBrowseFiles: folder.isApp && selectedIsLocal
+                  ? () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => FolderDetailScreen(
+                            deviceId: folder.deviceId,
+                            folderId: folder.id,
+                          ),
+                        ),
+                      );
+                    }
                   : null,
               onTap: () {
+                if (folder.isApp && selectedIsLocal) {
+                  openFolderApp(context, folder);
+                  return;
+                }
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (context) => FolderDetailScreen(

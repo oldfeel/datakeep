@@ -231,9 +231,9 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                           children: [
                             if (folder.isApp)
                               IconButton(
-                                icon: const Icon(Icons.play_arrow, size: 22),
-                                tooltip: '打开应用',
-                                onPressed: () => openFolderApp(context, folder),
+                                icon: const Icon(Icons.folder_open, size: 22),
+                                tooltip: '浏览文件',
+                                onPressed: () => widget.onFolderTap(folder),
                               ),
                             IconButton(
                               icon: const Icon(Icons.edit_outlined, size: 20),
@@ -243,7 +243,13 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                           ],
                         )
                       : null,
-                  onTap: () => widget.onFolderTap(folder),
+                  onTap: () {
+                    if (folder.isApp && widget.device.isLocal) {
+                      openFolderApp(context, folder);
+                      return;
+                    }
+                    widget.onFolderTap(folder);
+                  },
                 ),
               );
             },

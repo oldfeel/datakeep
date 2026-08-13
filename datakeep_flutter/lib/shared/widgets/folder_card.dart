@@ -5,7 +5,8 @@ class FolderCard extends StatelessWidget {
   final Folder folder;
   final VoidCallback? onEdit;
   final VoidCallback? onTap;
-  final VoidCallback? onOpenApp;
+  /// 应用：浏览文件（点卡片默认运行，见各调用处 onTap）
+  final VoidCallback? onBrowseFiles;
   final bool isDesktop;
   /// 是否显示路径与统计（本机或已从对端拉取的真实数据）。
   final bool showPath;
@@ -15,7 +16,7 @@ class FolderCard extends StatelessWidget {
     required this.folder,
     this.onEdit,
     this.onTap,
-    this.onOpenApp,
+    this.onBrowseFiles,
     this.isDesktop = false,
     this.showPath = true,
   });
@@ -75,11 +76,11 @@ class FolderCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (folder.isApp && onOpenApp != null)
+                  if (folder.isApp && onBrowseFiles != null)
                     IconButton(
-                      icon: const Icon(Icons.play_arrow, size: 22),
-                      tooltip: '打开应用',
-                      onPressed: onOpenApp,
+                      icon: const Icon(Icons.folder_open, size: 22),
+                      tooltip: '浏览文件',
+                      onPressed: onBrowseFiles,
                     ),
                   if (onEdit != null)
                     IconButton(
@@ -222,11 +223,11 @@ class FolderCard extends StatelessWidget {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (folder.isApp && onOpenApp != null)
+            if (folder.isApp && onBrowseFiles != null)
               IconButton(
-                icon: const Icon(Icons.play_arrow),
-                tooltip: '打开应用',
-                onPressed: onOpenApp,
+                icon: const Icon(Icons.folder_open),
+                tooltip: '浏览文件',
+                onPressed: onBrowseFiles,
               ),
             if (onEdit != null)
               IconButton(

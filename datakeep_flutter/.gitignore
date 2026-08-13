@@ -53,3 +53,6 @@ datakeep.db
 datakeep.db-journal
 # 本机文件夹类型标记
 folder_kind.json
+
+# CEF 官方包本地缓存（勿提交）
+.cef_cache/

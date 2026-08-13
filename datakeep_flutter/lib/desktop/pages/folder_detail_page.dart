@@ -384,7 +384,9 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                 ),
                 child: InkWell(
                   onTap: isDir
-                      ? () => _enterFolder(name)
+                      ? (isApp
+                          ? () => _openEntryApp(name)
+                          : () => _enterFolder(name))
                       : () => widget.onFileTap(_relativePath(name)),
                   onSecondaryTap: isDir ? null : () => _shareFile(context, name),
                   child: Padding(
@@ -425,11 +427,18 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                         ),
                       ),
                       SizedBox(
-                        width: isApp ? 80 : 40,
+                        width: 40,
                         child: isApp
-                            ? TextButton(
-                                onPressed: () => _openEntryApp(name),
-                                child: const Text('打开'),
+                            ? IconButton(
+                                icon: const Icon(Icons.folder_open, size: 20),
+                                tooltip: '浏览文件',
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 36,
+                                  minHeight: 36,
+                                ),
+                                onPressed: () => _enterFolder(name),
                               )
                             : (isDir
                                 ? null
@@ -482,7 +491,9 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: isDir
-                ? () => _enterFolder(name)
+                ? (isApp
+                    ? () => _openEntryApp(name)
+                    : () => _enterFolder(name))
                 : () => widget.onFileTap(_relativePath(name)),
             onSecondaryTap: isDir ? null : () => _shareFile(context, name),
             child: Stack(
@@ -522,10 +533,10 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                     top: 0,
                     right: 0,
                     child: IconButton(
-                      icon: const Icon(Icons.play_arrow, size: 20),
-                      tooltip: '打开应用',
+                      icon: const Icon(Icons.folder_open, size: 20),
+                      tooltip: '浏览文件',
                       visualDensity: VisualDensity.compact,
-                      onPressed: () => _openEntryApp(name),
+                      onPressed: () => _enterFolder(name),
                     ),
                   )
                 else if (!isDir)

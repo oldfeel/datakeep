@@ -653,9 +653,10 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         ],
       ),
       trailing: isApp
-          ? TextButton(
-              onPressed: () => _openEntryApp(name),
-              child: const Text('打开'),
+          ? IconButton(
+              icon: const Icon(Icons.folder_open),
+              tooltip: '浏览文件',
+              onPressed: () => _navigateToFolder(name),
             )
           : (isDir
               ? const Icon(Icons.chevron_right)
@@ -688,7 +689,9 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                   ],
                 )),
       onTap: () {
-        if (isDir) {
+        if (isApp) {
+          _openEntryApp(name);
+        } else if (isDir) {
           _navigateToFolder(name);
         } else {
           final path = _currentPath.isEmpty

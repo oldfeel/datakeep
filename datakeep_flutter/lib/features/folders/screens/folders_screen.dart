@@ -167,8 +167,23 @@ class FoldersScreen extends StatelessWidget {
                         context.read<FolderProvider>().fetchFolders(silent: true),
                   );
                 },
-                onOpenApp: folder.isApp ? () => openFolderApp(context, folder) : null,
+                onBrowseFiles: folder.isApp
+                    ? () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => FolderDetailScreen(
+                              deviceId: folder.deviceId,
+                              folderId: folder.id,
+                            ),
+                          ),
+                        );
+                      }
+                    : null,
                 onTap: () {
+                  if (folder.isApp) {
+                    openFolderApp(context, folder);
+                    return;
+                  }
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (context) => FolderDetailScreen(
@@ -210,8 +225,23 @@ class FoldersScreen extends StatelessWidget {
                         context.read<FolderProvider>().fetchFolders(silent: true),
                   );
                 },
-                onOpenApp: folder.isApp ? () => openFolderApp(context, folder) : null,
+                onBrowseFiles: folder.isApp
+                    ? () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => FolderDetailScreen(
+                              deviceId: folder.deviceId,
+                              folderId: folder.id,
+                            ),
+                          ),
+                        );
+                      }
+                    : null,
                 onTap: () {
+                  if (folder.isApp) {
+                    openFolderApp(context, folder);
+                    return;
+                  }
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (context) => FolderDetailScreen(

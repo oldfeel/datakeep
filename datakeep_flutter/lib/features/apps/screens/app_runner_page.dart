@@ -10,8 +10,11 @@ import 'package:path/path.dart' as p;
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_static/shelf_static.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_cef/webview_cef.dart' as cef;
+import 'package:webview_flutter/webview_flutter.dart' as wf;
 
+import '../../../core/services/api_service.dart';
+import '../../../shared/utils/app_dir.dart';
 import '../../../shared/utils/open_url_external.dart';
 
 /// 在本地 HTTP 服务上打开应用目录（入口默认 index.html）
@@ -42,14 +45,27 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
   String? _error;
   String? _openHint;
   String? _webError;
-  WebViewController? _controller;
+  wf.WebViewController? _wfController;
+  cef.WebViewController? _cefController;
   bool _useWebView = false;
+  bool _useCef = false;
+  bool _pulling = false;
 
   Timer? _revTimer;
   int? _lastAppRev;
   int? _lastDataRev;
   DateTime? _localDataWriteAt;
   bool _reloadingApp = false;
+
+  static bool _cefManagerReady = false;
+
+  /// Linux / Windows：CEF Texture 内嵌；移动端与 macOS：系统 WebView。
+  bool get _preferCef =>
+      !kIsWeb && (Platform.isLinux || Platform.isWindows);
+
+  bool get _preferPlatformWebView =>
+      !kIsWeb &&
+      (Platform.isAndroid || Platform.isIOS || Platform.isMacOS);
 
   @override
   void initState() {
@@ -299,16 +315,31 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
     };
   }
 
+  Future<bool> _ensureCefManager() async {
+    if (_cefManagerReady) return true;
+    try {
+      await cef.WebviewManager().initialize(userAgent: 'DataKeep-AppRunner');
+      _cefManagerReady = true;
+      return true;
+    } catch (e) {
+      debugPrint('[AppRunner] CEF 初始化失败: $e');
+      return false;
+    }
+  }
+
   Future<void> _reloadWebViewForAppUpdate() async {
-    final c = _controller;
     final entry = _entryRel;
-    if (c == null || entry == null || _server == null) return;
+    if (entry == null || _server == null || !_useWebView) return;
     _reloadingApp = true;
     try {
       final url =
           'http://127.0.0.1:${_server!.port}/$entry?_r=${DateTime.now().millisecondsSinceEpoch}';
       _url = url;
-      await c.loadRequest(Uri.parse(url));
+      if (_useCef) {
+        await _cefController?.loadUrl(url);
+      } else {
+        await _wfController?.loadRequest(Uri.parse(url));
+      }
       debugPrint('[AppRunner] 应用文件已更新，重新加载 WebView');
     } catch (e) {
       debugPrint('[AppRunner] 重载失败: $e');
@@ -318,15 +349,91 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
   }
 
   Future<void> _notifyDataChanged(int dataRev) async {
-    final c = _controller;
-    if (c == null || !_useWebView) return;
-    try {
-      await c.runJavaScript(
+    if (!_useWebView) return;
+    const js =
         'window.dispatchEvent(new CustomEvent("datakeep:data-changed",'
-        '{detail:{dataRev:$dataRev}}));',
-      );
+        '{detail:{dataRev:__REV__}}));';
+    final code = js.replaceFirst('__REV__', '$dataRev');
+    try {
+      if (_useCef) {
+        await _cefController?.executeJavaScript(code);
+      } else {
+        await _wfController?.runJavaScript(code);
+      }
     } catch (e) {
       debugPrint('[AppRunner] 通知 data-changed 失败: $e');
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// 触发所属同步文件夹扫描，等待局域网对端同步落盘后对比 revision。
+  Future<void> _refreshFromPeers() async {
+    if (_pulling) return;
+    setState(() => _pulling = true);
+    try {
+      final before = await _computeRevision(widget.appPath);
+      final folders = await ApiService.getFolders();
+      final folder = findEnclosingSyncFolder(folders, widget.appPath);
+      if (folder == null) {
+        _snack('当前应用不在同步文件夹内，无法对比其他设备');
+        return;
+      }
+
+      await ApiService.scanFolder(folder.id);
+
+      var sawActivity = false;
+      final deadline = DateTime.now().add(const Duration(seconds: 20));
+      while (mounted && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        final st = await ApiService.getFolderSyncStatus(folder.id);
+        final status = st['status']?.toString() ?? '';
+        final state = st['state']?.toString() ?? '';
+        final needFiles = (st['needFiles'] as num?)?.toInt() ?? 0;
+        final busy = status == 'syncing' ||
+            state == 'syncing' ||
+            state == 'scanning' ||
+            state == 'scan-waiting' ||
+            needFiles > 0;
+        if (busy) {
+          sawActivity = true;
+          continue;
+        }
+        if (sawActivity) break;
+        // 尚未看到同步活动：多等一会儿，给对端 index 交换时间
+        if (DateTime.now()
+            .isAfter(deadline.subtract(const Duration(seconds: 10)))) {
+          break;
+        }
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      final after = await _computeRevision(widget.appPath);
+      final dataRev = after['dataRev'] ?? 0;
+      final appRev = after['appRev'] ?? 0;
+      final dataChanged = dataRev != (before['dataRev'] ?? 0);
+      final appChanged = appRev != (before['appRev'] ?? 0);
+      _lastDataRev = dataRev;
+      _lastAppRev = appRev;
+
+      if (appChanged && _useWebView) {
+        await _reloadWebViewForAppUpdate();
+        _snack('已从其他设备更新应用文件');
+      } else if (dataChanged) {
+        await _notifyDataChanged(dataRev);
+        _snack('已从其他设备拉取到新数据');
+      } else {
+        // 即使 mtime 未变，也通知一次，便于应用重跑冲突合并等逻辑
+        await _notifyDataChanged(dataRev);
+        _snack(sawActivity ? '同步已完成，暂无新数据' : '暂无来自其他设备的更新');
+      }
+    } catch (e) {
+      _snack('刷新失败：$e');
+    } finally {
+      if (mounted) setState(() => _pulling = false);
     }
   }
 
@@ -417,34 +524,15 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
       }
       final url = 'http://127.0.0.1:${_server!.port}/$entryRel';
       _entryRel = entryRel;
-      final canWebView = !kIsWeb &&
-          (Platform.isAndroid || Platform.isIOS || Platform.isMacOS);
 
-      if (canWebView) {
-        final c = WebViewController()
-          ..setJavaScriptMode(JavaScriptMode.unrestricted)
-          ..setNavigationDelegate(
-            NavigationDelegate(
-              onWebResourceError: (err) {
-                if (!mounted) return;
-                setState(() {
-                  _webError =
-                      '页面加载失败（${err.errorCode}）：${err.description}\n$url';
-                });
-              },
-              onPageFinished: (_) {
-                if (!mounted) return;
-                if (_webError != null) setState(() => _webError = null);
-              },
-            ),
-          )
-          ..loadRequest(Uri.parse(url));
-        setState(() {
-          _url = url;
-          _controller = c;
-          _useWebView = true;
-          _webError = null;
-        });
+      if (_preferCef) {
+        final ok = await _startCefWebView(url);
+        if (!ok) {
+          setState(() => _url = url);
+          await _openBrowser(url);
+        }
+      } else if (_preferPlatformWebView) {
+        await _startPlatformWebView(url);
       } else {
         setState(() => _url = url);
         await _openBrowser(url);
@@ -455,10 +543,75 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
     }
   }
 
+  Future<void> _startPlatformWebView(String url) async {
+    final c = wf.WebViewController()
+      ..setJavaScriptMode(wf.JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        wf.NavigationDelegate(
+          onWebResourceError: (err) {
+            if (!mounted) return;
+            setState(() {
+              _webError =
+                  '页面加载失败（${err.errorCode}）：${err.description}\n$url';
+            });
+          },
+          onPageFinished: (_) {
+            if (!mounted) return;
+            if (_webError != null) setState(() => _webError = null);
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse(url));
+    setState(() {
+      _url = url;
+      _wfController = c;
+      _useWebView = true;
+      _useCef = false;
+      _webError = null;
+    });
+  }
+
+  /// 内嵌 CEF（Chromium Texture）。失败返回 false，由调用方回退系统浏览器。
+  Future<bool> _startCefWebView(String url) async {
+    if (!await _ensureCefManager()) return false;
+    try {
+      final c = cef.WebviewManager().createWebView(
+        loading: const Center(child: CircularProgressIndicator()),
+      );
+      c.setWebviewListener(cef.WebviewEventsListener(
+        onLoadEnd: (_, __) {
+          if (!mounted) return;
+          if (_webError != null) setState(() => _webError = null);
+        },
+      ));
+      await c.initialize(url);
+      if (!mounted) {
+        await c.dispose();
+        return false;
+      }
+      setState(() {
+        _url = url;
+        _cefController = c;
+        _useWebView = true;
+        _useCef = true;
+        _webError = null;
+      });
+      return true;
+    } catch (e) {
+      debugPrint('[AppRunner] CEF WebView 启动失败: $e');
+      return false;
+    }
+  }
+
   @override
   void dispose() {
     _revTimer?.cancel();
     unawaited(_server?.close(force: true) ?? Future.value());
+    final cefCtrl = _cefController;
+    _cefController = null;
+    if (cefCtrl != null) {
+      unawaited(cefCtrl.dispose());
+    }
     super.dispose();
   }
 
@@ -468,6 +621,18 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
+          if (_url != null)
+            IconButton(
+              tooltip: _pulling ? '正在对比其他设备…' : '刷新：对比其他设备数据',
+              onPressed: _pulling ? null : () => unawaited(_refreshFromPeers()),
+              icon: _pulling
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.sync),
+            ),
           if (_url != null)
             IconButton(
               tooltip: '浏览器打开',
@@ -498,9 +663,18 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
                     ),
                   ),
                 )
-          : _useWebView && _controller != null
-              ? WebViewWidget(controller: _controller!)
-              : Center(
+          : _useWebView && _useCef && _cefController != null
+              ? ValueListenableBuilder<bool>(
+                  valueListenable: _cefController!,
+                  builder: (context, ready, _) {
+                    return ready
+                        ? _cefController!.webviewWidget
+                        : _cefController!.loadingWidget;
+                  },
+                )
+              : _useWebView && _wfController != null
+                  ? wf.WebViewWidget(controller: _wfController!)
+                  : Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -535,3 +709,4 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
     );
   }
 }
+
