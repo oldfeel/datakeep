@@ -247,7 +247,16 @@ jobs:
       - run: |
           flutter config --enable-macos-desktop
           flutter pub get
-          # Podfile 含 webview_cef helper；首次会下载 CEF
+          # 先 pod install，确认 CEF 链接参数已按 Podfile post_install 修好
+          (cd macos && pod install)
+          echo "---- Pods-Runner.release OTHER_LDFLAGS ----"
+          grep -n '^OTHER_LDFLAGS' \
+            "macos/Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig" || true
+          if grep -nE 'OTHER_LDFLAGS=.*(-ObjC Embedded|-framework "Chromium"([[:space:]]|$)|-framework "Chromium" Embedded|-framework Chromium Embedded)' \
+              "macos/Pods/Target Support Files/Pods-Runner"/Pods-Runner.*.xcconfig; then
+            echo "::error::CEF OTHER_LDFLAGS still broken (unescaped Chromium Embedded Framework)"
+            exit 1
+          fi
           flutter build macos --release
 
       - name: Package zip
