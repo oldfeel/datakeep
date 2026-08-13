@@ -54,6 +54,7 @@ class BackendServer {
       ..get('/api/folder/<folderId>/ignores', _handleGetFolderIgnores)
       ..post('/api/folder/<folderId>/ignores', _handleSetFolderIgnores)
       ..post('/api/folder/<folderId>/scan', _handleFolderScan)
+      ..post('/api/folder/<folderId>/reset-index', _handleFolderResetIndex)
       ..get('/api/folder/<folderId>/issues', _handleFolderIssues)
       ..post('/api/folder/<folderId>/fix-path', _handleFixFolderPath)
       ..get('/api/folder/<folderId>/preview', _handleFilePreview)
@@ -302,6 +303,9 @@ class BackendServer {
 
   /// 经局域网 HTTPS 拉取对端真实文件夹列表
   Future<Response> _handleRemoteDeviceFolders(String deviceId) async {
+    if (!await _api.isRunning()) {
+      return _json({'code': 1006, 'data': 'Syncthing 未运行'}, status: 503);
+    }
     final conn = await _api.getDeviceConnection(deviceId);
     if (!conn.connected) {
       return _json({'code': 1007, 'data': '设备离线'}, status: 503);
@@ -454,6 +458,9 @@ class BackendServer {
     String folderId,
     String path,
   ) async {
+    if (!await _api.isRunning()) {
+      return _json({'code': 1006, 'data': 'Syncthing 未运行'}, status: 503);
+    }
     final conn = await _api.getDeviceConnection(deviceId);
     if (!conn.connected) {
       return _json({'code': 1007, 'data': '设备离线'}, status: 503);
@@ -494,6 +501,9 @@ class BackendServer {
     String path,
   ) async {
     if (path.isEmpty) return Response(400, body: '缺少 path 参数');
+    if (!await _api.isRunning()) {
+      return Response(503, body: 'Syncthing 未运行');
+    }
     final conn = await _api.getDeviceConnection(deviceId);
     if (!conn.connected) {
       return Response(503, body: '设备离线');
@@ -693,11 +703,18 @@ class BackendServer {
   }
 
   String _decodeFolderId(String folderId) {
-    try {
-      return Uri.decodeComponent(folderId);
-    } catch (_) {
-      return folderId;
+    var id = folderId;
+    // shelf 有时留下未解码的 %XX；中文 folder id 需还原，否则 Syncthing 404
+    for (var i = 0; i < 2; i++) {
+      try {
+        final decoded = Uri.decodeComponent(id);
+        if (decoded == id) break;
+        id = decoded;
+      } catch (_) {
+        break;
+      }
     }
+    return id;
   }
 
   Future<Response> _handleGetFolderSettings(Request request, String folderId) async {
@@ -805,6 +822,25 @@ class BackendServer {
     final id = _decodeFolderId(folderId);
     await _api.triggerFolderScan(id);
     return _json({'code': 0, 'data': {'message': '已触发扫描'}});
+  }
+
+  Future<Response> _handleFolderResetIndex(Request request, String folderId) async {
+    final id = _decodeFolderId(folderId);
+    final result = await _api.resetFolderIndex(id);
+    if (result['ok'] == null &&
+        (_apiIsError(result) ||
+            (result['error'] != null &&
+                result['error'].toString().isNotEmpty))) {
+      final err = result['error']?.toString() ?? '未知错误';
+      return _json({'code': 1003, 'data': '重建索引失败: $err'}, status: 500);
+    }
+    return _json({
+      'code': 0,
+      'data': {
+        'message': '已重建索引并触发扫描',
+        'folderId': id,
+      },
+    });
   }
 
   Future<Response> _handleFolderIssues(Request request, String folderId) async {
@@ -916,14 +952,21 @@ class BackendServer {
   }
 
   Future<Response> _handleFolderStatus(Request request, String folderId) async {
-    final sync = await _api.getFolderSyncSummary(folderId);
+    final id = _decodeFolderId(folderId);
+    final sync = await _api.getFolderSyncSummary(id);
     if (sync['status'] == 'unknown') {
       return _json({'code': 1005, 'data': '无法获取文件夹状态'}, status: 503);
     }
-    final folderPath = await _api.getFolderPath(folderId);
+    final folderPath = await _api.getFolderPath(id);
     if (folderPath != null) {
       sync['currentPath'] = folderPath;
     }
+    debugPrint(
+      '[sync-api] GET /folder/$id/status → '
+      '${sync['status']} ${sync['completion']}% '
+      'inSync=${sync['inSyncFiles']}/${sync['globalFiles']} '
+      'local=${sync['localFiles']} need=${sync['needFiles']}',
+    );
     return _json({'code': 0, 'data': sync});
   }
 
@@ -1307,6 +1350,10 @@ class BackendServer {
         'needFiles': 0,
         'state': 'unknown',
         'pullErrors': 0,
+        'inSyncFiles': 0,
+        'inSyncBytes': 0,
+        'inBps': 0,
+        'outBps': 0,
       };
     }).where((f) => (f['id'] as String).isNotEmpty).toList();
   }
@@ -1345,6 +1392,10 @@ class BackendServer {
       'needFiles': sync['needFiles'] ?? 0,
       'state': sync['state'] ?? 'unknown',
       'pullErrors': sync['pullErrors'] ?? 0,
+      'inSyncFiles': sync['inSyncFiles'] ?? 0,
+      'inSyncBytes': sync['inSyncBytes'] ?? 0,
+      'inBps': sync['inBps'] ?? 0,
+      'outBps': sync['outBps'] ?? 0,
       'kind': _kind.getKind(folderId),
     };
   }

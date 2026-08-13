@@ -242,21 +242,41 @@ class SyncthingApi {
     }
   }
 
-  /// 获取本机 Syncthing 设备 ID
+  String? _cachedLocalDeviceId;
+
+  /// 获取本机 Syncthing 设备 ID（成功后缓存；引擎短暂不可用时仍可用）
   Future<String?> getLocalDeviceId() async {
-    final result = await proxyGet('/rest/system/status');
+    final result = await proxyGet('/rest/system/status', silent: true);
     final myId = result['myID']?.toString();
-    if (myId != null && myId.isNotEmpty) return myId;
-    return _localDeviceIdFromConfig();
+    if (myId != null && myId.isNotEmpty) {
+      _cachedLocalDeviceId = myId;
+      return myId;
+    }
+    if (_cachedLocalDeviceId != null && _cachedLocalDeviceId!.isNotEmpty) {
+      return _cachedLocalDeviceId;
+    }
+    final fromConfig = _localDeviceIdFromConfig();
+    if (fromConfig != null && fromConfig.isNotEmpty) {
+      _cachedLocalDeviceId = fromConfig;
+    }
+    return fromConfig;
   }
 
   String? _localDeviceIdFromConfig() {
     try {
       final xml = File(_configPath).readAsStringSync();
-      // config.xml 第一个 device 即本机
-      final m = RegExp(r'<device id="([^"]+)"').firstMatch(xml);
-      final id = m?.group(1);
-      return (id != null && id.isNotEmpty) ? id : null;
+      // 顶层设备块通常含 name= 与 compression=；folder 内共享成员没有 compression
+      final full = RegExp(
+        r'<device id="([^"]+)"[^>]*compression=',
+      ).firstMatch(xml);
+      if (full != null) {
+        final id = full.group(1);
+        if (id != null && id.isNotEmpty) return id;
+      }
+      final withName = RegExp(r'<device id="([^"]+)"\s+name="').firstMatch(xml);
+      final id = withName?.group(1);
+      if (id != null && id.isNotEmpty) return id;
+      return null;
     } catch (_) {
       return null;
     }
@@ -558,6 +578,43 @@ class SyncthingApi {
     await proxyPost('/rest/db/scan?folder=$encoded', {});
   }
 
+  /// 重建指定文件夹的索引：从配置移除再加回（会 DropFolder，本地文件保留）。
+  /// 比 /rest/system/reset 更适合移动端（无需暂停+整进程重启）。
+  Future<Map<String, dynamic>> resetFolderIndex(String folderId) async {
+    final resolvedId = _resolveFolderId(folderId);
+    final encoded = Uri.encodeComponent(resolvedId);
+    debugPrint('[sync] 重建索引 folder=$resolvedId');
+
+    final cfg = await proxyGet('/rest/config/folders/$encoded');
+    if (_isProxyError(cfg) || cfg.isEmpty) {
+      return {'error': '读取文件夹配置失败: ${cfg['error'] ?? 'empty'}'};
+    }
+
+    final saved = Map<String, dynamic>.from(cfg);
+    // 确保重新加入时不会保持异常暂停态
+    saved['paused'] = false;
+    saved['id'] = resolvedId;
+
+    final del = await proxyDelete('/rest/config/folders/$encoded');
+    if (_isProxyError(del)) {
+      return {'error': '移除文件夹配置失败: ${del['error']}'};
+    }
+    debugPrint('[sync] 已移除配置以丢弃索引: $resolvedId');
+
+    // 等待 model.removeFolder / DropFolder 完成
+    await Future.delayed(const Duration(milliseconds: 800));
+
+    final created = await proxyPost('/rest/config/folders', saved);
+    if (_isProxyError(created)) {
+      return {'error': '重新添加文件夹失败: ${created['error']}'};
+    }
+    debugPrint('[sync] 已重新添加文件夹: $resolvedId');
+
+    await Future.delayed(const Duration(milliseconds: 400));
+    await triggerFolderScan(resolvedId);
+    return {'ok': 'rebuilt folder index', 'folderId': resolvedId};
+  }
+
   /// Android：确保 ignorePerms=true 并触发全量扫描
   Future<void> ensureAndroidFoldersReady() async {
     if (!Platform.isAndroid) return;
@@ -580,23 +637,68 @@ class SyncthingApi {
     }
   }
 
-  /// 从 Syncthing 读取文件夹同步状态
+  int? _prevInBytesTotal;
+  int? _prevOutBytesTotal;
+  DateTime? _prevConnSampleAt;
+
+  /// 从 /rest/system/connections 的累计字节估算当前上下行速率（B/s）
+  Future<({int inBps, int outBps})> _sampleConnectionRates() async {
+    final conn = await proxyGet('/rest/system/connections', silent: true);
+    if (_isProxyError(conn) || conn.isEmpty) {
+      return (inBps: 0, outBps: 0);
+    }
+    final total = conn['total'];
+    int inTotal = 0;
+    int outTotal = 0;
+    if (total is Map) {
+      inTotal = (total['inBytesTotal'] as num?)?.toInt() ?? 0;
+      outTotal = (total['outBytesTotal'] as num?)?.toInt() ?? 0;
+    }
+    final now = DateTime.now();
+    var inBps = 0;
+    var outBps = 0;
+    final prevAt = _prevConnSampleAt;
+    final prevIn = _prevInBytesTotal;
+    final prevOut = _prevOutBytesTotal;
+    if (prevAt != null && prevIn != null && prevOut != null) {
+      final dt = now.difference(prevAt).inMilliseconds / 1000.0;
+      if (dt >= 0.5) {
+        if (inTotal >= prevIn) inBps = ((inTotal - prevIn) / dt).round();
+        if (outTotal >= prevOut) outBps = ((outTotal - prevOut) / dt).round();
+      }
+    }
+    _prevInBytesTotal = inTotal;
+    _prevOutBytesTotal = outTotal;
+    _prevConnSampleAt = now;
+    return (inBps: inBps, outBps: outBps);
+  }
+
+  /// 从 Syncthing 读取文件夹同步状态（本机视角，以 db/status 为准）
   Future<Map<String, dynamic>> getFolderSyncSummary(String folderId) async {
+    // 防御路径参数被双重编码（如 %E5%A4%96%E5%8C%85）
+    var id = folderId;
+    for (var i = 0; i < 2; i++) {
+      try {
+        final decoded = Uri.decodeComponent(id);
+        if (decoded == id) break;
+        id = decoded;
+      } catch (_) {
+        break;
+      }
+    }
     final status = await proxyGet(
       '/rest/db/status',
-      queryParams: {'folder': folderId},
+      queryParams: {'folder': id},
       silent: true,
     );
     // 注意：成功响应里也有 error:""，不能用 containsKey('error')
     if (_isProxyError(status) || status.isEmpty) {
+      debugPrint(
+        '[sync][$id] db/status 失败或空: '
+        'keys=${status.keys.toList()} err=${status['error']}',
+      );
       return {'status': 'unknown', 'state': 'unknown', 'completion': 0.0};
     }
-
-    final completionRes = await proxyGet(
-      '/rest/db/completion',
-      queryParams: {'folder': folderId},
-      silent: true,
-    );
 
     final state = status['state']?.toString() ?? 'unknown';
     final needBytes = (status['needBytes'] as num?)?.toInt() ?? 0;
@@ -606,26 +708,62 @@ class SyncthingApi {
     final localFiles = (status['localFiles'] as num?)?.toInt() ?? 0;
     final localBytes = (status['localBytes'] as num?)?.toInt() ?? 0;
     final pullErrors = (status['pullErrors'] as num?)?.toInt() ?? 0;
-    final completion = _isProxyError(completionRes) || completionRes.isEmpty
-        ? (globalBytes > 0 ? (globalBytes - needBytes) / globalBytes * 100.0 : 100.0)
-        : (completionRes['completion'] as num?)?.toDouble() ?? 0.0;
+    final rawInSyncFiles = (status['inSyncFiles'] as num?)?.toInt();
+    final rawInSyncBytes = (status['inSyncBytes'] as num?)?.toInt();
+    final inSyncFiles =
+        rawInSyncFiles ?? (globalFiles - needFiles).clamp(0, globalFiles);
+    final inSyncBytes =
+        rawInSyncBytes ?? (globalBytes - needBytes).clamp(0, globalBytes);
+
+    // 本机完成度：用 inSyncBytes/globalBytes（勿用 /rest/db/completion，那是对端视角）
+    final double completion;
+    if (globalBytes > 0) {
+      completion = (inSyncBytes / globalBytes * 100.0).clamp(0.0, 100.0);
+    } else if (needFiles == 0 && needBytes == 0) {
+      completion = 100.0;
+    } else {
+      completion = 0.0;
+    }
+
+    // 对照旧算法，便于确认热重载/热重启是否生效
+    final oldNeedBased = globalBytes > 0
+        ? ((globalBytes - needBytes) / globalBytes * 100.0).clamp(0.0, 100.0)
+        : 100.0;
+
+    final rates = await _sampleConnectionRates();
+    // idle 但仍有 need：常见于过期/重复索引（对端已无这些项，本机也不会再传输）
+    final stalledIdle =
+        state == 'idle' && (needFiles > 0 || needBytes > 0);
 
     String uiStatus;
     if (pullErrors > 0) {
       uiStatus = 'error';
+    } else if (stalledIdle) {
+      uiStatus = 'stalled';
     } else if (state == 'syncing' ||
         state == 'scanning' ||
         state == 'scan-waiting' ||
         needBytes > 0 ||
         needFiles > 0) {
       uiStatus = 'syncing';
-    } else if (globalBytes > 0 && (localFiles == 0 || completion < 99.9)) {
+    } else if (globalBytes > 0 && completion < 99.9) {
       uiStatus = 'syncing';
     } else if (globalBytes == 0 && localFiles == 0) {
       uiStatus = 'waiting';
     } else {
       uiStatus = 'synced';
     }
+
+    debugPrint(
+      '[sync][$id] state=$state ui=$uiStatus '
+      'inSyncFiles=$inSyncFiles(raw=$rawInSyncFiles) '
+      'globalFiles=$globalFiles localFiles=$localFiles needFiles=$needFiles | '
+      'inSyncBytes=$inSyncBytes(raw=$rawInSyncBytes) '
+      'globalBytes=$globalBytes needBytes=$needBytes | '
+      'completion=${completion.toStringAsFixed(1)}% '
+      '(oldNeedBased=${oldNeedBased.toStringAsFixed(1)}%) '
+      '↓${rates.inBps} ↑${rates.outBps} B/s',
+    );
 
     return {
       'state': state,
@@ -637,7 +775,12 @@ class SyncthingApi {
       'globalFiles': globalFiles,
       'localFiles': localFiles,
       'localBytes': localBytes,
+      'inSyncFiles': inSyncFiles,
+      'inSyncBytes': inSyncBytes,
       'pullErrors': pullErrors,
+      'inBps': rates.inBps,
+      'outBps': rates.outBps,
+      'stalled': stalledIdle,
     };
   }
 

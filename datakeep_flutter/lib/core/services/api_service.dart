@@ -285,6 +285,7 @@ class ApiService {
   /// 获取设备文件夹
   static Future<List<Folder>> getDeviceFolders(String deviceId) async {
     try {
+      await _ensureSyncthingReady();
       // 如果 deviceId 为空，使用 'local' 作为默认值
       final validDeviceId = deviceId.isEmpty ? 'local' : deviceId;
       final localDeviceId = await getLocalDeviceId();
@@ -475,6 +476,7 @@ class ApiService {
     String? deviceId,
   }) async {
     try {
+      await _ensureSyncthingReady();
       final localId = await getLocalDeviceId();
       final isLocal = deviceId == null ||
           deviceId.isEmpty ||
@@ -1148,6 +1150,32 @@ class ApiService {
 
   static Future<void> scanFolder(String folderId) async {
     await _post('/folder/${Uri.encodeComponent(folderId)}/scan', {});
+  }
+
+  /// 重建文件夹索引（移除并重新加入配置以 DropFolder，本地文件不删）
+  static Future<void> resetFolderIndex(String folderId) async {
+    final resp = await _post(
+      '/folder/${Uri.encodeComponent(folderId)}/reset-index',
+      {},
+    );
+    if (resp.containsKey('code') && resp['code'] != 0) {
+      throw Exception(resp['data']?.toString() ?? '重建索引失败');
+    }
+
+    // 等待扫描起步后再返回
+    for (var i = 0; i < 20; i++) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      try {
+        final info = await getFolderSyncStatus(folderId);
+        final status = info['status']?.toString() ?? 'unknown';
+        if (status != 'unknown') {
+          debugPrint('[sync] 重建索引后状态: $status '
+              'inSync=${info['inSyncFiles']}/${info['globalFiles']} '
+              'need=${info['needFiles']}');
+          return;
+        }
+      } catch (_) {}
+    }
   }
 
   /// 失败 / 待同步 / 冲突 基础信息

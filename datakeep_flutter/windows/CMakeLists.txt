@@ -32,6 +32,11 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# windows-latest（VS 2026 / MSVC 14.51）：permission_handler 等仍引用 experimental/coroutine
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+# media_kit_video：MPV API 把字符串字面量当作 void*（MSVC 默认 strictStrings 会 C2440）
+add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/Zc:strictStrings->")
+
 # Compilation settings that should be applied to most targets.
 #
 # Be cautious about adding new options here, as plugins use this function by

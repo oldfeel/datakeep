@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
@@ -8,6 +11,7 @@ import '../../core/services/api_service.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../shared/utils/app_dir.dart';
 import '../../shared/widgets/add_item_dialog.dart';
+import '../../shared/widgets/folder_sync_banner.dart';
 import '../../shared/widgets/share_to_cloud_sheet.dart';
 import '../widgets/file_icon.dart';
 
@@ -41,10 +45,16 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
   final List<String> _currentPath = [];
   bool _isLoading = true;
   String? _error;
+  Map<String, dynamic>? _syncInfo;
+  Timer? _syncTimer;
+  bool _scanning = false;
 
   bool _isGrid = false;
   _SortField _sortField = _SortField.name;
   bool _sortAscending = true;
+
+  bool get _showSyncBanner =>
+      widget.device.isLocal && !widget.folder.isReadonlyAccess;
 
   @override
   void initState() {
@@ -55,6 +65,102 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
       );
     }
     _loadPrefs().then((_) => _loadFiles());
+    if (_showSyncBanner) {
+      unawaited(_refreshSync());
+      _syncTimer =
+          Timer.periodic(const Duration(seconds: 2), (_) => _refreshSync());
+    }
+  }
+
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshSync() async {
+    if (!_showSyncBanner) return;
+    try {
+      final info = await ApiService.getFolderSyncStatus(widget.folder.id);
+      if (!mounted) return;
+      debugPrint(
+        '[sync-ui][desktop] folder=${widget.folder.id} '
+        'status=${info['status']} completion=${info['completion']} '
+        'inSync=${info['inSyncFiles']}/${info['globalFiles']} '
+        'local=${info['localFiles']} need=${info['needFiles']} '
+        'needBytes=${info['needBytes']}',
+      );
+      final wasSyncing = _syncInfo?['status'] == 'syncing';
+      setState(() => _syncInfo = info);
+      final isSyncing = info['status'] == 'syncing';
+      if (isSyncing || (wasSyncing && info['status'] == 'synced')) {
+        await _loadFiles();
+      }
+    } catch (e) {
+      debugPrint('[sync-ui][desktop] 刷新失败: $e');
+    }
+  }
+
+  Future<void> _rescanFolder() async {
+    if (_scanning) return;
+    setState(() => _scanning = true);
+    try {
+      await ApiService.scanFolder(widget.folder.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已触发重新扫描')),
+      );
+      await _refreshSync();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('扫描失败: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
+  }
+
+  Future<void> _resetFolderIndex() async {
+    if (_scanning) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重建索引？'),
+        content: const Text(
+          '将清除该文件夹的同步索引并重新扫描本地文件，本地文件不会删除。'
+          '之后会与对端重新交换文件列表，可能需要几分钟。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('重建'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _scanning = true);
+    try {
+      await ApiService.resetFolderIndex(widget.folder.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已重建索引，正在重新扫描…')),
+      );
+      await _refreshSync();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('重建索引失败: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
   }
 
   void _notifyPathChanged() {
@@ -224,6 +330,38 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
         _buildBreadcrumb(context),
         const SizedBox(height: 8),
         _buildToolbar(context),
+        if (_syncInfo != null && _showSyncBanner) ...[
+          const SizedBox(height: 12),
+          FolderSyncBanner(
+            info: _syncInfo!,
+            actions: (_syncInfo!['status']?.toString() == 'stalled' ||
+                    _syncInfo!['stalled'] == true)
+                ? Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _scanning ? null : _rescanFolder,
+                        icon: _scanning
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.refresh, size: 18),
+                        label: Text(_scanning ? '处理中…' : '重新扫描'),
+                      ),
+                      FilledButton.icon(
+                        onPressed: _scanning ? null : _resetFolderIndex,
+                        icon: const Icon(Icons.restart_alt, size: 18),
+                        label: const Text('重建索引'),
+                      ),
+                    ],
+                  )
+                : null,
+          ),
+        ],
         const SizedBox(height: 16),
         Expanded(child: _buildContent(context)),
       ]),

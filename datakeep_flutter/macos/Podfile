@@ -44,4 +44,40 @@ post_install do |installer|
   require File.expand_path(
     'Flutter/ephemeral/.symlinks/plugins/webview_cef/macos/embed_cef_helpers.rb', __dir__)
   WebviewCEF.install_helper_phase(installer)
+
+  # CocoaPods 未给「Chromium Embedded Framework」加引号时，链接会拆成 Embedded / Framework
+  quote_cef = lambda do |text|
+    text
+      .gsub(/-framework\s+"Chromium Embedded Framework"/, '___CEF_FW___')
+      .gsub(/-framework\s+Chromium Embedded Framework/, '-framework "Chromium Embedded Framework"')
+      .gsub('___CEF_FW___', '-framework "Chromium Embedded Framework"')
+  end
+  Dir.glob(File.join(__dir__, 'Pods/Target Support Files/**/*.xcconfig')).each do |path|
+    original = File.read(path)
+    fixed = quote_cef.call(original)
+    File.write(path, fixed) if fixed != original
+  end
+  installer.aggregate_targets.each do |aggregate|
+    aggregate.xcconfigs.each_value do |xcconfig|
+      next unless xcconfig.respond_to?(:other_linker_flags)
+      # 强制写回已修复的 xcconfig 文件
+    end
+    user_project = aggregate.user_project
+    next unless user_project
+    user_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        flags = config.build_settings['OTHER_LDFLAGS']
+        next if flags.nil?
+        if flags.is_a?(Array)
+          joined = flags.join(' ')
+          fixed = quote_cef.call(joined)
+          config.build_settings['OTHER_LDFLAGS'] = fixed if fixed != joined
+        elsif flags.is_a?(String)
+          fixed = quote_cef.call(flags)
+          config.build_settings['OTHER_LDFLAGS'] = fixed if fixed != flags
+        end
+      end
+    end
+    user_project.save
+  end
 end

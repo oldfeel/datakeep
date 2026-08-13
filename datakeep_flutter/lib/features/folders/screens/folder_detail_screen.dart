@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
@@ -10,6 +11,7 @@ import '../../../shared/utils/app_dir.dart';
 import '../../../shared/utils/file_types.dart';
 import '../../../shared/utils/file_opener.dart';
 import '../../../shared/widgets/add_item_dialog.dart';
+import '../../../shared/widgets/folder_sync_banner.dart';
 import '../../../shared/widgets/share_to_cloud_sheet.dart';
 
 class FolderDetailScreen extends StatefulWidget {
@@ -35,6 +37,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   Map<String, dynamic>? _syncInfo;
   Timer? _syncTimer;
   bool _fixingPath = false;
+  bool _scanning = false;
 
   @override
   void initState() {
@@ -57,13 +60,22 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     try {
       final info = await ApiService.getFolderSyncStatus(widget.folderId);
       if (!mounted) return;
+      debugPrint(
+        '[sync-ui][android/mobile] folder=${widget.folderId} '
+        'status=${info['status']} completion=${info['completion']} '
+        'inSync=${info['inSyncFiles']}/${info['globalFiles']} '
+        'local=${info['localFiles']} need=${info['needFiles']} '
+        'needBytes=${info['needBytes']}',
+      );
       final wasSyncing = _syncInfo?['status'] == 'syncing';
       setState(() => _syncInfo = info);
       final isSyncing = info['status'] == 'syncing';
       if (isSyncing || (wasSyncing && info['status'] == 'synced')) {
         await _loadFiles();
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[sync-ui][android/mobile] 刷新失败: $e');
+    }
   }
 
   Future<void> _loadData() async {
@@ -258,122 +270,131 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     await AndroidStorageService.requestAllFilesAccess();
   }
 
-  Widget _buildSyncBanner(BuildContext context) {
-    final info = _syncInfo!;
-    final status = info['status']?.toString() ?? 'unknown';
-    final completion = (info['completion'] as num?)?.toDouble() ?? 0.0;
-    final needFiles = (info['needFiles'] as num?)?.toInt() ?? 0;
-    final localFiles = (info['localFiles'] as num?)?.toInt() ?? 0;
-    final pullErrors = (info['pullErrors'] as num?)?.toInt() ?? 0;
-    final state = info['state']?.toString() ?? '';
-    final pathError = info['pathError']?.toString() ?? '';
-    final needsPathFix = info['needsPathFix'] == true;
-    final pathWritable = info['pathWritable'] != false;
-
-    Color color;
-    String title;
-    IconData icon;
-    if (status == 'error' || pullErrors > 0 || needsPathFix) {
-      color = Colors.red;
-      title = needsPathFix ? '目录无写入权限' : '同步出错';
-      icon = Icons.error_outline;
-    } else if (status == 'syncing') {
-      color = Colors.orange;
-      title = '正在同步…';
-      icon = Icons.sync;
-    } else if (status == 'waiting') {
-      color = Colors.blue;
-      title = '等待同步';
-      icon = Icons.hourglass_empty;
-    } else {
-      color = Colors.green;
-      title = '已同步';
-      icon = Icons.check_circle_outline;
+  Future<void> _rescanFolder() async {
+    if (_scanning) return;
+    setState(() => _scanning = true);
+    try {
+      await ApiService.scanFolder(widget.folderId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已触发重新扫描')),
+      );
+      await _refreshSync();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('扫描失败: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _scanning = false);
     }
+  }
 
-    final showProgress = status == 'syncing' ||
-        status == 'waiting' ||
-        needFiles > 0 ||
-        (completion > 0 && completion < 100);
-    final progress = (completion / 100).clamp(0.0, 1.0);
-
-    return Material(
-      color: color.withValues(alpha: 0.08),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: color, size: 20),
-                const SizedBox(width: 8),
-                Text(title, style: TextStyle(fontWeight: FontWeight.w600, color: color)),
-                const Spacer(),
-                Text(
-                  status == 'synced'
-                      ? '${completion.toStringAsFixed(0)}%'
-                      : (completion > 0 ? '${completion.toStringAsFixed(0)}%' : ''),
-                  style: TextStyle(color: color, fontWeight: FontWeight.w500),
-                ),
-              ],
-            ),
-            if (showProgress) ...[
-              const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: progress > 0 ? progress : null,
-                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                color: color,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                status == 'waiting'
-                    ? '正在等待与对端建立连接并获取文件列表…'
-                    : '本地 $localFiles 个文件，待同步 $needFiles 个${state.isNotEmpty ? ' · $state' : ''}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ] else if (status == 'synced') ...[
-              const SizedBox(height: 4),
-              Text(
-                '本地 $localFiles 个文件',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-            if (pathError.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(pathError, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red)),
-            ],
-            if (needsPathFix) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton.icon(
-                    onPressed: _fixingPath ? null : _requestStorageAccess,
-                    icon: const Icon(Icons.security, size: 18),
-                    label: const Text('授予存储权限'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _fixingPath ? null : _fixFolderPath,
-                    icon: _fixingPath
-                        ? const SizedBox(
-                            width: 16, height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.folder_open, size: 18),
-                    label: Text(_fixingPath ? '处理中…' : '选择/修复目录'),
-                  ),
-                ],
-              ),
-            ] else if (!pathWritable) ...[
-              const SizedBox(height: 4),
-              Text('路径写入检测中…', style: Theme.of(context).textTheme.bodySmall),
-            ],
-          ],
+  Future<void> _resetFolderIndex() async {
+    if (_scanning) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重建索引？'),
+        content: const Text(
+          '将清除该文件夹的同步索引并重新扫描本地文件，本地文件不会删除。'
+          '之后会与对端重新交换文件列表，可能需要几分钟。',
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('重建'),
+          ),
+        ],
       ),
     );
+    if (ok != true || !mounted) return;
+
+    setState(() => _scanning = true);
+    try {
+      await ApiService.resetFolderIndex(widget.folderId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已重建索引，正在重新扫描…')),
+      );
+      await _refreshSync();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('重建索引失败: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
+  }
+
+  Widget _buildSyncBanner(BuildContext context) {
+    final info = _syncInfo!;
+    final needsPathFix = info['needsPathFix'] == true;
+    final pathWritable = info['pathWritable'] != false;
+    final stalled =
+        info['status']?.toString() == 'stalled' || info['stalled'] == true;
+
+    final actionButtons = <Widget>[];
+    if (needsPathFix) {
+      actionButtons.addAll([
+        FilledButton.icon(
+          onPressed: _fixingPath ? null : _requestStorageAccess,
+          icon: const Icon(Icons.security, size: 18),
+          label: const Text('授予存储权限'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _fixingPath ? null : _fixFolderPath,
+          icon: _fixingPath
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.folder_open, size: 18),
+          label: Text(_fixingPath ? '处理中…' : '选择/修复目录'),
+        ),
+      ]);
+    } else if (!pathWritable) {
+      actionButtons.add(
+        Text(
+          '路径写入检测中…',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      );
+    }
+    if (stalled || needsPathFix) {
+      actionButtons.add(
+        OutlinedButton.icon(
+          onPressed: _scanning ? null : _rescanFolder,
+          icon: _scanning
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.refresh, size: 18),
+          label: Text(_scanning ? '处理中…' : '重新扫描'),
+        ),
+      );
+      actionButtons.add(
+        FilledButton.icon(
+          onPressed: _scanning ? null : _resetFolderIndex,
+          icon: const Icon(Icons.restart_alt, size: 18),
+          label: const Text('重建索引'),
+        ),
+      );
+    }
+
+    final Widget? actions = actionButtons.isEmpty
+        ? null
+        : Wrap(spacing: 8, runSpacing: 8, children: actionButtons);
+
+    return FolderSyncBanner(info: info, actions: actions);
   }
 
   @override

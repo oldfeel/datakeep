@@ -40,6 +40,8 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
   final Set<String> _shownPendingFolders = {};
 
   StreamSubscription<SyncthingEvent>? _eventSub;
+  int _itemFinishedBurst = 0;
+  Timer? _itemFinishedFlushTimer;
 
   @override
   void initState() {
@@ -80,9 +82,20 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           context.read<DeviceProvider>().fetchDevices(silent: true);
           return;
         case 'ItemFinished':
-          message = '文件同步完成: ${event.data['item'] ?? ''}';
-          bgColor = Colors.green;
-          break;
+          // 大批量同步时每个文件都会触发，合并提示避免刷屏
+          _itemFinishedBurst++;
+          _itemFinishedFlushTimer?.cancel();
+          _itemFinishedFlushTimer = Timer(const Duration(seconds: 2), () {
+            if (!mounted) return;
+            final n = _itemFinishedBurst;
+            _itemFinishedBurst = 0;
+            if (n <= 0) return;
+            _addNotification(
+              n == 1 ? '文件同步完成' : '已同步 $n 个文件',
+              snackColor: Colors.green,
+            );
+          });
+          return;
         case 'FolderErrors':
           message = '文件夹 ${event.data['folder'] ?? ''} 出现错误';
           bgColor = Colors.red;
@@ -341,6 +354,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
 
   @override
   void dispose() {
+    _itemFinishedFlushTimer?.cancel();
     _eventSub?.cancel();
     super.dispose();
   }
