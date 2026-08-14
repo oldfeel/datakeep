@@ -97,27 +97,38 @@ class MarketService {
     return p.join(root.path, appKey);
   }
 
-  // 私有桶直链会 400（NotSupportAnonymous）；优先走市场服务代下
+  /// 解析应用包下载地址：请求 `/package`，跟随 302 得到七牛临时链（直连 CDN/S3）。
+  /// 若线上仍是旧版「代下」（直接 200 回文件），则退回用 proxy URL 由本机拉流。
   static Future<Uri> resolveDownloadUri(MarketAppInfo app) async {
     final base = await getBaseUrl();
-    final proxy = Uri.parse('$base/api/apps/${Uri.encodeComponent(app.appKey)}/package');
-    final raw = app.downloadUrl?.trim() ?? '';
-    if (raw.isEmpty) return proxy;
-    final u = Uri.tryParse(raw);
-    // 相对路径：拼到 API base
-    if (u == null || !u.hasScheme) {
-      final path = raw.startsWith('/') ? raw : '/$raw';
-      return Uri.parse('$base$path');
+    final proxy = Uri.parse(
+      '$base/api/apps/${Uri.encodeComponent(app.appKey)}/package',
+    );
+    final client = http.Client();
+    try {
+      final req = http.Request('GET', proxy)..followRedirects = false;
+      final streamed = await client.send(req);
+      await streamed.stream.drain<void>();
+      final code = streamed.statusCode;
+      if (code == 301 ||
+          code == 302 ||
+          code == 303 ||
+          code == 307 ||
+          code == 308) {
+        final loc = streamed.headers['location']?.trim() ?? '';
+        if (loc.isNotEmpty) {
+          final signed = Uri.parse(loc);
+          debugPrint('[market] package 302 → $signed');
+          return signed;
+        }
+      }
+      debugPrint('[market] package status=$code，使用 proxy 下载');
+    } catch (e) {
+      debugPrint('[market] resolve 302 failed: $e，回退 proxy');
+    } finally {
+      client.close();
     }
-    // 对象存储直链（无签名）不可用 → 强制代下
-    final host = u.host.toLowerCase();
-    if (host.contains('qiniucs.com') ||
-        host.contains('amazonaws.com') ||
-        host.contains('aliyuncs.com')) {
-      debugPrint('[market] rewrite storage URL → proxy: $raw → $proxy');
-      return proxy;
-    }
-    return u;
+    return proxy;
   }
 
   /// 下载、校验、解压到 parentDir/appKey（保留已有 data/），并注册为 kind=app
@@ -129,7 +140,16 @@ class MarketService {
     onProgress?.call('下载中…');
     final uri = await resolveDownloadUri(app);
     debugPrint('[market] install app=${app.appKey} GET $uri');
-    final res = await http.get(uri);
+    // 已是七牛预签名时直连对象存储；勿再跟随到其它地址
+    final client = http.Client();
+    late http.Response res;
+    try {
+      final req = http.Request('GET', uri)..followRedirects = true;
+      final streamed = await client.send(req);
+      res = await http.Response.fromStream(streamed);
+    } finally {
+      client.close();
+    }
     final preview = utf8.decode(
       res.bodyBytes.take(300).toList(),
       allowMalformed: true,
