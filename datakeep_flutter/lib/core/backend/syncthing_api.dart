@@ -199,7 +199,9 @@ class SyncthingApi {
 
   List<Map<String, dynamic>> browseLocalDirectory(String folderPath, [String subPath = '']) {
     try {
-      final dir = Directory('$folderPath/$subPath');
+      final dir = Directory(
+        subPath.isEmpty ? folderPath : '$folderPath/$subPath',
+      );
       if (!dir.existsSync()) return [];
       final entries = dir.listSync().toList()..sort((a, b) {
         final aIsDir = a is Directory;
@@ -210,18 +212,23 @@ class SyncthingApi {
       });
       final result = entries
           .where((e) {
-            final name = e.path.split('/').last;
+            final name = e.path.split(Platform.pathSeparator).last;
             return name.isNotEmpty && name != '.';
           })
           .map((e) {
             final stat = e.statSync();
-            final name = e.path.split('/').last;
+            final name = e.path.split(Platform.pathSeparator).last;
+            final isDir = e is Directory;
+            // 子目录含 app.json 即视为应用包（与 kind=app 注册无关）
+            final isApp = isDir &&
+                File('${e.path}${Platform.pathSeparator}app.json').existsSync();
             return {
               'name': name,
-              'type': e is Directory ? 'dir' : 'file',
+              'type': isDir ? 'dir' : 'file',
               'size': e is File ? stat.size : 0,
               'modTime': stat.modified.millisecondsSinceEpoch ~/ 1000,
               'ctime': stat.changed.millisecondsSinceEpoch ~/ 1000,
+              if (isApp) 'isApp': true,
             };
           }).toList();
       return result;
@@ -839,7 +846,143 @@ class SyncthingApi {
     }
     device['name'] = effectiveName;
 
+    // 曾被忽略过时，先从 remoteIgnoredDevices 去掉，否则无法真正配对
+    await unignoreRemoteDevice(formattedId);
+
     return proxyPost('/rest/config/devices', device);
+  }
+
+  /// 读取完整 config（失败返回带 error 的 map）
+  Future<Map<String, dynamic>> _getFullConfig() async {
+    final raw = await proxyGet('/rest/config');
+    if (_isProxyError(raw)) return raw;
+    if (raw.containsKey('version') || raw.containsKey('devices')) {
+      return Map<String, dynamic>.from(raw);
+    }
+    final data = raw['data'];
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return {'error': '无法读取 Syncthing 配置'};
+  }
+
+  bool _sameDeviceId(String a, String b) => _normId(a) == _normId(b);
+
+  /// 将设备加入 remoteIgnoredDevices，避免删除/拒绝后反复弹出「新设备请求」
+  Future<Map<String, dynamic>> ignoreRemoteDevice(
+    String deviceId, {
+    String name = '',
+    String address = '',
+  }) async {
+    if (!await isRunning()) return {'error': 'Syncthing 未运行'};
+    final cfg = await _getFullConfig();
+    if (cfg.containsKey('error')) return cfg;
+
+    final formattedId = formatDeviceId(deviceId);
+    final ignored = <Map<String, dynamic>>[];
+    for (final e in (cfg['remoteIgnoredDevices'] as List? ?? const [])) {
+      if (e is! Map) continue;
+      final m = Map<String, dynamic>.from(e);
+      final id = m['deviceID']?.toString() ?? '';
+      if (id.isEmpty || _sameDeviceId(id, deviceId)) continue;
+      ignored.add(m);
+    }
+    ignored.add({
+      'deviceID': formattedId,
+      'name': name,
+      'address': address,
+      'time': DateTime.now().toUtc().toIso8601String(),
+    });
+    cfg['remoteIgnoredDevices'] = ignored;
+    return proxyPut('/rest/config', cfg);
+  }
+
+  /// 从忽略列表移除（重新接受该设备前调用）
+  Future<Map<String, dynamic>> unignoreRemoteDevice(String deviceId) async {
+    if (!await isRunning()) return {'error': 'Syncthing 未运行'};
+    final cfg = await _getFullConfig();
+    if (cfg.containsKey('error')) return cfg;
+
+    final list = (cfg['remoteIgnoredDevices'] as List? ?? const []);
+    final next = <Map<String, dynamic>>[];
+    var changed = false;
+    for (final e in list) {
+      if (e is! Map) continue;
+      final m = Map<String, dynamic>.from(e);
+      final id = m['deviceID']?.toString() ?? '';
+      if (_sameDeviceId(id, deviceId)) {
+        changed = true;
+        continue;
+      }
+      next.add(m);
+    }
+    if (!changed) return {};
+    cfg['remoteIgnoredDevices'] = next;
+    return proxyPut('/rest/config', cfg);
+  }
+
+  /// 从配置删除设备，并加入忽略列表（防止对端仍在连接时反复 pending）
+  Future<Map<String, dynamic>> removeAndIgnoreDevice(String deviceId) async {
+    if (!await isRunning()) return {'error': 'Syncthing 未运行'};
+    final cfg = await _getFullConfig();
+    if (cfg.containsKey('error')) return cfg;
+
+    var name = '';
+    final devices = <Map<String, dynamic>>[];
+    for (final e in (cfg['devices'] as List? ?? const [])) {
+      if (e is! Map) continue;
+      final m = Map<String, dynamic>.from(e);
+      final id = m['deviceID']?.toString() ?? '';
+      if (_sameDeviceId(id, deviceId)) {
+        name = m['name']?.toString() ?? '';
+        continue;
+      }
+      devices.add(m);
+    }
+    cfg['devices'] = devices;
+
+    // 从各文件夹共享列表去掉该设备
+    final folders = <Map<String, dynamic>>[];
+    for (final e in (cfg['folders'] as List? ?? const [])) {
+      if (e is! Map) continue;
+      final folder = Map<String, dynamic>.from(e);
+      final fDevs = <Map<String, dynamic>>[];
+      for (final d in (folder['devices'] as List? ?? const [])) {
+        if (d is! Map) continue;
+        final dm = Map<String, dynamic>.from(d);
+        final id = dm['deviceID']?.toString() ?? '';
+        if (_sameDeviceId(id, deviceId)) continue;
+        fDevs.add(dm);
+      }
+      folder['devices'] = fDevs;
+      folders.add(folder);
+    }
+    cfg['folders'] = folders;
+
+    final formattedId = formatDeviceId(deviceId);
+    final ignored = <Map<String, dynamic>>[];
+    for (final e in (cfg['remoteIgnoredDevices'] as List? ?? const [])) {
+      if (e is! Map) continue;
+      final m = Map<String, dynamic>.from(e);
+      final id = m['deviceID']?.toString() ?? '';
+      if (id.isEmpty || _sameDeviceId(id, deviceId)) continue;
+      ignored.add(m);
+    }
+    ignored.add({
+      'deviceID': formattedId,
+      'name': name,
+      'address': '',
+      'time': DateTime.now().toUtc().toIso8601String(),
+    });
+    cfg['remoteIgnoredDevices'] = ignored;
+
+    final put = await proxyPut('/rest/config', cfg);
+    if (put.containsKey('error')) return put;
+
+    // 顺带清掉 pending 库记录（忽略后本不应再出现）
+    await proxyDelete(
+      '/rest/cluster/pending/devices',
+      queryParams: {'device': formattedId},
+    );
+    return put;
   }
 
   /// 合并连接状态到设备列表

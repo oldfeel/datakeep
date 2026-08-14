@@ -53,6 +53,7 @@ $(OUT_AAR): *.go go.mod Makefile
 		-target android \
 		-androidapi $(ANDROID_API) \
 		-tags noassets \
+		-ldflags '-checklinkname=0' \
 		-o $(OUT_AAR) \
 		.
 	@echo "✓ 已生成 $(OUT_AAR)"

@@ -68,7 +68,16 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         'needBytes=${info['needBytes']}',
       );
       final wasSyncing = _syncInfo?['status'] == 'syncing';
-      setState(() => _syncInfo = info);
+      setState(() {
+        _syncInfo = info;
+        // 列表 path 为空时，用同步状态里的 currentPath 补全，便于识别子目录应用
+        final cur = info['currentPath']?.toString() ?? '';
+        if (cur.isNotEmpty &&
+            (_folderInfo?.path.isEmpty ?? true) &&
+            _folderInfo != null) {
+          _folderInfo = _folderInfo!.copyWith(path: cur);
+        }
+      });
       final isSyncing = info['status'] == 'syncing';
       if (isSyncing || (wasSyncing && info['status'] == 'synced')) {
         await _loadFiles();
@@ -159,14 +168,16 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   }
 
   String get _absoluteCurrentPath {
-    final root = _folderInfo?.path ?? '';
+    final root = (_folderInfo?.path.isNotEmpty == true)
+        ? _folderInfo!.path
+        : (_syncInfo?['currentPath']?.toString() ?? '');
     if (_currentPath.isEmpty) return root;
     return p.join(root, p.joinAll(_currentPath));
   }
 
   bool get _canAddHere =>
       _folderInfo?.isLocal == true &&
-      (_folderInfo?.path.isNotEmpty ?? false) &&
+      (_absoluteCurrentPath.isNotEmpty) &&
       _folderInfo?.isReadonlyAccess != true;
 
   void _showAddDialog() {
@@ -179,9 +190,11 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     );
   }
 
-  bool _entryIsApp(String name) {
+  bool _entryIsApp(String name, [Map<String, dynamic>? file]) {
+    if (file != null && file['isApp'] == true) return true;
     if (_folderInfo?.isLocal != true) return false;
     final abs = p.join(_absoluteCurrentPath, name);
+    if (abs.isEmpty || abs == name) return false;
     final registered = findRegisteredApp(
       context.read<FolderProvider>().folders,
       abs,
@@ -634,7 +647,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     final name = file['name'] as String? ?? '未知';
     final size = file['size'] as int? ?? 0;
     final modTime = file['modTime'] as int? ?? 0;
-    final isApp = isDir && _entryIsApp(name);
+    final isApp = isDir && _entryIsApp(name, file);
 
     return ListTile(
       leading: CircleAvatar(
@@ -710,7 +723,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                   ],
                 )),
       onTap: () {
-        if (isApp) {
+        if (isApp && _folderInfo?.isLocal == true) {
           _openEntryApp(name);
         } else if (isDir) {
           _navigateToFolder(name);

@@ -1426,11 +1426,24 @@ class BackendServer {
     if (deviceId.isEmpty) {
       return _json({'code': 1001, 'data': '缺少 device 参数'});
     }
-    final result = await _api.proxyDelete('/rest/cluster/pending/devices',
-        queryParams: {'device': deviceId});
-    if (result.containsKey('error')) {
-      return _json({'code': 1006, 'data': result['error']}, status: 503);
+    // ignore=true：对齐 Syncthing「忽略」，写入 remoteIgnoredDevices，避免对端反复连入弹窗
+    // 接受设备后的清理只 DELETE pending，勿带 ignore（否则会把刚接受的设备又忽略掉）
+    final doIgnore = request.url.queryParameters['ignore'] == '1' ||
+        request.url.queryParameters['ignore'] == 'true';
+    if (doIgnore) {
+      final ignore = await _api.ignoreRemoteDevice(
+        deviceId,
+        name: request.url.queryParameters['name'] ?? '',
+        address: request.url.queryParameters['address'] ?? '',
+      );
+      if (ignore.containsKey('error')) {
+        return _json({'code': 1006, 'data': ignore['error']}, status: 503);
+      }
     }
+    await _api.proxyDelete(
+      '/rest/cluster/pending/devices',
+      queryParams: {'device': deviceId},
+    );
     return _json({'code': 0, 'data': 'ok'});
   }
 
@@ -1591,7 +1604,7 @@ class BackendServer {
       return _json({'code': 1001, 'data': '无法删除本机设备'}, status: 400);
     }
 
-    final result = await _api.proxyDelete('/rest/config/devices/$deviceId');
+    final result = await _api.removeAndIgnoreDevice(deviceId);
     if (result.containsKey('error')) {
       return _json({'code': 1003, 'data': '删除设备失败: ${result['error']}'}, status: 500);
     }

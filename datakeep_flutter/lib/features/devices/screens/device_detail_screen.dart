@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../../core/models/device.dart';
 import '../../../core/models/folder.dart';
@@ -5,6 +7,8 @@ import '../../../core/services/api_service.dart';
 import '../../folders/screens/folder_detail_screen.dart';
 import '../../../shared/widgets/folder_card.dart';
 import '../../../shared/widgets/device_info_panel.dart';
+import '../../../shared/widgets/peer_folder_status_view.dart';
+import '../../../shared/utils/peer_folder_error.dart';
 import '../../apps/open_app.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
@@ -25,11 +29,28 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   bool _isLoading = true;
   String? _error;
   String? _wifiName;
+  Timer? _waitTimer;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _waitTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleWaitRetry() {
+    _waitTimer?.cancel();
+    if (!peerFolderErrorShouldAutoRetry(classifyPeerFolderError(_error))) {
+      return;
+    }
+    _waitTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted) _loadData();
+    });
   }
 
   Future<void> _loadData() async {
@@ -77,10 +98,12 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           debugPrint('获取WiFi信息失败: $e');
         }
       }
+      _waitTimer?.cancel();
     } catch (e) {
       setState(() {
         _error = e.toString();
       });
+      _scheduleWaitRetry();
     } finally {
       setState(() {
         _isLoading = false;
@@ -105,33 +128,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.error_outline,
-                        size: 64,
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        '加载失败',
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _error!,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: _loadData,
-                        child: const Text('重试'),
-                      ),
-                    ],
-                  ),
+              ? PeerFolderStatusView(
+                  error: _error,
+                  onRetry: _loadData,
                 )
               : _buildContent(isDesktop),
     );

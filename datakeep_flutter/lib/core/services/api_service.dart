@@ -566,11 +566,23 @@ class ApiService {
     }
   }
 
-  /// 忽略/关闭待确认设备通知
-  static Future<void> dismissPendingDevice(String deviceId) async {
+  /// 关闭待确认设备通知；[ignore]=true 时写入 remoteIgnoredDevices（对齐 Syncthing「忽略」）
+  static Future<void> dismissPendingDevice(
+    String deviceId, {
+    bool ignore = false,
+    String name = '',
+    String address = '',
+  }) async {
     await initialize();
-    final uri = Uri.parse('$_baseUrl/syncthing/cluster/pending/devices?device=${Uri.encodeComponent(deviceId)}');
-    await _httpClient.delete(uri).timeout(const Duration(seconds: 5));
+    final params = <String, String>{'device': deviceId};
+    if (ignore) {
+      params['ignore'] = 'true';
+      if (name.isNotEmpty) params['name'] = name;
+      if (address.isNotEmpty) params['address'] = address;
+    }
+    final uri = Uri.parse('$_baseUrl/syncthing/cluster/pending/devices')
+        .replace(queryParameters: params);
+    await _httpClient.delete(uri).timeout(const Duration(seconds: 10));
   }
 
   /// 获取待接受的共享文件夹

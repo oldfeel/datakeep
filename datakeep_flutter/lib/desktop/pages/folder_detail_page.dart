@@ -261,8 +261,9 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
       widget.folder.path.isNotEmpty &&
       !widget.folder.isReadonlyAccess;
 
-  /// 子目录是否为应用（已注册 kind=app 或含 app.json）
-  bool _entryIsApp(String name) {
+  /// 子目录是否为应用（列表 isApp、已注册 kind=app、或含 app.json）
+  bool _entryIsApp(String name, [Map<String, dynamic>? file]) {
+    if (file != null && file['isApp'] == true) return true;
     if (!widget.device.isLocal) return false;
     final abs = p.join(_absoluteCurrentPath, name);
     final registered = findRegisteredApp(
@@ -514,7 +515,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
               final f = _files[i];
               final name = _name(f);
               final isDir = _isDir(f);
-              final isApp = isDir && _entryIsApp(name);
+              final isApp = isDir && _entryIsApp(name, f);
               return Container(
                 key: ValueKey('f_$i'),
                 decoration: BoxDecoration(
@@ -624,7 +625,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
         final f = _files[i];
         final name = _name(f);
         final isDir = _isDir(f);
-        final isApp = isDir && _entryIsApp(name);
+        final isApp = isDir && _entryIsApp(name, f);
         return Card(
           clipBehavior: Clip.antiAlias,
           child: InkWell(

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../../core/models/folder.dart';
 import '../../../core/services/api_service.dart';
+import '../../../shared/utils/peer_folder_error.dart';
 
 class FolderProvider with ChangeNotifier {
   List<Folder> _folders = [];
@@ -11,11 +12,23 @@ class FolderProvider with ChangeNotifier {
   Timer? _retryTimer;
   int _retryCount = 0;
   static const int _maxRetries = 12;
+  static const int _maxPeerWaitRetries = 60;
 
   List<Folder> get folders => _folders;
   bool get isLoading => _isLoading;
   String? get error => _error;
   String? get loadedDeviceId => _loadedDeviceId;
+
+  PeerFolderErrorKind? get errorKind =>
+      _error == null ? null : classifyPeerFolderError(_error);
+
+  /// 等待对方同意配对 / 连上等（非硬错误）
+  bool get isWaitingForPeer {
+    final k = errorKind;
+    return k == PeerFolderErrorKind.unpaired ||
+        k == PeerFolderErrorKind.offline ||
+        k == PeerFolderErrorKind.unreachable;
+  }
 
   /// 加载指定设备的文件夹列表
   Future<void> fetchDeviceFolders(String deviceId, {bool silent = false}) async {
@@ -30,7 +43,7 @@ class FolderProvider with ChangeNotifier {
       final folders = await ApiService.getDeviceFolders(deviceId);
       _folders = folders;
       _loadedDeviceId = deviceId;
-      if (silent) _error = null;
+      _error = null;
 
       // Syncthing 启动中可能暂时为空或统计未就绪，自动重试
       if (_needsStartupRetry(folders)) {
@@ -60,20 +73,25 @@ class FolderProvider with ChangeNotifier {
   }
 
   void _scheduleRetry(String deviceId) {
-    if (_retryCount >= _maxRetries) return;
     if (_loadedDeviceId != null && _loadedDeviceId != deviceId) return;
-    // 远程对端不可达时不要疯狂重试（错误信息已展示）
-    final err = _error ?? '';
-    if (err.contains('对端') ||
-        err.contains('离线') ||
-        err.contains('未配对') ||
-        err.contains('未运行')) {
-      return;
-    }
+
+    final kind = classifyPeerFolderError(_error);
+    final waitingPeer = _error != null && peerFolderErrorShouldAutoRetry(kind);
+    // Syncthing 未运行：不重试
+    if (_error != null && _error!.contains('未运行')) return;
+    // 其它硬错误且非启动统计重试：不重试
+    if (_error != null && !waitingPeer) return;
+
+    final max = waitingPeer ? _maxPeerWaitRetries : _maxRetries;
+    if (_retryCount >= max) return;
+
     _retryTimer?.cancel();
-    final delaySec = (_retryCount < 3) ? 2 : 3;
+    final delaySec = waitingPeer ? 5 : ((_retryCount < 3) ? 2 : 3);
     _retryCount++;
-    debugPrint('[folders] 等待文件夹统计就绪，${delaySec}s 后重试 ($_retryCount/$_maxRetries)');
+    debugPrint(
+      '[folders] ${waitingPeer ? "等待对端就绪" : "等待文件夹统计就绪"}，'
+      '${delaySec}s 后重试 ($_retryCount/$max)',
+    );
     _retryTimer = Timer(Duration(seconds: delaySec), () {
       if (_loadedDeviceId == deviceId || _loadedDeviceId == null) {
         fetchDeviceFolders(deviceId, silent: true);

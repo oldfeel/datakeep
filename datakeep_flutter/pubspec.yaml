@@ -80,8 +80,8 @@ dependencies:
   # 系统打开文件（PDF / 未知类型等）
   open_filex: ^4.7.0
 
-  # S3 兼容对象存储（分享链接）
-  minio: ^3.5.7
+  # 系统分享（微信 / 邮件等）
+  share_plus: ^10.1.4
 
   # 应用 WebView / 市场安装
   webview_flutter: ^4.10.0

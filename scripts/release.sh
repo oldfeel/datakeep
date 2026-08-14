@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # DataKeep 发版：更新版本 → 打 tag → 推送 → 触发 GitHub Actions 多平台编译
-# 编完后可选：通知官网从 GitHub Release 拉取并部署到七牛（无需本机 gh run download）
+# 编完后可选：通知官网从 GitHub Release 拉取并保存到市场服务器本机磁盘（无需本机 gh run download）
 #
 # 用法:
 #   ./scripts/release.sh              # 默认 patch +0.0.1（从 0.0.0 → v0.0.1 → v0.0.2 …）
@@ -12,8 +12,8 @@
 #   ./scripts/release.sh --no-wait    # 推送后不等待 CI
 #   ./scripts/release.sh --local      # 不打远程 tag，仅本机 ./scripts/build.sh
 #   ./scripts/release.sh --skip-market     # 不等待/不同步官网
-#   ./scripts/release.sh qiniu            # 仅把已有 GitHub Release 同步到官网/七牛（默认最新 tag）
-#   ./scripts/release.sh qiniu v0.0.2     # 指定 tag
+#   ./scripts/release.sh market           # 仅把已有 GitHub Release 同步到官网（默认最新 tag）
+#   ./scripts/release.sh market v0.0.2    # 指定 tag（qiniu/sync 为同义别名）
 #
 # 官网同步（编完后默认尝试）:
 #   优先读环境变量 DATAKEEP_MARKET_TOKEN / USER / PASSWORD
@@ -45,8 +45,8 @@ NO_WAIT=0
 LOCAL_ONLY=0
 SKIP_MARKET=0
 MODE="patch" # 默认每次 +0.0.1；可被 patch|minor|major|x.y.z 覆盖
-ACTION="release" # release | qiniu
-QINIU_TAG=""
+ACTION="release" # release | market
+MARKET_TAG=""
 
 MARKET_URL="${DATAKEEP_MARKET_URL:-https://admin.datakeep.site}"
 MARKET_URL="${MARKET_URL%/}"
@@ -54,7 +54,7 @@ MARKET_URL="${MARKET_URL%/}"
 usage() {
   cat <<'EOF'
 DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions 多平台编译
-编完后默认调用官网接口，由服务器从 GitHub Release 拉包上传七牛（不必本机下载）。
+编完后默认调用官网接口，由服务器从 GitHub Release 拉包写入本机磁盘（不必本机下载）。
 
 用法:
   ./scripts/release.sh              # 默认 +0.0.1（0.0.0 → v0.0.1 → v0.0.2 …）
@@ -66,8 +66,8 @@ DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions
   ./scripts/release.sh --no-wait    # 推送后不等待 CI
   ./scripts/release.sh --local      # 不打远程 tag，仅本机 ./scripts/build.sh
   ./scripts/release.sh --skip-market     # 不同步官网
-  ./scripts/release.sh qiniu             # 仅同步已有 Release → 官网/七牛（最新 tag）
-  ./scripts/release.sh qiniu v0.0.2      # 指定 tag 同步
+  ./scripts/release.sh market            # 仅同步已有 Release → 官网（最新 tag）
+  ./scripts/release.sh market v0.0.2     # 指定 tag 同步（qiniu/sync 为别名）
 
 官网同步：默认用旁路 datakeep-market/market_server/.env 的 ADMIN_*；
 也可设 DATAKEEP_MARKET_TOKEN，或 DATAKEEP_MARKET_USER + DATAKEEP_MARKET_PASSWORD。
@@ -83,11 +83,11 @@ for arg in "$@"; do
     --local) LOCAL_ONLY=1 ;;
     --skip-market) SKIP_MARKET=1 ;;
     qiniu|sync|market)
-      ACTION="qiniu"
+      ACTION="market"
       ;;
     v[0-9]*.[0-9]*.[0-9]*)
-      if [[ "$ACTION" == "qiniu" ]]; then
-        QINIU_TAG="$arg"
+      if [[ "$ACTION" == "market" ]]; then
+        MARKET_TAG="$arg"
       else
         # 当版本号写成 v1.2.0 时按 1.2.0 发版
         MODE="${arg#v}"
@@ -185,7 +185,7 @@ market_login_token() {
 sync_market_from_github() {
   local token="$1"
   need_cmd curl
-  log "通知官网从 GitHub Release 同步到七牛（$MARKET_URL）…"
+  log "通知官网从 GitHub Release 同步到市场服务器（$MARKET_URL）…"
   local start_resp
   start_resp="$(curl -fsS -X POST "$MARKET_URL/admin/client-releases/sync-github" \
     -H "Authorization: Bearer $token" \
@@ -202,7 +202,7 @@ sync_market_from_github() {
       return 1
     fi
   fi
-  ok "同步任务已启动，等待服务器完成（GitHub→服务器→七牛，可能较久）…"
+  ok "同步任务已启动，等待服务器完成（GitHub→市场服务器本机磁盘，可能较久）…"
 
   local i status msg
   for i in $(seq 1 180); do
@@ -240,11 +240,11 @@ resolve_repo() {
   git -C "$ROOT" remote get-url origin | sed -E 's#.*github.com[:/]([^/]+/[^/.]+)(\.git)?#\1#'
 }
 
-cmd_qiniu() {
+cmd_market() {
   cd "$ROOT"
   REPO="$(resolve_repo)"
-  if [[ -n "$QINIU_TAG" ]]; then
-    TAG="$QINIU_TAG"
+  if [[ -n "$MARKET_TAG" ]]; then
+    TAG="$MARKET_TAG"
   else
     TAG="$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null || true)"
     if [[ -z "$TAG" ]] && command -v gh >/dev/null 2>&1; then
@@ -252,12 +252,12 @@ cmd_qiniu() {
     fi
   fi
   if [[ -z "$TAG" ]]; then
-    err "无法确定 tag。请指定: ./scripts/release.sh qiniu v0.0.2"
+    err "无法确定 tag。请指定: ./scripts/release.sh market v0.0.2"
     exit 1
   fi
   [[ "$TAG" == v* ]] || TAG="v$TAG"
 
-  log "仅同步官网/七牛"
+  log "仅同步官网（本机磁盘）"
   log "Repo: $REPO"
   log "Tag:  $TAG"
   log "API:  $MARKET_URL"
@@ -278,8 +278,8 @@ cmd_qiniu() {
   exit 0
 }
 
-if [[ "$ACTION" == "qiniu" ]]; then
-  cmd_qiniu
+if [[ "$ACTION" == "market" ]]; then
+  cmd_market
 fi
 
 read_pubspec_version() {
@@ -450,10 +450,10 @@ elif ! command -v curl >/dev/null 2>&1; then
 else
   TOKEN=""
   if TOKEN="$(market_login_token)" && [[ -n "$TOKEN" ]]; then
-    sync_market_from_github "$TOKEN" || warn "官网同步未成功，可稍后: ./scripts/release.sh qiniu $TAG"
+    sync_market_from_github "$TOKEN" || warn "官网同步未成功，可稍后: ./scripts/release.sh market $TAG"
   else
     warn "未找到市场账号（旁路 datakeep-market/market_server/.env 的 ADMIN_*，或 DATAKEEP_MARKET_*），跳过官网同步"
-    warn "稍后可: ./scripts/release.sh qiniu $TAG"
+    warn "稍后可: ./scripts/release.sh market $TAG"
   fi
 fi
 

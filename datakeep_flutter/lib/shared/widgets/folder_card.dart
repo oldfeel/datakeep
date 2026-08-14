@@ -200,20 +200,28 @@ class FolderCard extends StatelessWidget {
                         color: Theme.of(context).colorScheme.secondary,
                       ),
                       const SizedBox(width: 4),
-                      Text(
-                        '${folder.fileCount} 个文件',
-                        style: Theme.of(context).textTheme.bodySmall,
+                      Flexible(
+                        child: Text(
+                          '${folder.fileCount} 个文件',
+                          style: Theme.of(context).textTheme.bodySmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 12),
                       Icon(
                         Icons.storage,
                         size: 16,
                         color: Theme.of(context).colorScheme.secondary,
                       ),
                       const SizedBox(width: 4),
-                      Text(
-                        _formatFileSize(folder.totalSize),
-                        style: Theme.of(context).textTheme.bodySmall,
+                      Flexible(
+                        child: Text(
+                          _formatFileSize(folder.totalSize),
+                          style: Theme.of(context).textTheme.bodySmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ],
                   ),

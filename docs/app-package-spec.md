@@ -63,6 +63,12 @@ zip 解压后根目录（或唯一顶层目录）须包含：
 
 打开应用时客户端会轮询 revision：`appRev` 变化则重载 WebView；`dataRev` 变化则向页面派发 `datakeep:data-changed`（示例应用会据此重新读库）。
 
+## 运行环境
+
+- 应用在 DataKeep 内嵌 WebView 中打开（本机 HTTP + `/__datakeep/data/`）。
+- 使用 sql.js（`vendor/sql-wasm.js`）时，脚本需兼容较旧的 Android System WebView（建议 Chrome/WebView ≥ 85；仓库示例已对 `||=` / `?.` 等语法做降级）。
+- 若提示「未加载 sql-wasm.js」，先确认 `vendor/` 已同步完整，再尝试升级「Android System WebView」或 Chrome。
+
 ### 多设备数据建议
 
 | 场景 | 做法 |

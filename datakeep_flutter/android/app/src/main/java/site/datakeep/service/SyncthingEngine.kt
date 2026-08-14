@@ -11,6 +11,16 @@ import mdst.Mdst
 object SyncthingEngine {
     private const val TAG = "SyncthingEngine"
 
+    init {
+        // 必须在首次进入 gomobile/libgojni 前安装：Android 9–11 拦截 pidfd → SIGSYS
+        try {
+            System.loadLibrary("sigsys_handler")
+            Log.i(TAG, "已加载 sigsys_handler（规避 Android<12 seccomp/pidfd 闪退）")
+        } catch (t: Throwable) {
+            Log.w(TAG, "sigsys_handler 加载失败（新机可能无妨）: $t")
+        }
+    }
+
     @Volatile
     private var client: Client? = null
 

@@ -254,7 +254,10 @@ class _DeviceInfoPanelState extends State<DeviceInfoPanel> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('确认删除'),
-        content: Text('确定要删除设备「${_device.displayName}」吗？\n\n删除后将停止与该设备的同步。'),
+        content: Text(
+          '确定要删除设备「${_device.displayName}」吗？\n\n'
+          '删除后将停止同步，并忽略该设备的连接请求（不再反复弹窗）。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),

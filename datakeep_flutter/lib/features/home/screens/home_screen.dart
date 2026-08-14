@@ -9,13 +9,13 @@ import '../../../shared/widgets/folder_card.dart';
 import '../../../shared/widgets/folder_edit_dialog.dart';
 import '../../../shared/widgets/device_info_panel.dart';
 import '../../../shared/utils/open_syncthing_gui.dart';
-import '../../../shared/pages/s3_share_settings_page.dart';
 import '../../../core/services/api_service.dart';
 import '../../folders/screens/folder_detail_screen.dart';
 import '../../sync/screens/sync_screen.dart';
 import '../../apps/open_app.dart';
 import '../../apps/screens/market_screen.dart';
 import '../../../shared/widgets/add_item_dialog.dart';
+import '../../../shared/widgets/peer_folder_status_view.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -327,33 +327,9 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         if (folderProvider.loadedDeviceId == deviceId && folderProvider.error != null) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.error_outline,
-                  size: 64,
-                  color: Theme.of(context).colorScheme.error,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  '加载文件夹失败',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  folderProvider.error!,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () => folderProvider.fetchDeviceFolders(deviceId),
-                  child: const Text('重试'),
-                ),
-              ],
-            ),
+          return PeerFolderStatusView(
+            error: folderProvider.error,
+            onRetry: () => folderProvider.fetchDeviceFolders(deviceId),
           );
         }
 
@@ -498,19 +474,6 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () {
                 Navigator.pop(context);
                 openSyncthingGui(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.cloud_outlined),
-              title: const Text('互联网分享 · 存储配置'),
-              subtitle: const Text('S3 / 七牛 / 阿里云 / 腾讯云'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const S3ShareSettingsPage(),
-                  ),
-                );
               },
             ),
             ListTile(

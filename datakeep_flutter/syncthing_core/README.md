@@ -11,6 +11,10 @@ Go API：`NewClient(home, files)` → `Start` / `Stop` / `IsRunning` / `DeviceID
 
 **桌面**：不使用 gomobile；继续 `NativeService` 启动系统 `syncthing`。若日后要进程内嵌入，可对同一 `client.go` 做 `c-shared` + `dart:ffi`，与 gomobile 并行。
 
+**Android < 12**：Go 1.23+ 的 `pidfd` 会被 seccomp 杀掉进程。工程内有两层规避：
+1. App 原生库 `sigsys_handler`（把 SIGSYS 转成 `-ENOSYS`）
+2. `android_pidfd.go`（构建 AAR 时禁用 pidfd，需 `-ldflags=-checklinkname=0`）
+
 ## 构建
 
 ```bash

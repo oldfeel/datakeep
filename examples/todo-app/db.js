@@ -20,7 +20,11 @@
 
   function loadSqlJs() {
     if (typeof initSqlJs !== 'function') {
-      return Promise.reject(new Error('未加载 sql-wasm.js'));
+      return Promise.reject(
+        new Error(
+          '未加载 sql-wasm.js（文件缺失，或系统 WebView/Chrome 过旧无法解析脚本；请升级 Android System WebView）',
+        ),
+      );
     }
     return initSqlJs({
       locateFile: function (file) {

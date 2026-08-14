@@ -12,7 +12,6 @@ import 'folder_detail_page.dart';
 import 'file_preview_page.dart';
 import '../../shared/widgets/accept_pending_folder_dialog.dart';
 import '../../shared/utils/open_syncthing_gui.dart';
-import '../../shared/pages/s3_share_settings_page.dart';
 import '../../shared/widgets/folder_edit_dialog.dart';
 import '../../features/apps/screens/market_screen.dart';
 
@@ -221,7 +220,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('拒绝'),
+            child: const Text('忽略'),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -244,9 +243,14 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           );
         }
       } else {
-        await ApiService.dismissPendingDevice(deviceId);
+        await ApiService.dismissPendingDevice(
+          deviceId,
+          ignore: true,
+          name: displayName,
+          address: address,
+        );
         if (mounted) {
-          _addNotification('已拒绝设备 $displayName');
+          _addNotification('已忽略设备 $displayName');
         }
       }
     } catch (e) {
@@ -521,20 +525,6 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
                 icon: const Icon(Icons.open_in_browser, size: 20),
                 tooltip: '打开 Syncthing 管理页（高级配置）',
                 onPressed: () => openSyncthingGui(context),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                icon: const Icon(Icons.cloud_outlined, size: 20),
-                tooltip: '互联网分享 · 存储配置',
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const S3ShareSettingsPage(),
-                    ),
-                  );
-                },
               ),
               IconButton(
                 visualDensity: VisualDensity.compact,

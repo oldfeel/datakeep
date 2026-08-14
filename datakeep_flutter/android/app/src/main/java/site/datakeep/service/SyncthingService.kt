@@ -32,6 +32,14 @@ class SyncthingService : Service() {
         const val ACTION_START = "site.datakeep.service.START"
         const val ACTION_STOP = "site.datakeep.service.STOP"
         const val ACTION_RESTART = "site.datakeep.service.RESTART"
+
+        init {
+            // 尽早装 SIGSYS 处理，避免服务线程进 gomobile 前被 seccomp 杀掉
+            try {
+                System.loadLibrary("sigsys_handler")
+            } catch (_: Throwable) {
+            }
+        }
     }
 
     enum class State { INIT, STARTING, ACTIVE, STOPPING, STOPPED, ERROR }

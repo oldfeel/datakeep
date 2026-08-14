@@ -205,7 +205,7 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('拒绝')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('忽略')),
           ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('接受')),
         ],
       ),
@@ -221,8 +221,13 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
           _showSnack('已接受设备 $displayName', color: Colors.green);
         }
       } else {
-        await ApiService.dismissPendingDevice(deviceId);
-        if (mounted) _showSnack('已拒绝设备 $displayName');
+        await ApiService.dismissPendingDevice(
+          deviceId,
+          ignore: true,
+          name: displayName,
+          address: address,
+        );
+        if (mounted) _showSnack('已忽略设备 $displayName');
       }
     } catch (e) {
       if (mounted) _showSnack('设备操作失败: $e', color: Colors.red);

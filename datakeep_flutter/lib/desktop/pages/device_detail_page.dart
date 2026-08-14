@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/device.dart';
@@ -7,6 +10,8 @@ import '../../features/folders/providers/folder_provider.dart';
 import '../../shared/widgets/device_info_panel.dart';
 import '../../shared/widgets/folder_edit_dialog.dart';
 import '../../shared/widgets/add_item_dialog.dart';
+import '../../shared/widgets/peer_folder_status_view.dart';
+import '../../shared/utils/peer_folder_error.dart';
 
 class DeviceDetailPage extends StatefulWidget {
   final Device device;
@@ -28,6 +33,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   List<Folder> _folders = [];
   bool _isLoading = true;
   String? _error;
+  Timer? _waitTimer;
 
   @override
   void initState() {
@@ -36,11 +42,27 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   }
 
   @override
+  void dispose() {
+    _waitTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(covariant DeviceDetailPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.device.id != widget.device.id) {
       _loadFolders();
     }
+  }
+
+  void _scheduleWaitRetry() {
+    _waitTimer?.cancel();
+    if (!peerFolderErrorShouldAutoRetry(classifyPeerFolderError(_error))) {
+      return;
+    }
+    _waitTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted) _loadFolders();
+    });
   }
 
   Future<void> _loadFolders() async {
@@ -53,10 +75,14 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
         'local=${widget.device.isLocal} folders=${folders.length} '
         'ids=${folders.map((f) => f.id).join(",")}',
       );
+      _waitTimer?.cancel();
       if (mounted) setState(() { _folders = folders; _isLoading = false; });
     } catch (e) {
       debugPrint('[device-detail] 加载失败 device=${widget.device.id}: $e');
-      if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
+      if (mounted) {
+        setState(() { _error = e.toString(); _isLoading = false; });
+        _scheduleWaitRetry();
+      }
     }
   }
 
@@ -105,18 +131,9 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   Widget _buildFolderList(BuildContext context) {
     if (_isLoading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline, size: 48, color: Theme.of(context).colorScheme.error),
-            const SizedBox(height: 8),
-            Text('加载文件夹失败', style: Theme.of(context).textTheme.titleMedium),
-            Text(_error!, style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 8),
-            ElevatedButton(onPressed: _loadFolders, child: const Text('重试')),
-          ],
-        ),
+      return PeerFolderStatusView(
+        error: _error,
+        onRetry: _loadFolders,
       );
     }
     if (_folders.isEmpty) {
