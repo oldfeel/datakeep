@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # DataKeep 发版：更新版本 → 打 tag → 推送 → 触发 GitHub Actions 多平台编译
+# 编完后可选：通知官网从 GitHub Release 拉取并部署到七牛（无需本机 gh run download）
 #
 # 用法:
 #   ./scripts/release.sh              # 默认 patch +0.0.1（从 0.0.0 → v0.0.1 → v0.0.2 …）
@@ -10,6 +11,13 @@
 #   ./scripts/release.sh --dry-run    # 只打印将要做的事
 #   ./scripts/release.sh --no-wait    # 推送后不等待 CI
 #   ./scripts/release.sh --local      # 不打远程 tag，仅本机 ./scripts/build.sh
+#   ./scripts/release.sh --skip-market     # 不等待/不同步官网
+#
+# 官网同步（编完后默认尝试）:
+#   优先读环境变量 DATAKEEP_MARKET_TOKEN / USER / PASSWORD
+#   否则自动读旁路仓库 ../datakeep-market/market_server/.env 的 ADMIN_USERNAME/PASSWORD
+#   DATAKEEP_MARKET_URL 默认 https://admin.datakeep.site
+#   DATAKEEP_MARKET_ENV  可指定 .env 路径
 #
 # 远程发版依赖公开仓 workflow「Build packages」（push tags: v*）。
 
@@ -33,11 +41,16 @@ err()  { echo -e "${RED}✗${NC} $*" >&2; }
 DRY_RUN=0
 NO_WAIT=0
 LOCAL_ONLY=0
+SKIP_MARKET=0
 MODE="patch" # 默认每次 +0.0.1；可被 patch|minor|major|x.y.z 覆盖
+
+MARKET_URL="${DATAKEEP_MARKET_URL:-https://admin.datakeep.site}"
+MARKET_URL="${MARKET_URL%/}"
 
 usage() {
   cat <<'EOF'
 DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions 多平台编译
+编完后默认调用官网接口，由服务器从 GitHub Release 拉包上传七牛（不必本机下载）。
 
 用法:
   ./scripts/release.sh              # 默认 +0.0.1（0.0.0 → v0.0.1 → v0.0.2 …）
@@ -48,8 +61,10 @@ DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions
   ./scripts/release.sh --dry-run    # 只打印将要做的事
   ./scripts/release.sh --no-wait    # 推送后不等待 CI
   ./scripts/release.sh --local      # 不打远程 tag，仅本机 ./scripts/build.sh
+  ./scripts/release.sh --skip-market     # 不同步官网
 
-远程发版依赖公开仓 workflow「Build packages」（push tags: v*）。
+官网同步：默认用旁路 datakeep-market/market_server/.env 的 ADMIN_*；
+也可设 DATAKEEP_MARKET_TOKEN，或 DATAKEEP_MARKET_USER + DATAKEEP_MARKET_PASSWORD。
 EOF
   exit 0
 }
@@ -60,6 +75,7 @@ for arg in "$@"; do
     --dry-run) DRY_RUN=1 ;;
     --no-wait) NO_WAIT=1 ;;
     --local) LOCAL_ONLY=1 ;;
+    --skip-market) SKIP_MARKET=1 ;;
     patch|minor|major) MODE="$arg" ;;
     [0-9]*.[0-9]*.[0-9]*) MODE="$arg" ;;
     *)
@@ -158,6 +174,9 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   else
     echo "  将: git tag $TAG && git push origin HEAD && git push origin $TAG"
     echo "  将触发 Actions: Build packages → Release"
+    if [[ "$SKIP_MARKET" -eq 0 ]]; then
+      echo "  将: 官网 sync-github → $MARKET_URL （tag $TAG）"
+    fi
   fi
   exit 0
 fi
@@ -231,8 +250,149 @@ gh run watch "$RUN_ID" --repo "$REPO" --exit-status || {
 }
 
 ok "构建成功"
-log "下载全部产物到 ./dist-release/ …"
-mkdir -p "$ROOT/dist-release"
-gh run download "$RUN_ID" --repo "$REPO" -D "$ROOT/dist-release"
-ls -lhR "$ROOT/dist-release" || true
-ok "完成。也可在 Release 页下载: https://github.com/${REPO}/releases/tag/${TAG}"
+ok "GitHub Release: https://github.com/${REPO}/releases/tag/${TAG}"
+
+# —— 官网：服务器从 GitHub Release 拉包 → 七牛（本机只调接口）——
+# 从 market_server/.env 读 ADMIN_USERNAME / ADMIN_PASSWORD（不覆盖已有环境变量）
+load_market_creds_from_env_file() {
+  local env_file="${DATAKEEP_MARKET_ENV:-}"
+  if [[ -z "$env_file" ]]; then
+    env_file="$ROOT/../datakeep-market/market_server/.env"
+  fi
+  [[ -f "$env_file" ]] || return 1
+  local line k v
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *=* ]] || continue
+    k="${line%%=*}"
+    v="${line#*=}"
+    k="${k%"${k##*[![:space:]]}"}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    if [[ ${#v} -ge 2 ]]; then
+      if [[ ( "${v:0:1}" == '"' && "${v: -1}" == '"' ) || ( "${v:0:1}" == "'" && "${v: -1}" == "'" ) ]]; then
+        v="${v:1:-1}"
+      fi
+    fi
+    case "$k" in
+      ADMIN_USERNAME)
+        if [[ -z "${DATAKEEP_MARKET_USER:-}" ]]; then
+          DATAKEEP_MARKET_USER="$v"
+        fi
+        ;;
+      ADMIN_PASSWORD)
+        if [[ -z "${DATAKEEP_MARKET_PASSWORD:-}" ]]; then
+          DATAKEEP_MARKET_PASSWORD="$v"
+        fi
+        ;;
+    esac
+  done < "$env_file"
+  [[ -n "${DATAKEEP_MARKET_USER:-}" && -n "${DATAKEEP_MARKET_PASSWORD:-}" ]]
+}
+
+market_login_token() {
+  if [[ -n "${DATAKEEP_MARKET_TOKEN:-}" ]]; then
+    printf '%s' "$DATAKEEP_MARKET_TOKEN"
+    return 0
+  fi
+  if [[ -z "${DATAKEEP_MARKET_USER:-}" || -z "${DATAKEEP_MARKET_PASSWORD:-}" ]]; then
+    load_market_creds_from_env_file || true
+  fi
+  local user="${DATAKEEP_MARKET_USER:-}"
+  local pass="${DATAKEEP_MARKET_PASSWORD:-}"
+  if [[ -z "$user" || -z "$pass" ]]; then
+    return 1
+  fi
+  need_cmd curl
+  local body resp
+  if command -v jq >/dev/null 2>&1; then
+    body="$(jq -n --arg u "$user" --arg p "$pass" '{username:$u,password:$p}')"
+  else
+    body="$(printf '{"username":"%s","password":"%s"}' \
+      "${user//\"/\\\"}" "${pass//\"/\\\"}")"
+  fi
+  resp="$(curl -fsS -X POST "$MARKET_URL/admin/login" \
+    -H 'Content-Type: application/json' \
+    -d "$body")" || return 1
+  if command -v jq >/dev/null 2>&1; then
+    local code token
+    code="$(echo "$resp" | jq -r '.code')"
+    token="$(echo "$resp" | jq -r '.data.token // empty')"
+    [[ "$code" == "0" && -n "$token" && "$token" != "null" ]] || return 1
+    printf '%s' "$token"
+  else
+    echo "$resp" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+  fi
+}
+
+sync_market_from_github() {
+  local token="$1"
+  need_cmd curl
+  log "通知官网从 GitHub Release 同步到七牛（$MARKET_URL）…"
+  local start_resp
+  start_resp="$(curl -fsS -X POST "$MARKET_URL/admin/client-releases/sync-github" \
+    -H "Authorization: Bearer $token" \
+    -H 'Content-Type: application/json' \
+    -d "$(printf '{"tag":"%s","repo":"%s"}' "$TAG" "$REPO")")" || {
+    err "触发同步失败"
+    return 1
+  }
+  if command -v jq >/dev/null 2>&1; then
+    local code
+    code="$(echo "$start_resp" | jq -r '.code')"
+    if [[ "$code" != "0" ]]; then
+      err "触发同步失败: $(echo "$start_resp" | jq -r '.data')"
+      return 1
+    fi
+  fi
+  ok "同步任务已启动，等待服务器完成（GitHub→服务器→七牛，可能较久）…"
+
+  local i status msg
+  for i in $(seq 1 180); do
+    sleep 5
+    local st
+    st="$(curl -fsS "$MARKET_URL/admin/client-releases/sync-github/status" \
+      -H "Authorization: Bearer $token")" || continue
+    if ! command -v jq >/dev/null 2>&1; then
+      echo "$st"
+      warn "未安装 jq，无法自动判断完成状态，请到管理后台确认"
+      return 0
+    fi
+    status="$(echo "$st" | jq -r '.data.status')"
+    msg="$(echo "$st" | jq -r '.data.message // empty')"
+    case "$status" in
+      ok)
+        ok "官网同步完成: $msg"
+        echo "$st" | jq -r '.data.results[]? | "  - \(.platform): \(.fileName) (\(.size) bytes)"' 2>/dev/null || true
+        return 0
+        ;;
+      error)
+        err "官网同步失败: $msg"
+        return 1
+        ;;
+      running|idle)
+        log "同步中… ($msg)"
+        ;;
+    esac
+  done
+  err "等待官网同步超时（仍可能在后台进行，可查 status 接口）"
+  return 1
+}
+
+if [[ "$SKIP_MARKET" -eq 1 ]]; then
+  warn "已跳过官网同步（--skip-market）"
+elif ! command -v curl >/dev/null 2>&1; then
+  warn "未安装 curl，跳过官网同步"
+else
+  TOKEN=""
+  if TOKEN="$(market_login_token)" && [[ -n "$TOKEN" ]]; then
+    sync_market_from_github "$TOKEN" || warn "官网同步未成功，可稍后手动 POST /admin/client-releases/sync-github"
+  else
+    warn "未找到市场账号（旁路 datakeep-market/market_server/.env 的 ADMIN_*，或 DATAKEEP_MARKET_*），跳过官网同步"
+    warn "手动: curl -X POST $MARKET_URL/admin/client-releases/sync-github -H \"Authorization: Bearer …\" -d '{\"tag\":\"$TAG\"}'"
+  fi
+fi
+
+ok "完成。Release: https://github.com/${REPO}/releases/tag/${TAG}"
+ok "官网下载页（同步成功后）: https://datakeep.site/"
