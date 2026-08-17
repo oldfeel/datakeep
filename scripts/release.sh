@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # DataKeep 发版：更新版本 → 打 tag → 推送 → 触发 GitHub Actions 多平台编译
-# 编完后可选：通知官网从 GitHub Release 拉取并保存到市场服务器本机磁盘（无需本机 gh run download）
+# 编完后可选：通知官网从 GitHub Release 拉取，并上传 Gitee（国内主通道）/ 可选本机兜底
 #
 # 用法:
 #   ./scripts/release.sh              # 默认 patch +0.0.1（从 0.0.0 → v0.0.1 → v0.0.2 …）
@@ -54,7 +54,7 @@ MARKET_URL="${MARKET_URL%/}"
 usage() {
   cat <<'EOF'
 DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions 多平台编译
-编完后默认调用官网接口，由服务器从 GitHub Release 拉包写入本机磁盘（不必本机下载）。
+编完后默认调用官网接口：服务器从 GitHub Release 拉包，上传 Gitee Release（若已配置），并写入双下载链。
 
 用法:
   ./scripts/release.sh              # 默认 +0.0.1（0.0.0 → v0.0.1 → v0.0.2 …）
@@ -202,7 +202,7 @@ sync_market_from_github() {
       return 1
     fi
   fi
-  ok "同步任务已启动，等待服务器完成（GitHub→市场服务器本机磁盘，可能较久）…"
+  ok "同步任务已启动，等待服务器完成（GitHub→Gitee/本机，可能较久）…"
 
   local i status msg
   for i in $(seq 1 180); do
@@ -257,7 +257,7 @@ cmd_market() {
   fi
   [[ "$TAG" == v* ]] || TAG="v$TAG"
 
-  log "仅同步官网（本机磁盘）"
+  log "仅同步官网（GitHub → Gitee / 本机）"
   log "Repo: $REPO"
   log "Tag:  $TAG"
   log "API:  $MARKET_URL"
