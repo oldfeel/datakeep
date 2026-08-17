@@ -43,10 +43,10 @@ add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/Zc:strictStrings->")
 # default. In most cases, you should add new options to specific targets instead
 # of modifying this function.
 function(APPLY_STANDARD_SETTINGS TARGET)
-  # webview_cef / CEF 149 需要 C++20
-  target_compile_features(${TARGET} PUBLIC cxx_std_20)
-  # /wd4596：share_plus 头文件误写 SharePlusWindowsPlugin::Utf16FromUtf8（类内不应带类名限定）
-  # 新版 MSVC + /WX 会直接失败并连带弄崩其后的 WRL vector.h 解析
+  # 默认 C++17：share_plus 自带的旧 WRL vector.h 在 C++20 / 新 MSVC 下无法编译
+  # （ElementType / typename 等）；webview_cef 与主程序在下方单独升到 C++20
+  target_compile_features(${TARGET} PUBLIC cxx_std_17)
+  # /wd4596：share_plus 头文件误写 SharePlusWindowsPlugin::Utf16FromUtf8
   target_compile_options(${TARGET} PRIVATE /W4 /WX /wd"4100" /wd"4596")
   target_compile_options(${TARGET} PRIVATE /EHsc)
   target_compile_definitions(${TARGET} PRIVATE "_HAS_EXCEPTIONS=0")
@@ -64,6 +64,12 @@ add_subdirectory("runner")
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
+
+# webview_cef / CEF 149 需要 C++20（须在插件目标创建之后设置）
+target_compile_features(${BINARY_NAME} PUBLIC cxx_std_20)
+if(TARGET webview_cef_plugin)
+  target_compile_features(webview_cef_plugin PUBLIC cxx_std_20)
+endif()
 
 
 # === Installation ===
