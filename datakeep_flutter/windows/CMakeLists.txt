@@ -45,7 +45,9 @@ add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/Zc:strictStrings->")
 function(APPLY_STANDARD_SETTINGS TARGET)
   # webview_cef / CEF 149 需要 C++20
   target_compile_features(${TARGET} PUBLIC cxx_std_20)
-  target_compile_options(${TARGET} PRIVATE /W4 /WX /wd"4100")
+  # /wd4596：share_plus 头文件误写 SharePlusWindowsPlugin::Utf16FromUtf8（类内不应带类名限定）
+  # 新版 MSVC + /WX 会直接失败并连带弄崩其后的 WRL vector.h 解析
+  target_compile_options(${TARGET} PRIVATE /W4 /WX /wd"4100" /wd"4596")
   target_compile_options(${TARGET} PRIVATE /EHsc)
   target_compile_definitions(${TARGET} PRIVATE "_HAS_EXCEPTIONS=0")
   target_compile_definitions(${TARGET} PRIVATE "$<$<CONFIG:Debug>:_DEBUG>")

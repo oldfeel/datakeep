@@ -191,9 +191,25 @@ jobs:
           channel: ${{ env.FLUTTER_CHANNEL }}
           cache: true
 
-      - run: |
+      - name: Build Windows
+        shell: pwsh
+        run: |
           flutter config --enable-windows-desktop
           flutter pub get
+          # share_plus 至 13.x 仍有类内错误限定名；顺带改掉 pub-cache 源码，避免仅靠 /wd4596
+          $headers = @()
+          if ($env:PUB_CACHE) {
+            $headers += Get-ChildItem -Path $env:PUB_CACHE -Recurse -Filter share_plus_windows_plugin.h -ErrorAction SilentlyContinue
+          }
+          $headers += Get-ChildItem -Path "$env:LOCALAPPDATA\Pub\Cache" -Recurse -Filter share_plus_windows_plugin.h -ErrorAction SilentlyContinue
+          foreach ($h in ($headers | Select-Object -ExpandProperty FullName -Unique)) {
+            $text = Get-Content -Raw -Path $h
+            $fixed = $text -replace 'static std::wstring SharePlusWindowsPlugin::Utf16FromUtf8','static std::wstring Utf16FromUtf8'
+            if ($fixed -ne $text) {
+              Set-Content -Path $h -Value $fixed -NoNewline
+              Write-Host "patched $h"
+            }
+          }
           flutter build windows --release
 
       - name: Package zip
