@@ -231,7 +231,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                 }
               : null,
           onTap: () {
-            if (folder.isApp && (_device?.isLocal ?? false)) {
+            if (folder.isApp) {
               openFolderApp(context, folder);
               return;
             }
@@ -272,7 +272,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                 }
               : null,
           onTap: () {
-            if (folder.isApp && (_device?.isLocal ?? false)) {
+            if (folder.isApp) {
               openFolderApp(context, folder);
               return;
             }

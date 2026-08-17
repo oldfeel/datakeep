@@ -212,4 +212,79 @@ class PeerClient {
       return {'error': e.toString()};
     }
   }
+
+  /// PUT 原始字节到对端
+  static Future<Map<String, dynamic>> putBytes(
+    String ip,
+    String path,
+    List<int> body, {
+    Map<String, String>? headers,
+    String contentType = 'application/octet-stream',
+    Duration timeout = const Duration(minutes: 3),
+  }) async {
+    final uri = Uri.parse('https://$ip:$peerPort$path');
+    final client = _client(connectionTimeout: const Duration(seconds: 8));
+    try {
+      final req = await client.putUrl(uri).timeout(const Duration(seconds: 15));
+      headers?.forEach(req.headers.set);
+      req.headers.set(HttpHeaders.contentTypeHeader, contentType);
+      req.headers.contentLength = body.length;
+      req.add(body);
+      final res = await req.close().timeout(timeout);
+      final text = await res.transform(utf8.decoder).join();
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        return {
+          'error': text.isNotEmpty ? text : 'HTTP ${res.statusCode}',
+          'statusCode': res.statusCode,
+        };
+      }
+      return {'ok': true, 'statusCode': res.statusCode};
+    } on SocketException catch (e) {
+      debugPrint('[peer] 上传失败 $uri: $e');
+      return {
+        'error': '对端 DataKeep 不可达（需同局域网且对端已打开 DataKeep）',
+      };
+    } on TimeoutException catch (_) {
+      return {'error': '上传对端超时（需同局域网且对端已打开 DataKeep）'};
+    } catch (e) {
+      debugPrint('[peer] 上传失败 $uri: $e');
+      return {'error': e.toString()};
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// DELETE 对端文件
+  static Future<Map<String, dynamic>> delete(
+    String ip,
+    String path, {
+    Map<String, String>? headers,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final uri = Uri.parse('https://$ip:$peerPort$path');
+    final client = _client();
+    try {
+      final req = await client.deleteUrl(uri).timeout(timeout);
+      headers?.forEach(req.headers.set);
+      final res = await req.close().timeout(timeout);
+      final text = await res.transform(utf8.decoder).join();
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        return {
+          'error': text.isNotEmpty ? text : 'HTTP ${res.statusCode}',
+          'statusCode': res.statusCode,
+        };
+      }
+      return {'ok': true, 'statusCode': res.statusCode};
+    } on SocketException {
+      return {
+        'error': '对端 DataKeep 不可达（需同局域网且对端已打开 DataKeep）',
+      };
+    } on TimeoutException catch (_) {
+      return {'error': '删除对端文件超时'};
+    } catch (e) {
+      return {'error': e.toString()};
+    } finally {
+      client.close(force: true);
+    }
+  }
 }

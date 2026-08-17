@@ -22,17 +22,42 @@ import '../../../shared/utils/open_url_external.dart';
 /// `/__datakeep/data/<rel>`：GET/PUT/DELETE；目录 GET 返回文件列表。
 /// `/__datakeep/revision`：`{dataRev,appRev}`（目录内文件最大 mtime，毫秒），供自动刷新。
 /// 启动时按 app.json 的 `syncIgnore` 合并写入 `.stignore`。
+///
+/// 对端模式：传入 [peerDeviceId] + [peerFolderId]，经局域网 peer API 拉/写文件。
+/// [peerWritable]=true（ACL 同步）时可写 data/；只读则注入拦截并禁止 PUT。
 class AppRunnerPage extends StatefulWidget {
   final String appPath;
   final String title;
   final String entry;
+
+  /// 对端设备 ID（非本机时启用 peer 模式）
+  final String? peerDeviceId;
+
+  /// 对端/本机同步文件夹 ID（peer 模式必填）
+  final String? peerFolderId;
+
+  /// 文件夹内应用根相对路径（如 `todo`；顶层应用为空）
+  final String appRelPath;
+
+  /// 对端 ACL 为「同步」时可写；「只读」为 false
+  final bool peerWritable;
 
   const AppRunnerPage({
     super.key,
     required this.appPath,
     required this.title,
     this.entry = 'index.html',
+    this.peerDeviceId,
+    this.peerFolderId,
+    this.appRelPath = '',
+    this.peerWritable = false,
   });
+
+  bool get isPeerMode =>
+      peerDeviceId != null &&
+      peerDeviceId!.isNotEmpty &&
+      peerFolderId != null &&
+      peerFolderId!.isNotEmpty;
 
   @override
   State<AppRunnerPage> createState() => _AppRunnerPageState();
@@ -97,6 +122,344 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
       h = (h * 31 + c) & 0x7fffffff;
     }
     return 18765 + (h % 1000);
+  }
+
+  bool get _isPeer => widget.isPeerMode;
+  bool get _peerWritable => _isPeer && widget.peerWritable;
+
+  String get _peerDeviceId => widget.peerDeviceId!;
+  String get _peerFolderId => widget.peerFolderId!;
+
+  /// 应用根下相对路径 → 同步文件夹内完整相对路径
+  String _folderRel(String appRelative) {
+    final base = widget.appRelPath.replaceAll('\\', '/').replaceAll(RegExp(r'^/+|/+$'), '');
+    final rel = appRelative.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+    if (base.isEmpty) return rel;
+    if (rel.isEmpty) return base;
+    return '$base/$rel';
+  }
+
+  String _guessMime(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'html':
+      case 'htm':
+        return 'text/html; charset=utf-8';
+      case 'css':
+        return 'text/css; charset=utf-8';
+      case 'js':
+      case 'mjs':
+        return 'text/javascript; charset=utf-8';
+      case 'wasm':
+        return 'application/wasm';
+      case 'json':
+        return 'application/json; charset=utf-8';
+      case 'png':
+        return 'image/png';
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'gif':
+        return 'image/gif';
+      case 'svg':
+        return 'image/svg+xml';
+      case 'webp':
+        return 'image/webp';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+
+  Future<Response> _peerFetchResponse(String appRelative) async {
+    final folderPath = _folderRel(appRelative);
+    if (folderPath.contains('..')) {
+      return Response.forbidden('非法路径');
+    }
+    try {
+      final file = await ApiService.fetchFolderFile(
+        _peerFolderId,
+        folderPath,
+        deviceId: _peerDeviceId,
+      );
+      if (!file.ok) {
+        final msg = file.errorBody ?? '对端文件不可用';
+        if (file.statusCode == 404) return Response.notFound(msg);
+        if (file.statusCode == 503) {
+          return Response(503, body: msg.isNotEmpty ? msg : '对端离线或不可达');
+        }
+        return Response(file.statusCode, body: msg);
+      }
+      var ct = file.contentType;
+      if (ct.contains('octet-stream') || ct.contains('text/plain')) {
+        ct = _guessMime(appRelative);
+      }
+      var body = file.body;
+      if (_isHtmlPath(appRelative) && !_peerWritable) {
+        body = _injectReadonlyHtml(body);
+        ct = 'text/html; charset=utf-8';
+      }
+      return Response.ok(
+        body,
+        headers: {
+          'Content-Type': ct,
+          'Cache-Control': 'no-store',
+        },
+      );
+    } catch (e) {
+      return Response(
+        503,
+        body: '对端不可达：$e（需同网且对端已打开 DataKeep）',
+      );
+    }
+  }
+
+  bool _isHtmlPath(String rel) {
+    final lower = rel.toLowerCase();
+    return lower.endsWith('.html') || lower.endsWith('.htm');
+  }
+
+  /// 注入只读拦截：不发起 PUT/DELETE，避免 CEF 对未排空请求异常；兼容旧版 db.js
+  Uint8List _injectReadonlyHtml(Uint8List body) {
+    final s = utf8.decode(body, allowMalformed: true);
+    if (s.contains('__DATAKEEP_READONLY')) return body;
+    const flag = '''
+<script>
+window.__DATAKEEP_READONLY=true;
+(function(){
+  var orig=window.fetch;
+  if(typeof orig!=="function")return;
+  window.fetch=function(input,init){
+    init=init||{};
+    var method=String(init.method||"GET").toUpperCase();
+    var url=typeof input==="string"?input:(input&&input.url)||"";
+    if((method==="PUT"||method==="DELETE")&&String(url).indexOf("/__datakeep/data")===0){
+      return Promise.resolve(new Response(JSON.stringify({ok:false,readonly:true,error:"对端只读"}),{
+        status:403,
+        headers:{"Content-Type":"application/json"}
+      }));
+    }
+    return orig.apply(this,arguments);
+  };
+})();
+</script>''';
+    final lower = s.toLowerCase();
+    final head = lower.indexOf('<head');
+    if (head >= 0) {
+      final gt = s.indexOf('>', head);
+      if (gt >= 0) {
+        return Uint8List.fromList(
+          utf8.encode('${s.substring(0, gt + 1)}$flag${s.substring(gt + 1)}'),
+        );
+      }
+    }
+    return Uint8List.fromList(utf8.encode('$flag$s'));
+  }
+
+  Handler _buildPeerHandler(String entryRel) {
+    return (Request request) async {
+      final path = request.requestedUri.path;
+      if (path == '/__datakeep/revision') {
+        if (request.method != 'GET') {
+          return Response(405, body: '仅支持 GET');
+        }
+        // 对端只读：不做自动刷新
+        return _revisionResponse({'dataRev': 0, 'appRev': 0});
+      }
+      if (path.startsWith('/__datakeep/data/') || path == '/__datakeep/data') {
+        if (request.method != 'GET') {
+          if (!_peerWritable) {
+            // 必须排空 body，否则 CEF/浏览器对未读完的 PUT 可能异常退出
+            try {
+              await request.read().drain<void>();
+            } catch (_) {}
+            return Response(
+              403,
+              body: jsonEncode({
+                'ok': false,
+                'readonly': true,
+                'error': '对端应用为只读，无法写入 data/',
+              }),
+              headers: {'Content-Type': 'application/json; charset=utf-8'},
+            );
+          }
+          var rel = path == '/__datakeep/data'
+              ? ''
+              : path.substring('/__datakeep/data/'.length);
+          try {
+            rel = Uri.decodeComponent(rel);
+          } catch (_) {}
+          while (rel.endsWith('/')) {
+            rel = rel.substring(0, rel.length - 1);
+          }
+          if (rel.isEmpty || rel.contains('..')) {
+            try {
+              await request.read().drain<void>();
+            } catch (_) {}
+            return Response.forbidden('非法路径');
+          }
+          final dataRel = 'data/$rel';
+          final folderPath = _folderRel(dataRel);
+          try {
+            if (request.method == 'PUT') {
+              final bytes = await request.read().fold<BytesBuilder>(
+                BytesBuilder(copy: false),
+                (b, chunk) {
+                  b.add(chunk);
+                  return b;
+                },
+              );
+              await ApiService.putFolderFile(
+                _peerFolderId,
+                folderPath,
+                bytes.takeBytes(),
+                deviceId: _peerDeviceId,
+              );
+              return Response.ok(
+                '{"ok":true}',
+                headers: {'Content-Type': 'application/json; charset=utf-8'},
+              );
+            }
+            if (request.method == 'DELETE') {
+              await ApiService.deleteFolderFile(
+                _peerFolderId,
+                folderPath,
+                deviceId: _peerDeviceId,
+              );
+              return Response.ok(
+                '{"ok":true}',
+                headers: {'Content-Type': 'application/json; charset=utf-8'},
+              );
+            }
+            try {
+              await request.read().drain<void>();
+            } catch (_) {}
+            return Response(405, body: '仅支持 GET/PUT/DELETE');
+          } catch (e) {
+            return Response(503, body: '对端写入失败: $e');
+          }
+        }
+        var rel = path == '/__datakeep/data'
+            ? ''
+            : path.substring('/__datakeep/data/'.length);
+        try {
+          rel = Uri.decodeComponent(rel);
+        } catch (_) {}
+        while (rel.endsWith('/')) {
+          rel = rel.substring(0, rel.length - 1);
+        }
+        if (rel.contains('..')) return Response.forbidden('非法路径');
+
+        final dataRel = rel.isEmpty ? 'data' : 'data/$rel';
+        // 先当文件
+        final asFile = await _peerFetchResponse(dataRel);
+        if (asFile.statusCode == 200) return asFile;
+
+        // 再当目录：列一层文件名（供部分应用探测）
+        try {
+          final entries = await ApiService.getFolderFiles(
+            _peerFolderId,
+            path: _folderRel(dataRel),
+            deviceId: _peerDeviceId,
+          );
+          final files = <String>[];
+          for (final e in entries) {
+            final name = e['name']?.toString() ?? '';
+            if (name.isEmpty) continue;
+            final t = e['type'];
+            final isDir = t == 'dir' || t == 1 || t == '1' || e['isDir'] == true;
+            if (isDir) continue;
+            files.add(rel.isEmpty ? name : '$rel/$name');
+          }
+          files.sort();
+          return Response.ok(
+            jsonEncode({'files': files}),
+            headers: {
+              'Content-Type': 'application/json; charset=utf-8',
+              'Cache-Control': 'no-store',
+            },
+          );
+        } catch (_) {
+          return asFile;
+        }
+      }
+
+      var rel = path;
+      if (rel.startsWith('/')) rel = rel.substring(1);
+      try {
+        rel = Uri.decodeComponent(rel);
+      } catch (_) {}
+      if (rel.isEmpty || rel.endsWith('/')) {
+        rel = entryRel;
+      }
+      if (rel.contains('..')) return Response.forbidden('非法路径');
+      return _peerFetchResponse(rel);
+    };
+  }
+
+  Future<String> _resolvePeerEntry() async {
+    var entryRel = widget.entry;
+    try {
+      final meta = await ApiService.fetchFolderFile(
+        _peerFolderId,
+        _folderRel('app.json'),
+        deviceId: _peerDeviceId,
+      );
+      if (meta.ok) {
+        final m = json.decode(utf8.decode(meta.body));
+        if (m is Map && m['entry'] != null) {
+          entryRel = m['entry'].toString();
+        }
+      }
+    } catch (_) {}
+
+    if (await ApiService.folderFileExists(
+      _peerFolderId,
+      _folderRel(entryRel),
+      deviceId: _peerDeviceId,
+    )) {
+      return entryRel;
+    }
+    if (entryRel != 'index.html' &&
+        await ApiService.folderFileExists(
+          _peerFolderId,
+          _folderRel('index.html'),
+          deviceId: _peerDeviceId,
+        )) {
+      return 'index.html';
+    }
+    throw Exception('缺少入口文件（$entryRel / index.html），或对端离线');
+  }
+
+  Future<void> _serveAndOpen(Handler handler, String entryRel, String portKey) async {
+    final preferred = _stablePortFor(portKey);
+    try {
+      _server = await shelf_io.serve(
+        handler,
+        InternetAddress.loopbackIPv4,
+        preferred,
+      );
+    } catch (_) {
+      _server = await shelf_io.serve(
+        handler,
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+    }
+    final url = 'http://127.0.0.1:${_server!.port}/$entryRel';
+    _entryRel = entryRel;
+
+    if (_preferCef) {
+      final ok = await _startCefWebView(url);
+      if (!ok) {
+        setState(() => _url = url);
+        await _openBrowser(url);
+      }
+    } else if (_preferPlatformWebView) {
+      await _startPlatformWebView(url);
+    } else {
+      setState(() => _url = url);
+      await _openBrowser(url);
+    }
   }
 
   /// 将 URL 中 data 相对路径解析到 appPath/data 下；非法则 null。
@@ -372,6 +735,10 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
 
   /// 触发所属同步文件夹扫描，等待局域网对端同步落盘后对比 revision。
   Future<void> _refreshFromPeers() async {
+    if (_isPeer) {
+      _snack('对端只读打开，无法从本机触发同步刷新');
+      return;
+    }
     if (_pulling) return;
     setState(() => _pulling = true);
     try {
@@ -438,6 +805,7 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
   }
 
   Future<void> _checkRevision() async {
+    if (_isPeer) return;
     if (!mounted || _reloadingApp) return;
     try {
       final rev = await _computeRevision(widget.appPath);
@@ -482,6 +850,15 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
 
   Future<void> _start() async {
     try {
+      if (_isPeer) {
+        final entryRel = await _resolvePeerEntry();
+        final portKey =
+            'peer:${_peerDeviceId}:${_peerFolderId}:${widget.appRelPath}';
+        await _serveAndOpen(_buildPeerHandler(entryRel), entryRel, portKey);
+        // 对端只读：不轮询 revision
+        return;
+      }
+
       final root = Directory(widget.appPath);
       if (!root.existsSync()) {
         setState(() => _error = '应用目录不存在: ${widget.appPath}');
@@ -507,36 +884,11 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
 
       await _ensureSyncIgnore(widget.appPath);
 
-      final handler = _buildHandler(widget.appPath, entryRel);
-      final preferred = _stablePortFor(widget.appPath);
-      try {
-        _server = await shelf_io.serve(
-          handler,
-          InternetAddress.loopbackIPv4,
-          preferred,
-        );
-      } catch (_) {
-        _server = await shelf_io.serve(
-          handler,
-          InternetAddress.loopbackIPv4,
-          0,
-        );
-      }
-      final url = 'http://127.0.0.1:${_server!.port}/$entryRel';
-      _entryRel = entryRel;
-
-      if (_preferCef) {
-        final ok = await _startCefWebView(url);
-        if (!ok) {
-          setState(() => _url = url);
-          await _openBrowser(url);
-        }
-      } else if (_preferPlatformWebView) {
-        await _startPlatformWebView(url);
-      } else {
-        setState(() => _url = url);
-        await _openBrowser(url);
-      }
+      await _serveAndOpen(
+        _buildHandler(widget.appPath, entryRel),
+        entryRel,
+        widget.appPath,
+      );
       _startRevisionWatch();
     } catch (e) {
       setState(() => _error = e.toString());
@@ -619,9 +971,25 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(widget.title),
+            if (_isPeer)
+              Text(
+                _peerWritable ? '对端同步（可写）' : '对端只读',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.7),
+                    ),
+              ),
+          ],
+        ),
         actions: [
-          if (_url != null)
+          if (_url != null && !_isPeer)
             IconButton(
               tooltip: _pulling ? '正在对比其他设备…' : '刷新：对比其他设备数据',
               onPressed: _pulling ? null : () => unawaited(_refreshFromPeers()),

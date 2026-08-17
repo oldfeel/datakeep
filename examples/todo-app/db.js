@@ -74,6 +74,9 @@
 
   function persist() {
     if (!db) return Promise.resolve();
+    if (global.__DATAKEEP_READONLY) {
+      return Promise.reject(new Error('对端只读，无法保存'));
+    }
     var data = db.export();
     return fetch(dataUrl(fileName), {
       method: 'PUT',
@@ -86,6 +89,12 @@
   }
 
   function schedulePersist(ms) {
+    if (global.__DATAKEEP_READONLY) {
+      if (global.DataKeepDb && typeof global.DataKeepDb.onPersistError === 'function') {
+        global.DataKeepDb.onPersistError(new Error('对端只读，无法保存'));
+      }
+      return;
+    }
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
       saveTimer = null;

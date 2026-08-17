@@ -261,7 +261,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                         )
                       : null,
                   onTap: () {
-                    if (folder.isApp && widget.device.isLocal) {
+                    if (folder.isApp) {
                       openFolderApp(context, folder);
                       return;
                     }

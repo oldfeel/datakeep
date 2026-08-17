@@ -399,7 +399,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                   : null,
               onTap: () {
-                if (folder.isApp && selectedIsLocal) {
+                if (folder.isApp) {
                   openFolderApp(context, folder);
                   return;
                 }

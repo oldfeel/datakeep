@@ -94,3 +94,29 @@ void openAppAtPath(
     ),
   );
 }
+
+/// 经局域网打开对端设备上的 HTML 应用
+/// [writable] 对应文件夹 ACL「同步」；只读时不可写 data/
+void openPeerApp(
+  BuildContext context, {
+  required String deviceId,
+  required String folderId,
+  required String appRelPath,
+  String? title,
+  bool writable = false,
+}) {
+  final name = title ??
+      (appRelPath.isEmpty ? folderId : p.basename(appRelPath));
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => AppRunnerPage(
+        appPath: '',
+        title: name,
+        peerDeviceId: deviceId,
+        peerFolderId: folderId,
+        appRelPath: appRelPath,
+        peerWritable: writable,
+      ),
+    ),
+  );
+}

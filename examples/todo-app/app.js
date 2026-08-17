@@ -242,7 +242,11 @@
         ]);
         DataKeepDb.schedulePersist();
         refresh();
-        setStatus('已保存');
+        if (window.__DATAKEEP_READONLY) {
+          setStatus('对端只读，修改不会保存到手机', true);
+        } else {
+          setStatus('已保存');
+        }
       });
       var title = document.createElement('span');
       title.className = 'title' + (r.done ? ' done' : '');
@@ -261,7 +265,11 @@
         ]);
         DataKeepDb.schedulePersist();
         refresh();
-        setStatus('已删除');
+        if (window.__DATAKEEP_READONLY) {
+          setStatus('对端只读，修改不会保存到手机', true);
+        } else {
+          setStatus('已删除');
+        }
       });
 
       li.appendChild(label);
@@ -340,7 +348,11 @@
     DataKeepDb.schedulePersist();
     form.title.value = '';
     refresh();
-    setStatus('已保存');
+    if (window.__DATAKEEP_READONLY) {
+      setStatus('对端只读，修改不会保存到手机', true);
+    } else {
+      setStatus('已保存');
+    }
   });
 
   document.addEventListener('visibilitychange', function () {

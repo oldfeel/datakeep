@@ -204,6 +204,18 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   }
 
   void _openEntryApp(String name) {
+    final rel = _currentPath.isEmpty ? name : '${_currentPath.join('/')}/$name';
+    if (_folderInfo?.isLocal != true) {
+      openPeerApp(
+        context,
+        deviceId: widget.deviceId,
+        folderId: widget.folderId,
+        appRelPath: rel,
+        title: name,
+        writable: _folderInfo?.isSyncAccess ?? false,
+      );
+      return;
+    }
     final abs = p.join(_absoluteCurrentPath, name);
     final registered = findRegisteredApp(
       context.read<FolderProvider>().folders,
@@ -723,7 +735,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                   ],
                 )),
       onTap: () {
-        if (isApp && _folderInfo?.isLocal == true) {
+        if (isApp) {
           _openEntryApp(name);
         } else if (isDir) {
           _navigateToFolder(name);

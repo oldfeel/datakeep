@@ -40,6 +40,8 @@ class BackendServer {
       ..get('/api/device/<deviceId>/folders', _handleDeviceFolders)
       ..get('/api/device/<deviceId>/folder/<folderId>/files', _handleDeviceFolderFiles)
       ..get('/api/device/<deviceId>/folder/<folderId>/preview', _handleDeviceFolderPreview)
+      ..put('/api/device/<deviceId>/folder/<folderId>/file', _handleDeviceFolderPutFile)
+      ..delete('/api/device/<deviceId>/folder/<folderId>/file', _handleDeviceFolderDeleteFile)
       ..post('/api/device/local/folders', _handleCreateFolder)
       ..delete('/api/device/<deviceId>/folders/<folderId>', _handleDeleteFolder)
       ..delete('/api/device/<deviceId>', _handleRemoveDevice)
@@ -73,6 +75,8 @@ class BackendServer {
       ..get('/api/peer/folders', _handlePeerFolders)
       ..get('/api/peer/folder/<folderId>/files', _handlePeerFolderFiles)
       ..get('/api/peer/folder/<folderId>/preview', _handlePeerFolderPreview)
+      ..put('/api/peer/folder/<folderId>/file', _handlePeerFolderPutFile)
+      ..delete('/api/peer/folder/<folderId>/file', _handlePeerFolderDeleteFile)
       ..get('/api/peer/health', _handlePeerHealth)
       ..get('/health', _handleHealth);
 
@@ -410,6 +414,32 @@ class BackendServer {
     return _serveLocalFilePreview(folderId, request.url.queryParameters['path'] ?? '');
   }
 
+  /// 对端写入本机文件（仅 ACL=sync）
+  Future<Response> _handlePeerFolderPutFile(Request request, String folderId) async {
+    final auth = await _authorizePeer(request);
+    if (auth != null) return auth;
+    final callerId = request.headers['x-datakeep-device-id'] ?? '';
+    final access = await _resolveAccessForCaller(folderId, callerId);
+    if (access != FolderAccess.sync) {
+      return Response(403, body: '无写入权限（需要同步权限）');
+    }
+    final path = request.url.queryParameters['path'] ?? '';
+    return _writeLocalFolderFile(folderId, path, request);
+  }
+
+  /// 对端删除本机文件（仅 ACL=sync）
+  Future<Response> _handlePeerFolderDeleteFile(Request request, String folderId) async {
+    final auth = await _authorizePeer(request);
+    if (auth != null) return auth;
+    final callerId = request.headers['x-datakeep-device-id'] ?? '';
+    final access = await _resolveAccessForCaller(folderId, callerId);
+    if (access != FolderAccess.sync) {
+      return Response(403, body: '无写入权限（需要同步权限）');
+    }
+    final path = request.url.queryParameters['path'] ?? '';
+    return _deleteLocalFolderFile(folderId, path);
+  }
+
   Future<FolderAccess> _resolveAccessForCaller(String folderId, String callerId) async {
     final folders = await _buildLocalFoldersPayload();
     Map<String, dynamic>? match;
@@ -451,6 +481,32 @@ class BackendServer {
       return _serveLocalFilePreview(folderId, path);
     }
     return _proxyPeerFolderPreview(deviceId, folderId, path);
+  }
+
+  Future<Response> _handleDeviceFolderPutFile(
+    Request request,
+    String deviceId,
+    String folderId,
+  ) async {
+    final path = request.url.queryParameters['path'] ?? '';
+    final isLocal = await _isLocalDeviceId(deviceId);
+    if (isLocal) {
+      return _writeLocalFolderFile(folderId, path, request);
+    }
+    return _proxyPeerFolderPutFile(deviceId, folderId, path, request);
+  }
+
+  Future<Response> _handleDeviceFolderDeleteFile(
+    Request request,
+    String deviceId,
+    String folderId,
+  ) async {
+    final path = request.url.queryParameters['path'] ?? '';
+    final isLocal = await _isLocalDeviceId(deviceId);
+    if (isLocal) {
+      return _deleteLocalFolderFile(folderId, path);
+    }
+    return _proxyPeerFolderDeleteFile(deviceId, folderId, path);
   }
 
   Future<Response> _proxyPeerFolderFiles(
@@ -564,6 +620,102 @@ class BackendServer {
         'Content-Type': contentType,
         'Content-Length': '$size',
       },
+    );
+  }
+
+  Future<Response> _proxyPeerFolderPutFile(
+    String deviceId,
+    String folderId,
+    String path,
+    Request request,
+  ) async {
+    if (path.isEmpty) return Response(400, body: '缺少 path 参数');
+    if (!await _api.isRunning()) {
+      return Response(503, body: 'Syncthing 未运行');
+    }
+    final conn = await _api.getDeviceConnection(deviceId);
+    if (!conn.connected) {
+      return Response(503, body: '设备离线');
+    }
+    final ip = PeerClient.extractLanIp(conn.address);
+    if (ip == null) {
+      return Response(
+        503,
+        body: '无法解析对端局域网地址（需同网且对端已打开 DataKeep）',
+      );
+    }
+    final localId = await _api.getLocalDeviceId();
+    if (localId == null || localId.isEmpty) {
+      return Response(503, body: '本机设备 ID 未知');
+    }
+    final bytes = await request.read().fold<BytesBuilder>(
+      BytesBuilder(copy: false),
+      (b, chunk) {
+        b.add(chunk);
+        return b;
+      },
+    );
+    final data = bytes.takeBytes();
+    if (data.length > _maxPreviewBytes) {
+      return Response(413, body: '文件过大，超过写入上限');
+    }
+    final encoded = Uri.encodeComponent(folderId);
+    final q = '?path=${Uri.encodeComponent(path)}';
+    debugPrint('[peer] 写入对端: device=$deviceId folder=$folderId path=$path bytes=${data.length}');
+    final peer = await PeerClient.putBytes(
+      ip,
+      '/api/peer/folder/$encoded/file$q',
+      data,
+      headers: {PeerClient.deviceIdHeader: localId},
+    );
+    if (peer.containsKey('error')) {
+      final code = peer['statusCode'] is int ? peer['statusCode'] as int : 503;
+      return Response(code, body: peer['error']?.toString() ?? '对端不可达');
+    }
+    return Response.ok(
+      '{"ok":true}',
+      headers: {'Content-Type': 'application/json; charset=utf-8'},
+    );
+  }
+
+  Future<Response> _proxyPeerFolderDeleteFile(
+    String deviceId,
+    String folderId,
+    String path,
+  ) async {
+    if (path.isEmpty) return Response(400, body: '缺少 path 参数');
+    if (!await _api.isRunning()) {
+      return Response(503, body: 'Syncthing 未运行');
+    }
+    final conn = await _api.getDeviceConnection(deviceId);
+    if (!conn.connected) {
+      return Response(503, body: '设备离线');
+    }
+    final ip = PeerClient.extractLanIp(conn.address);
+    if (ip == null) {
+      return Response(
+        503,
+        body: '无法解析对端局域网地址（需同网且对端已打开 DataKeep）',
+      );
+    }
+    final localId = await _api.getLocalDeviceId();
+    if (localId == null || localId.isEmpty) {
+      return Response(503, body: '本机设备 ID 未知');
+    }
+    final encoded = Uri.encodeComponent(folderId);
+    final q = '?path=${Uri.encodeComponent(path)}';
+    final peer = await PeerClient.delete(
+      ip,
+      '/api/peer/folder/$encoded/file$q',
+      headers: {PeerClient.deviceIdHeader: localId},
+    );
+    if (peer.containsKey('error')) {
+      final code = peer['statusCode'] is int ? peer['statusCode'] as int : 503;
+      return Response(code, body: peer['error']?.toString() ?? '对端不可达');
+    }
+    return Response.ok(
+      '{"ok":true}',
+      headers: {'Content-Type': 'application/json; charset=utf-8'},
     );
   }
 
@@ -1053,11 +1205,118 @@ class BackendServer {
 
   static const int _maxPreviewBytes = 200 * 1024 * 1024; // 200MB
 
+  Future<String?> _resolveFolderRootPath(String folderId) async {
+    var folderPath = await _api.getFolderPath(folderId);
+    if (folderPath == null || folderPath.isEmpty) {
+      var decodedId = folderId;
+      try {
+        decodedId = Uri.decodeComponent(folderId);
+      } catch (_) {}
+      for (final f in _api.getFoldersFromConfig()) {
+        final fid = f['id']?.toString() ?? '';
+        if (fid == folderId || fid == decodedId) {
+          folderPath = f['path']?.toString();
+          break;
+        }
+      }
+    }
+    if (folderPath == null || folderPath.isEmpty) return null;
+    return folderPath;
+  }
+
+  /// 写入本机同步文件夹内文件（创建父目录）；path 为相对路径
+  Future<Response> _writeLocalFolderFile(
+    String folderId,
+    String filePath,
+    Request request,
+  ) async {
+    if (filePath.isEmpty) return Response(400, body: '缺少 path 参数');
+    final folderPath = await _resolveFolderRootPath(folderId);
+    if (folderPath == null) return Response(404, body: '文件夹未找到');
+    final safe = _resolveWritePath(folderPath, filePath);
+    if (safe == null) return Response(403, body: '非法路径');
+
+    final builder = await request.read().fold<BytesBuilder>(
+      BytesBuilder(copy: false),
+      (b, chunk) {
+        b.add(chunk);
+        return b;
+      },
+    );
+    final data = builder.takeBytes();
+    if (data.length > _maxPreviewBytes) {
+      return Response(413, body: '文件过大，超过写入上限');
+    }
+    try {
+      final f = File(safe);
+      await f.parent.create(recursive: true);
+      await f.writeAsBytes(data, flush: true);
+      unawaited(_api.triggerFolderScan(folderId));
+      debugPrint('[peer-write] 已写入 $safe (${data.length} bytes)');
+      return Response.ok(
+        '{"ok":true}',
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      );
+    } catch (e) {
+      return Response(500, body: '写入失败: $e');
+    }
+  }
+
+  Future<Response> _deleteLocalFolderFile(String folderId, String filePath) async {
+    if (filePath.isEmpty) return Response(400, body: '缺少 path 参数');
+    final folderPath = await _resolveFolderRootPath(folderId);
+    if (folderPath == null) return Response(404, body: '文件夹未找到');
+    final safe = _resolveWritePath(folderPath, filePath);
+    if (safe == null) return Response(403, body: '非法路径');
+    try {
+      final f = File(safe);
+      if (!await f.exists()) {
+        return Response.notFound('不存在');
+      }
+      await f.delete();
+      unawaited(_api.triggerFolderScan(folderId));
+      return Response.ok(
+        '{"ok":true}',
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      );
+    } catch (e) {
+      return Response(500, body: '删除失败: $e');
+    }
+  }
+
+  /// 写路径解析：允许尚不存在的文件，但必须落在 folder root 下
+  String? _resolveWritePath(String folderPath, String filePath) {
+    try {
+      final baseDir = Directory(folderPath);
+      if (!baseDir.existsSync()) return null;
+      final baseCanon = baseDir.resolveSymbolicLinksSync();
+      final rel = filePath
+          .replaceAll('\\', '/')
+          .replaceAll(RegExp(r'^/+'), '')
+          .split('/')
+          .where((s) => s.isNotEmpty && s != '.' && s != '..')
+          .join(Platform.pathSeparator);
+      if (rel.isEmpty || filePath.contains('..')) return null;
+      final candidate = '$baseCanon${Platform.pathSeparator}$rel';
+      final normalized = File(candidate).absolute.path;
+      final prefix = baseCanon.endsWith(Platform.pathSeparator)
+          ? baseCanon
+          : '$baseCanon${Platform.pathSeparator}';
+      if (normalized != baseCanon && !normalized.startsWith(prefix)) {
+        return null;
+      }
+      return normalized;
+    } catch (e) {
+      debugPrint('[write] resolve 失败: $e');
+      return null;
+    }
+  }
+
   Future<Response> _serveLocalFilePreview(String folderId, String filePath) async {
     if (filePath.isEmpty) return Response(400, body: '缺少 path 参数');
 
     // 与目录浏览一致：兼容 URL 编码的 folderId
-    var folderPath = await _api.getFolderPath(folderId);
+    var folderPath = await _resolveFolderRootPath(folderId);
     if (folderPath == null || folderPath.isEmpty) {
       var decodedId = folderId;
       try {
@@ -1186,16 +1445,24 @@ class BackendServer {
         return 'audio/x-ms-wma';
       case 'm4a':
         return 'audio/mp4';
+      case 'html':
+      case 'htm':
+        return 'text/html; charset=utf-8';
+      case 'css':
+        return 'text/css; charset=utf-8';
+      case 'js':
+      case 'mjs':
+        return 'text/javascript; charset=utf-8';
+      case 'wasm':
+        return 'application/wasm';
+      case 'json':
+        return 'application/json; charset=utf-8';
       case 'txt':
       case 'md':
-      case 'json':
       case 'xml':
       case 'yaml':
       case 'yml':
-      case 'js':
       case 'ts':
-      case 'html':
-      case 'css':
       case 'py':
       case 'java':
       case 'cpp':

@@ -31,6 +31,23 @@ class PreviewDownloadResult {
   }
 }
 
+/// 文件夹内单文件字节（本机或对端 preview）
+class FolderFileBytes {
+  final int statusCode;
+  final Uint8List body;
+  final String contentType;
+  final String? errorBody;
+
+  const FolderFileBytes({
+    required this.statusCode,
+    required this.body,
+    required this.contentType,
+    this.errorBody,
+  });
+
+  bool get ok => statusCode == 200;
+}
+
 /// API 服务，调用后端 API 服务器
 class ApiService {
   static String _baseUrl = 'https://localhost:8443/api';
@@ -856,6 +873,102 @@ class ApiService {
       const Duration(minutes: 3),
       onTimeout: () => throw Exception('预览超时（对端需同网且已打开 DataKeep）'),
     );
+  }
+
+  /// 拉取文件夹内文件（本机或对端），供 AppRunner peer 模式使用
+  static Future<FolderFileBytes> fetchFolderFile(
+    String folderId,
+    String filePath, {
+    String? deviceId,
+  }) async {
+    final resp = await previewFile(folderId, filePath, deviceId: deviceId);
+    final ct = resp.headers['content-type'] ?? 'application/octet-stream';
+    return FolderFileBytes(
+      statusCode: resp.statusCode,
+      body: resp.bodyBytes,
+      contentType: ct,
+      errorBody: resp.statusCode == 200
+          ? null
+          : (resp.body.isNotEmpty ? resp.body : 'HTTP ${resp.statusCode}'),
+    );
+  }
+
+  /// 写入文件夹内文件（本机或对端；对端需 ACL=sync）
+  static Future<void> putFolderFile(
+    String folderId,
+    String filePath,
+    List<int> bytes, {
+    String? deviceId,
+  }) async {
+    await initialize();
+    final localId = await getLocalDeviceId();
+    final isLocal = deviceId == null ||
+        deviceId.isEmpty ||
+        deviceId == 'local' ||
+        deviceId == localId;
+    final Uri uri;
+    if (isLocal) {
+      uri = Uri.parse(
+        '$_baseUrl/device/${Uri.encodeComponent(localId)}/folder/${Uri.encodeComponent(folderId)}/file',
+      ).replace(queryParameters: {'path': filePath});
+    } else {
+      uri = Uri.parse(
+        '$_baseUrl/device/${Uri.encodeComponent(deviceId)}/folder/${Uri.encodeComponent(folderId)}/file',
+      ).replace(queryParameters: {'path': filePath});
+    }
+    debugPrint('API PUT file: $uri (${bytes.length} bytes)');
+    final resp = await _httpClient
+        .put(uri, body: bytes, headers: {'Content-Type': 'application/octet-stream'})
+        .timeout(const Duration(minutes: 3));
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw Exception(
+        resp.body.isNotEmpty ? resp.body : '写入失败 HTTP ${resp.statusCode}',
+      );
+    }
+  }
+
+  /// 删除文件夹内文件（本机或对端；对端需 ACL=sync）
+  static Future<void> deleteFolderFile(
+    String folderId,
+    String filePath, {
+    String? deviceId,
+  }) async {
+    await initialize();
+    final localId = await getLocalDeviceId();
+    final isLocal = deviceId == null ||
+        deviceId.isEmpty ||
+        deviceId == 'local' ||
+        deviceId == localId;
+    final Uri uri;
+    if (isLocal) {
+      uri = Uri.parse(
+        '$_baseUrl/device/${Uri.encodeComponent(localId)}/folder/${Uri.encodeComponent(folderId)}/file',
+      ).replace(queryParameters: {'path': filePath});
+    } else {
+      uri = Uri.parse(
+        '$_baseUrl/device/${Uri.encodeComponent(deviceId)}/folder/${Uri.encodeComponent(folderId)}/file',
+      ).replace(queryParameters: {'path': filePath});
+    }
+    final resp = await _httpClient.delete(uri).timeout(const Duration(seconds: 30));
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw Exception(
+        resp.body.isNotEmpty ? resp.body : '删除失败 HTTP ${resp.statusCode}',
+      );
+    }
+  }
+
+  /// 探测文件是否存在（200 视为存在）
+  static Future<bool> folderFileExists(
+    String folderId,
+    String filePath, {
+    String? deviceId,
+  }) async {
+    try {
+      final r = await fetchFolderFile(folderId, filePath, deviceId: deviceId);
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 流式下载预览文件到临时路径，避免大文件整包进内存

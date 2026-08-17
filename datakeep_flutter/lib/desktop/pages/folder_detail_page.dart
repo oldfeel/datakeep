@@ -275,6 +275,18 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
   }
 
   void _openEntryApp(String name) {
+    final rel = _currentPath.isEmpty ? name : '${_currentPath.join('/')}/$name';
+    if (!widget.device.isLocal) {
+      openPeerApp(
+        context,
+        deviceId: widget.device.id,
+        folderId: widget.folder.id,
+        appRelPath: rel,
+        title: name,
+        writable: widget.folder.isSyncAccess,
+      );
+      return;
+    }
     final abs = p.join(_absoluteCurrentPath, name);
     final registered = findRegisteredApp(
       context.read<FolderProvider>().folders,
