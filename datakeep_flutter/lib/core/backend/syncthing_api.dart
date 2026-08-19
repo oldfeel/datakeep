@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import '../../shared/utils/local_http_client.dart';
 
 class SyncthingApi {
   static final SyncthingApi _instance = SyncthingApi._();
@@ -23,6 +24,8 @@ class SyncthingApi {
   String _findConfigPath() {
     final home = Platform.environment['HOME'] ?? '';
     final candidates = [
+      if (Platform.isMacOS)
+        '$home/Library/Application Support/Syncthing/config.xml',
       '$home/.config/syncthing/config.xml',
       '$home/.local/state/syncthing/config.xml',
     ];
@@ -42,7 +45,11 @@ class SyncthingApi {
     }
   }
 
-  HttpClient _createClient() => HttpClient();
+  HttpClient _createClient() {
+    final client = HttpClient();
+    configureLocalHttpClient(client);
+    return client;
+  }
 
   HttpClientRequest _addAuth(HttpClientRequest request) {
     if (_apiKey.isNotEmpty) {

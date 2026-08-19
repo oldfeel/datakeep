@@ -24,7 +24,7 @@
 5. ~~本机设备 ID 二维码展示~~ — 本机设备信息 / 侧栏 / 抽屉
 6. ~~多媒体预览打磨~~ — 流式预览、PDF/系统打开、邻图滑动、统一分发
 7. ~~对外分享~~ — 系统分享（微信/邮件等）；不做公网直链/网盘 API
-8. ~~移动端 Syncthing 进程内引擎~~ — 共用 `syncthing_core`（gomobile：iOS xcframework + Android AAR）；桌面仍用系统 syncthing
+8. ~~移动端 Syncthing 进程内引擎~~ — 共用 `syncthing_core`（gomobile：iOS xcframework + Android AAR）；桌面编译 `bin/syncthing`（见 `scripts/build_desktop_syncthing.sh`）
 
 应用市场（`datakeep-market`）市场应用包仍在服务器本机 `STORAGE_DIR`；**客户端安装包**经 GitHub Release + BT/磁力分发（`sync-github` 拉 GitHub 写链并生成 `.torrent`；家宽 PC 用 qBittorrent 做种加速国内用户）。
 
@@ -69,8 +69,10 @@ git remote set-url --add --push origin git@gitee.com:yuncommunity/datakeep.git
 ## 开发命令
 
 ```bash
-# Flutter 桌面调试（backend 由 Flutter 进程内启动；Syncthing 用系统二进制）
-cd datakeep_flutter && flutter run -d linux
+# Flutter 桌面调试（backend 进程内 shelf；Syncthing 需先编译到 bin/syncthing）
+cd datakeep_flutter && ./start_desktop.sh
+# macOS 专用：./start_macos.sh
+# 仅编译 Syncthing：bash scripts/build_desktop_syncthing.sh
 
 # Android：先 gomobile AAR，再跑（或 ./start_android.sh）
 cd datakeep_flutter && make -C syncthing_core android && flutter run -d android

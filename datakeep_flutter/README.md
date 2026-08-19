@@ -53,8 +53,9 @@ flutter run -d linux
 # 桌面端 (Windows)
 flutter run -d windows
 
-# 桌面端 (macOS)
-flutter run -d macos
+# 桌面端 (macOS，先编译 Syncthing)
+./start_macos.sh
+# 或：bash scripts/build_desktop_syncthing.sh && flutter run -d macos
 
 # Web 端
 flutter run -d chrome

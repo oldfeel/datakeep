@@ -9,6 +9,7 @@ import 'native_service.dart';
 import 'android_storage_service.dart';
 import '../../shared/utils/sync_folder_paths.dart';
 import '../../shared/utils/preview_limits.dart';
+import '../../shared/utils/local_http_client.dart';
 
 /// 预览流式下载结果
 class PreviewDownloadResult {
@@ -56,10 +57,7 @@ class ApiService {
   // 创建支持自签名证书的 HTTP 客户端
   static http.Client _createHttpClient() {
     final httpClient = HttpClient();
-    httpClient.badCertificateCallback = (X509Certificate cert, String host, int port) {
-      // 允许 localhost 的自签名证书
-      return host == 'localhost' || host == '127.0.0.1';
-    };
+    configureLocalHttpClient(httpClient);
     return IOClient(httpClient);
   }
   

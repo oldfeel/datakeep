@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../../shared/utils/preview_limits.dart';
+import '../../shared/utils/local_http_client.dart';
 
 /// 局域网对端 DataKeep HTTPS 客户端（自签名 + 私网 IP）
 class PeerClient {
@@ -38,9 +39,10 @@ class PeerClient {
   static HttpClient _client({Duration? connectionTimeout}) {
     final c = HttpClient();
     c.connectionTimeout = connectionTimeout ?? const Duration(seconds: 5);
-    c.badCertificateCallback = (cert, host, port) {
-      return _isPrivateIpv4(host) && port == peerPort;
-    };
+    configureLocalHttpClient(
+      c,
+      trustCertificate: (host, port) => _isPrivateIpv4(host) && port == peerPort,
+    );
     return c;
   }
 

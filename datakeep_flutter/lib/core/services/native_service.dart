@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import '../../shared/utils/local_http_client.dart';
 
 /// Platform Channel 服务，用于与原生代码通信
 /// 桌面端使用系统命令，移动端使用 Platform Channel
@@ -177,6 +178,7 @@ class NativeService {
       final syncthingPath = await _findSyncthingExecutable();
       if (syncthingPath == null) {
         debugPrint('未找到 Syncthing 可执行文件');
+        debugPrint('请先编译：bash scripts/build_desktop_syncthing.sh 或 ./start_macos.sh');
         return false;
       }
 
@@ -234,6 +236,7 @@ class NativeService {
   static Future<bool> _isSyncthingApiReady() async {
     try {
       final client = HttpClient();
+      configureLocalHttpClient(client);
       client.connectionTimeout = const Duration(seconds: 2);
       final request = await client.getUrl(Uri.parse('http://127.0.0.1:8384/rest/system/status'));
       final apiKey = _getApiKeyFromConfig();
@@ -278,17 +281,18 @@ class NativeService {
   static Future<String?> _findSyncthingExecutable() async {
     final possiblePaths = <String>[];
 
-    // 1. 打包后的应用目录（data/bin/syncthing，见 linux/CMakeLists.txt）
+    // 1. 打包后的应用目录（Linux: data/bin；macOS: Resources/bin）
     final executablePath = Platform.resolvedExecutable;
     final executableDir = File(executablePath).parent;
     possiblePaths.addAll([
       '${executableDir.path}/../data/bin/syncthing',
       '${executableDir.path}/data/bin/syncthing',
+      if (Platform.isMacOS) '${executableDir.path}/../Resources/bin/syncthing',
     ]);
 
     // 2. 从可执行文件位置向上查找 syncthing/bin/syncthing 或 bin/syncthing（开发/本地构建）
     var searchDir = executableDir;
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 10; i++) {
       possiblePaths.addAll([
         '${searchDir.path}/syncthing/bin/syncthing',
         '${searchDir.path}/bin/syncthing',
@@ -298,7 +302,15 @@ class NativeService {
       searchDir = parent;
     }
 
-    // 3. 从当前工作目录向上查找（flutter run 等场景）
+    // 3. macOS Homebrew（可选回退）
+    if (Platform.isMacOS) {
+      possiblePaths.addAll([
+        '/opt/homebrew/bin/syncthing',
+        '/usr/local/bin/syncthing',
+      ]);
+    }
+
+    // 4. 从当前工作目录向上查找（flutter run 等场景）
     var currentDir = Directory.current;
     while (true) {
       possiblePaths.addAll([
@@ -454,7 +466,7 @@ class NativeService {
       // 检查 API 是否可访问
       try {
         final client = HttpClient();
-        client.badCertificateCallback = (cert, host, port) => true;
+        configureLocalHttpClient(client, trustCertificate: (_, __) => true);
         client.connectionTimeout = const Duration(seconds: 2);
         final request = await client.getUrl(Uri.parse('https://localhost:8443/api/health'));
         final response = await request.close().timeout(const Duration(seconds: 2));
