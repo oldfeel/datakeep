@@ -26,11 +26,11 @@
 7. ~~对外分享~~ — 系统分享（微信/邮件等）；不做公网直链/网盘 API
 8. ~~移动端 Syncthing 进程内引擎~~ — 共用 `syncthing_core`（gomobile：iOS xcframework + Android AAR）；桌面仍用系统 syncthing
 
-应用市场（`datakeep-market`）市场应用包仍在服务器本机 `STORAGE_DIR`；**客户端安装包**优先经 Gitee / GitHub Release 双通道分发（`sync-github` 拉 GitHub 后上传 Gitee）。
+应用市场（`datakeep-market`）市场应用包仍在服务器本机 `STORAGE_DIR`；**客户端安装包**经 GitHub Release + BT/磁力分发（`sync-github` 拉 GitHub 写链并生成 `.torrent`；家宽 PC 用 qBittorrent 做种加速国内用户）。
 
 ### 代码双推（可选）
 
-本机可将 `origin` 同时 push 到 GitHub 与 Gitee（安装包仍由服务器上传 Release 附件，不靠 git push 大文件）：
+本机可将 `origin` 同时 push 到 GitHub 与 Gitee（**仅代码镜像**，安装包不走 Gitee Release）：
 
 ```bash
 git remote set-url --add --push origin git@github.com:oldfeel/datakeep.git

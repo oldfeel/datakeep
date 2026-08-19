@@ -144,6 +144,19 @@ jobs:
           channel: ${{ env.FLUTTER_CHANNEL }}
           cache: true
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: syncthing/go.sum
+
+      - name: Build Syncthing for Linux bundle
+        working-directory: syncthing
+        run: |
+          go run build.go -version v2.1.0 install syncthing
+          mkdir -p ../datakeep_flutter/bin
+          install -m 755 bin/syncthing ../datakeep_flutter/bin/syncthing
+          ls -lh ../datakeep_flutter/bin/syncthing
+
       - run: |
           flutter config --enable-linux-desktop
           flutter pub get
@@ -158,6 +171,7 @@ jobs:
           VERSION="${VERSION%%+*}"
           BUNDLE=$(find datakeep_flutter/build/linux -type d -path '*/release/bundle' | head -1)
           test -d "$BUNDLE"
+          test -x "$BUNDLE/data/bin/syncthing" || (echo "缺少 bundle/data/bin/syncthing" >&2; exit 1)
           mkdir -p dist
           STAGE=$(mktemp -d)
           NAME="datakeep-${VERSION}-linux"

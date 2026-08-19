@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # DataKeep 发版：更新版本 → 打 tag → 推送 → 触发 GitHub Actions 多平台编译
-# 编完后可选：通知官网从 GitHub Release 拉取，并上传 Gitee（国内主通道）/ 可选本机兜底
+# 编完后可选：通知官网从 GitHub Release 拉取并写入 GitHub 下载链 + 生成 BT 种子
 #
 # 用法:
 #   ./scripts/release.sh              # 默认 patch +0.0.1（从 0.0.0 → v0.0.1 → v0.0.2 …）
@@ -14,6 +14,10 @@
 #   ./scripts/release.sh --skip-market     # 不等待/不同步官网
 #   ./scripts/release.sh market           # 仅把已有 GitHub Release 同步到官网（默认最新 tag）
 #   ./scripts/release.sh market v0.0.2    # 指定 tag（qiniu/sync 为同义别名）
+#   ./scripts/release.sh links            # 打印最新 Release 四端 GitHub 下载链接
+#   ./scripts/release.sh links v0.0.3     # 指定 tag
+#   ./scripts/release.sh torrents         # 打印官网四端磁力链（需先 sync-github）
+#   ./scripts/release.sh torrents v0.0.3  # 指定版本（仅校验 tag，链来自当前官网 API）
 #
 # 官网同步（编完后默认尝试）:
 #   优先读环境变量 DATAKEEP_MARKET_TOKEN / USER / PASSWORD
@@ -45,16 +49,18 @@ NO_WAIT=0
 LOCAL_ONLY=0
 SKIP_MARKET=0
 MODE="patch" # 默认每次 +0.0.1；可被 patch|minor|major|x.y.z 覆盖
-ACTION="release" # release | market
-MARKET_TAG=""
+ACTION="release" # release | market | links | torrents
+RELEASE_TAG=""
 
 MARKET_URL="${DATAKEEP_MARKET_URL:-https://admin.datakeep.site}"
 MARKET_URL="${MARKET_URL%/}"
+PUBLIC_SITE="${DATAKEEP_PUBLIC_SITE:-https://datakeep.site}"
+PUBLIC_SITE="${PUBLIC_SITE%/}"
 
 usage() {
   cat <<'EOF'
 DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions 多平台编译
-编完后默认调用官网接口：服务器从 GitHub Release 拉包，上传 Gitee Release（若已配置），并写入双下载链。
+编完后默认调用官网接口：服务器从 GitHub Release 拉包、写入 GitHub 链并生成 BT 种子与磁力链。
 
 用法:
   ./scripts/release.sh              # 默认 +0.0.1（0.0.0 → v0.0.1 → v0.0.2 …）
@@ -68,6 +74,10 @@ DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions
   ./scripts/release.sh --skip-market     # 不同步官网
   ./scripts/release.sh market            # 仅同步已有 Release → 官网（最新 tag）
   ./scripts/release.sh market v0.0.2     # 指定 tag 同步（qiniu/sync 为别名）
+  ./scripts/release.sh links             # 打印四端 GitHub 下载直链（默认最新 tag）
+  ./scripts/release.sh links v0.0.3      # 指定 tag
+  ./scripts/release.sh torrents          # 打印四端磁力链（从官网 API，需先 sync）
+  ./scripts/release.sh torrents v0.0.3   # 指定版本校验后打印磁力链
 
 官网同步：默认用旁路 datakeep-market/market_server/.env 的 ADMIN_*；
 也可设 DATAKEEP_MARKET_TOKEN，或 DATAKEEP_MARKET_USER + DATAKEEP_MARKET_PASSWORD。
@@ -85,9 +95,15 @@ for arg in "$@"; do
     qiniu|sync|market)
       ACTION="market"
       ;;
+    links|urls)
+      ACTION="links"
+      ;;
+    torrents|magnets)
+      ACTION="torrents"
+      ;;
     v[0-9]*.[0-9]*.[0-9]*)
-      if [[ "$ACTION" == "market" ]]; then
-        MARKET_TAG="$arg"
+      if [[ "$ACTION" == "market" || "$ACTION" == "links" || "$ACTION" == "torrents" ]]; then
+        RELEASE_TAG="$arg"
       else
         # 当版本号写成 v1.2.0 时按 1.2.0 发版
         MODE="${arg#v}"
@@ -202,7 +218,7 @@ sync_market_from_github() {
       return 1
     fi
   fi
-  ok "同步任务已启动，等待服务器完成（GitHub→Gitee/本机，可能较久）…"
+  ok "同步任务已启动，等待服务器完成（GitHub 拉包，可能较久）…"
 
   local i status msg
   for i in $(seq 1 180); do
@@ -240,24 +256,124 @@ resolve_repo() {
   git -C "$ROOT" remote get-url origin | sed -E 's#.*github.com[:/]([^/]+/[^/.]+)(\.git)?#\1#'
 }
 
+resolve_release_tag() {
+  local tag="${RELEASE_TAG:-}"
+  if [[ -z "$tag" ]]; then
+    tag="$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null || true)"
+    if [[ -z "$tag" ]] && command -v gh >/dev/null 2>&1; then
+      tag="$(gh release list --repo "$REPO" --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)"
+    fi
+  fi
+  if [[ -z "$tag" ]]; then
+    return 1
+  fi
+  [[ "$tag" == v* ]] || tag="v$tag"
+  printf '%s' "$tag"
+}
+
+cmd_links() {
+  cd "$ROOT"
+  REPO="$(resolve_repo)"
+  local tag ver base
+  if ! tag="$(resolve_release_tag)"; then
+    err "无法确定 tag。请指定: ./scripts/release.sh links v0.0.3"
+    exit 1
+  fi
+  ver="${tag#v}"
+  base="https://github.com/${REPO}/releases/download/${tag}"
+
+  printf '%s/datakeep-%s-android.apk\n' "$base" "$ver"
+  printf '%s/datakeep-%s-windows-x64.zip\n' "$base" "$ver"
+  printf '%s/datakeep-%s-linux-x64.tar.gz\n' "$base" "$ver"
+  printf '%s/datakeep-%s-macos.zip\n' "$base" "$ver"
+
+  if command -v gh >/dev/null 2>&1; then
+    local assets_json missing=""
+    local name
+    if assets_json="$(gh release view "$tag" --repo "$REPO" --json assets 2>/dev/null)"; then
+      for name in \
+        "datakeep-${ver}-android.apk" \
+        "datakeep-${ver}-windows-x64.zip" \
+        "datakeep-${ver}-linux-x64.tar.gz" \
+        "datakeep-${ver}-macos.zip"; do
+        if ! echo "$assets_json" | jq -e --arg n "$name" '.assets[] | select(.name==$n)' >/dev/null 2>&1; then
+          missing="${missing} ${name}"
+        fi
+      done
+      if [[ -n "$missing" ]]; then
+        echo -e "${YELLOW}!${NC} GitHub Release 中未找到资产:${missing}" >&2
+        echo -e "${YELLOW}!${NC} CI 可能尚未传完，或 tag 与文件名版本不一致" >&2
+      fi
+    fi
+  fi
+  exit 0
+}
+
+cmd_torrents() {
+  cd "$ROOT"
+  need_cmd curl
+  REPO="$(resolve_repo)"
+  local tag ver=""
+  if [[ -n "$RELEASE_TAG" ]]; then
+    tag="$RELEASE_TAG"
+  elif tag="$(resolve_release_tag)"; then
+    :
+  else
+    tag=""
+  fi
+  if [[ -n "$tag" ]]; then
+    ver="${tag#v}"
+  fi
+
+  log "从官网 API 读取磁力链（$PUBLIC_SITE）…"
+  local resp
+  resp="$(curl -fsS "$PUBLIC_SITE/api/client/releases")" || {
+    err "无法访问 $PUBLIC_SITE/api/client/releases"
+    exit 1
+  }
+
+  if command -v jq >/dev/null 2>&1; then
+    local code
+    code="$(echo "$resp" | jq -r '.code')"
+    if [[ "$code" != "0" ]]; then
+      err "API 错误: $(echo "$resp" | jq -r '.data // empty')"
+      exit 1
+    fi
+    local platforms=(windows macos linux android)
+    local missing=""
+    for p in "${platforms[@]}"; do
+      local magnet api_ver
+      magnet="$(echo "$resp" | jq -r --arg p "$p" '.data[] | select(.platform==$p) | .magnetUrl // empty')"
+      api_ver="$(echo "$resp" | jq -r --arg p "$p" '.data[] | select(.platform==$p) | .version // empty')"
+      if [[ -n "$ver" && -n "$api_ver" && "$api_ver" != "$ver" ]]; then
+        warn "官网 $p 版本为 v$api_ver，与指定 v$ver 不一致"
+      fi
+      if [[ -z "$magnet" ]]; then
+        missing="${missing} ${p}"
+        continue
+      fi
+      printf '%s\t%s\n' "$p" "$magnet"
+    done
+    if [[ -n "$missing" ]]; then
+      echo -e "${YELLOW}!${NC} 缺少磁力链:${missing}（请先 ./scripts/release.sh market ${tag:-})" >&2
+      exit 1
+    fi
+  else
+    warn "未安装 jq，输出原始 JSON"
+    echo "$resp"
+  fi
+  exit 0
+}
+
 cmd_market() {
   cd "$ROOT"
   REPO="$(resolve_repo)"
-  if [[ -n "$MARKET_TAG" ]]; then
-    TAG="$MARKET_TAG"
-  else
-    TAG="$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null || true)"
-    if [[ -z "$TAG" ]] && command -v gh >/dev/null 2>&1; then
-      TAG="$(gh release list --repo "$REPO" --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)"
-    fi
-  fi
-  if [[ -z "$TAG" ]]; then
+  if ! TAG="$(resolve_release_tag)"; then
     err "无法确定 tag。请指定: ./scripts/release.sh market v0.0.2"
     exit 1
   fi
-  [[ "$TAG" == v* ]] || TAG="v$TAG"
 
-  log "仅同步官网（GitHub → Gitee / 本机）"
+  log "仅同步官网（GitHub → 写入下载链）"
   log "Repo: $REPO"
   log "Tag:  $TAG"
   log "API:  $MARKET_URL"
@@ -277,6 +393,14 @@ cmd_market() {
   ok "完成。官网下载页: https://datakeep.site/"
   exit 0
 }
+
+if [[ "$ACTION" == "links" ]]; then
+  cmd_links
+fi
+
+if [[ "$ACTION" == "torrents" ]]; then
+  cmd_torrents
+fi
 
 if [[ "$ACTION" == "market" ]]; then
   cmd_market

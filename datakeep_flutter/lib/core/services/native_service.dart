@@ -276,44 +276,65 @@ class NativeService {
 
   /// 查找 Syncthing 可执行文件
   static Future<String?> _findSyncthingExecutable() async {
-    // 1. 检查项目根目录下的 syncthing/bin/syncthing
-    // 从当前工作目录向上查找项目根目录
-    var currentDir = Directory.current;
-    var projectRoot = currentDir;
-    
-    // 向上查找包含 syncthing 目录的目录
-    while (true) {
-      final syncthingDir = Directory('${projectRoot.path}/syncthing');
-      final syncthingBin = File('${syncthingDir.path}/bin/syncthing');
-      
-      if (await syncthingBin.exists()) {
-        return syncthingBin.path;
-      }
-      
-      final parent = projectRoot.parent;
-      if (parent.path == projectRoot.path) {
-        break; // 到达根目录
-      }
-      projectRoot = parent;
+    final possiblePaths = <String>[];
+
+    // 1. 打包后的应用目录（data/bin/syncthing，见 linux/CMakeLists.txt）
+    final executablePath = Platform.resolvedExecutable;
+    final executableDir = File(executablePath).parent;
+    possiblePaths.addAll([
+      '${executableDir.path}/../data/bin/syncthing',
+      '${executableDir.path}/data/bin/syncthing',
+    ]);
+
+    // 2. 从可执行文件位置向上查找 syncthing/bin/syncthing 或 bin/syncthing（开发/本地构建）
+    var searchDir = executableDir;
+    for (var i = 0; i < 6; i++) {
+      possiblePaths.addAll([
+        '${searchDir.path}/syncthing/bin/syncthing',
+        '${searchDir.path}/bin/syncthing',
+      ]);
+      final parent = searchDir.parent;
+      if (parent.path == searchDir.path) break;
+      searchDir = parent;
     }
 
-    // 2. 检查系统 PATH 中的 syncthing
+    // 3. 从当前工作目录向上查找（flutter run 等场景）
+    var currentDir = Directory.current;
+    while (true) {
+      possiblePaths.addAll([
+        '${currentDir.path}/syncthing/bin/syncthing',
+        '${currentDir.path}/bin/syncthing',
+      ]);
+      final parent = currentDir.parent;
+      if (parent.path == currentDir.path) break;
+      currentDir = parent;
+    }
+
+    for (final path in possiblePaths) {
+      final file = File(path);
+      if (await file.exists()) {
+        debugPrint('找到 Syncthing 可执行文件: $path');
+        return path;
+      }
+    }
+
+    // 4. 系统 PATH
     try {
       if (Platform.isLinux || Platform.isMacOS) {
         final result = await Process.run('which', ['syncthing']);
         if (result.exitCode == 0) {
           final path = result.stdout.toString().trim();
           if (path.isNotEmpty) {
+            debugPrint('找到 Syncthing 可执行文件: $path');
             return path;
           }
         }
       }
     } catch (e) {
-      // which 命令可能不存在
       debugPrint('which 命令执行失败: $e');
     }
 
-    // 3. Windows: 检查常见安装路径
+    // 5. Windows: 常见安装路径
     if (Platform.isWindows) {
       final commonPaths = [
         r'C:\Program Files\Syncthing\syncthing.exe',

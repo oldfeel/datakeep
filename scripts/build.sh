@@ -118,6 +118,25 @@ build_android() {
 
 build_linux() {
   log "构建 Linux release…"
+  if [[ -x "$ROOT/syncthing/bin/syncthing" ]]; then
+    mkdir -p "$APP_DIR/bin"
+    cp -f "$ROOT/syncthing/bin/syncthing" "$APP_DIR/bin/syncthing"
+    ok "已复制 syncthing → datakeep_flutter/bin/"
+  elif command -v syncthing >/dev/null 2>&1; then
+    mkdir -p "$APP_DIR/bin"
+    cp -f "$(command -v syncthing)" "$APP_DIR/bin/syncthing"
+    ok "已复制系统 syncthing → datakeep_flutter/bin/"
+  else
+    warn "未找到 syncthing，将尝试编译…"
+    if command -v go >/dev/null 2>&1; then
+      (cd "$ROOT/syncthing" && go run build.go -version v2.1.0 install syncthing)
+      mkdir -p "$APP_DIR/bin"
+      cp -f "$ROOT/syncthing/bin/syncthing" "$APP_DIR/bin/syncthing"
+      ok "已编译并复制 syncthing"
+    else
+      warn "无法捆绑 syncthing；产物运行需系统已安装 syncthing"
+    fi
+  fi
   flutter build linux --release
 
   local bundle="$APP_DIR/build/linux/x64/release/bundle"
@@ -140,7 +159,11 @@ build_linux() {
 
   ARTIFACTS+=("$out")
   ok "Linux → $out"
-  warn "运行前请确保系统已安装 syncthing，并具备 GTK 等桌面依赖"
+  if [[ -f "$APP_DIR/bin/syncthing" ]]; then
+    ok "安装包已内含 syncthing（data/bin/syncthing）"
+  else
+    warn "安装包未内含 syncthing；运行前请: sudo apt install syncthing"
+  fi
 }
 
 build_windows() {
