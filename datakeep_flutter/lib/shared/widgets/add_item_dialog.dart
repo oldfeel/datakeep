@@ -127,25 +127,38 @@ class _AddItemDialogState extends State<AddItemDialog> {
     }
   }
 
-  Future<void> _pickParent() async {
+  Future<void> _pickDirectoryPath({required TextEditingController controller}) async {
     if (!Platform.isLinux && !Platform.isWindows && !Platform.isMacOS) return;
-    final result = await FilePicker.platform.getDirectoryPath();
-    if (result != null && mounted) {
-      setState(() => _parentCtrl.text = result);
+    try {
+      final initial = await syncFolderPickerInitialDirectory(controller.text);
+      final result = await FilePicker.platform.getDirectoryPath(
+        initialDirectory: initial,
+      );
+      if (result != null && mounted) {
+        setState(() => controller.text = result);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('选择目录失败: $e'), backgroundColor: Colors.red),
+      );
     }
   }
 
+  Future<void> _pickParent() async {
+    await _pickDirectoryPath(controller: _parentCtrl);
+  }
+
   Future<void> _pickFolderPath() async {
-    if (!Platform.isLinux && !Platform.isWindows && !Platform.isMacOS) return;
-    final result = await FilePicker.platform.getDirectoryPath();
-    if (result != null && mounted) {
-      setState(() {
-        _pathCtrl.text = result;
-        final dirName = p.basename(result);
-        if (_idCtrl.text.isEmpty) _idCtrl.text = dirName;
-        if (_nameCtrl.text.isEmpty) _nameCtrl.text = dirName;
-      });
-    }
+    await _pickDirectoryPath(controller: _pathCtrl);
+    if (!mounted) return;
+    final result = _pathCtrl.text.trim();
+    if (result.isEmpty) return;
+    setState(() {
+      final dirName = p.basename(result);
+      if (_idCtrl.text.isEmpty) _idCtrl.text = dirName;
+      if (_nameCtrl.text.isEmpty) _nameCtrl.text = dirName;
+    });
   }
 
   Future<void> _submitSyncFolder() async {

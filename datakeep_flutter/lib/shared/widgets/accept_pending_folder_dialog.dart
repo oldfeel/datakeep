@@ -113,10 +113,24 @@ class _AcceptPendingFolderDialogState extends State<_AcceptPendingFolderDialog> 
       }
       return;
     }
-    final picked = await FilePicker.platform.getDirectoryPath();
-    if (picked != null && picked.isNotEmpty) {
-      _pathController.text = picked;
-      await _checkWrite(picked);
+    setState(() => _picking = true);
+    try {
+      final initial = await syncFolderPickerInitialDirectory(_pathController.text);
+      final picked = await FilePicker.platform.getDirectoryPath(
+        initialDirectory: initial,
+      );
+      if (picked != null && picked.isNotEmpty) {
+        _pathController.text = picked;
+        await _checkWrite(picked);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('选择目录失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _picking = false);
     }
   }
 
@@ -155,6 +169,7 @@ class _AcceptPendingFolderDialogState extends State<_AcceptPendingFolderDialog> 
       return;
     }
     if (!mounted) return;
+    await rememberDesktopSyncRoot(path, folderId: widget.folderId);
     Navigator.of(context).pop(AcceptPendingFolderResult(accepted: true, path: path));
   }
 
