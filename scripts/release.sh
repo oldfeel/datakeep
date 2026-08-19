@@ -18,6 +18,9 @@
 #   ./scripts/release.sh links v0.0.3     # 指定 tag
 #   ./scripts/release.sh torrents         # 打印官网四端磁力链（需先 sync-github）
 #   ./scripts/release.sh torrents v0.0.3  # 指定版本（仅校验 tag，链来自当前官网 API）
+#   ./scripts/release.sh download         # 下载四端包 + .torrent 到 dist-release/（默认最新 tag）
+#   ./scripts/release.sh download v0.0.4  # 指定 tag
+#   DATAKEEP_USE_PROXY=1 ./scripts/release.sh download v0.0.4  # 走本机代理（默认 127.0.0.1:7897）
 #
 # 官网同步（编完后默认尝试）:
 #   优先读环境变量 DATAKEEP_MARKET_TOKEN / USER / PASSWORD
@@ -49,8 +52,9 @@ NO_WAIT=0
 LOCAL_ONLY=0
 SKIP_MARKET=0
 MODE="patch" # 默认每次 +0.0.1；可被 patch|minor|major|x.y.z 覆盖
-ACTION="release" # release | market | links | torrents
+ACTION="release" # release | market | links | torrents | download
 RELEASE_TAG=""
+USE_PROXY=0
 
 MARKET_URL="${DATAKEEP_MARKET_URL:-https://admin.datakeep.site}"
 MARKET_URL="${MARKET_URL%/}"
@@ -78,6 +82,10 @@ DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions
   ./scripts/release.sh links v0.0.3      # 指定 tag
   ./scripts/release.sh torrents          # 打印四端磁力链（从官网 API，需先 sync）
   ./scripts/release.sh torrents v0.0.3   # 指定版本校验后打印磁力链
+  ./scripts/release.sh download            # 下载四端到 dist-release/（默认最新 tag）
+  ./scripts/release.sh download v0.0.4     # 指定 tag
+  DATAKEEP_USE_PROXY=1 ./scripts/release.sh download v0.0.4
+    # 或先 export https_proxy=http://127.0.0.1:7897 http_proxy=... all_proxy=...
 
 官网同步：默认用旁路 datakeep-market/market_server/.env 的 ADMIN_*；
 也可设 DATAKEEP_MARKET_TOKEN，或 DATAKEEP_MARKET_USER + DATAKEEP_MARKET_PASSWORD。
@@ -92,6 +100,8 @@ for arg in "$@"; do
     --no-wait) NO_WAIT=1 ;;
     --local) LOCAL_ONLY=1 ;;
     --skip-market) SKIP_MARKET=1 ;;
+    --proxy) USE_PROXY=1 ;;
+    --no-proxy) USE_PROXY=0 ;;
     qiniu|sync|market)
       ACTION="market"
       ;;
@@ -101,8 +111,11 @@ for arg in "$@"; do
     torrents|magnets)
       ACTION="torrents"
       ;;
+    download|fetch|seed-prep|dist-release)
+      ACTION="download"
+      ;;
     v[0-9]*.[0-9]*.[0-9]*)
-      if [[ "$ACTION" == "market" || "$ACTION" == "links" || "$ACTION" == "torrents" ]]; then
+      if [[ "$ACTION" == "market" || "$ACTION" == "links" || "$ACTION" == "torrents" || "$ACTION" == "download" ]]; then
         RELEASE_TAG="$arg"
       else
         # 当版本号写成 v1.2.0 时按 1.2.0 发版
@@ -271,6 +284,123 @@ resolve_release_tag() {
   printf '%s' "$tag"
 }
 
+# 下载子命令：可走 https_proxy / DATAKEEP_USE_PROXY=1（默认 127.0.0.1:7897）
+apply_download_proxy() {
+  if [[ "$USE_PROXY" -eq 1 ]] || [[ "${DATAKEEP_USE_PROXY:-}" == "1" || "${DATAKEEP_USE_PROXY:-}" == "true" ]]; then
+    export https_proxy="${https_proxy:-${HTTPS_PROXY:-${DATAKEEP_HTTPS_PROXY:-http://127.0.0.1:7897}}}"
+    export http_proxy="${http_proxy:-${HTTP_PROXY:-${DATAKEEP_HTTP_PROXY:-$https_proxy}}}"
+    export all_proxy="${all_proxy:-${ALL_PROXY:-${DATAKEEP_ALL_PROXY:-socks5://127.0.0.1:7897}}}"
+    export HTTPS_PROXY="$https_proxy"
+    export HTTP_PROXY="$http_proxy"
+    export ALL_PROXY="$all_proxy"
+    log "使用代理: $https_proxy"
+  elif [[ -n "${https_proxy:-}${HTTPS_PROXY:-}" ]]; then
+    log "使用环境代理: ${https_proxy:-$HTTPS_PROXY}"
+  fi
+}
+
+cmd_download() {
+  cd "$ROOT"
+  REPO="$(resolve_repo)"
+  local tag ver out packages torrents magnets
+  if ! tag="$(resolve_release_tag)"; then
+    err "无法确定 tag。请指定: ./scripts/release.sh download v0.0.4"
+    exit 1
+  fi
+  ver="${tag#v}"
+  out="$ROOT/dist-release/${tag}"
+  packages="$out/packages"
+  torrents="$out/torrents"
+  magnets="$out/magnets.txt"
+
+  apply_download_proxy
+
+  log "下载 Release → $out"
+  log "Repo: $REPO  Tag: $tag"
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    warn "dry-run：将下载四端包到 $packages，.torrent 到 $torrents"
+    exit 0
+  fi
+
+  need_cmd curl
+  mkdir -p "$packages" "$torrents"
+
+  local names=(
+    "datakeep-${ver}-android.apk"
+    "datakeep-${ver}-windows-x64.zip"
+    "datakeep-${ver}-linux-x64.tar.gz"
+    "datakeep-${ver}-macos.zip"
+  )
+
+  if command -v gh >/dev/null 2>&1; then
+    log "gh release download（四端安装包）…"
+    gh release download "$tag" --repo "$REPO" --dir "$packages" \
+      -p 'datakeep-*-android.apk' \
+      -p 'datakeep-*-windows-x64.zip' \
+      -p 'datakeep-*-linux-x64.tar.gz' \
+      -p 'datakeep-*-macos.zip'
+  else
+    warn "未安装 gh，改用 curl 直链（支持断点续传 -C -）"
+    local base="https://github.com/${REPO}/releases/download/${tag}"
+    local name url
+    for name in "${names[@]}"; do
+      url="${base}/${name}"
+      log "GET $name"
+      curl -fL --retry 3 -C - -o "$packages/$name" "$url"
+    done
+  fi
+
+  local missing=""
+  local name
+  for name in "${names[@]}"; do
+    if [[ ! -f "$packages/$name" ]]; then
+      missing="${missing} ${name}"
+    fi
+  done
+  if [[ -n "$missing" ]]; then
+    err "缺少文件:${missing}"
+    exit 1
+  fi
+
+  log "从官网拉取 .torrent → $torrents"
+  local p tmissing=""
+  for p in android linux macos windows; do
+    if ! curl -fsS "${PUBLIC_SITE}/api/client/${p}/torrent" -o "$torrents/${p}.torrent"; then
+      tmissing="${tmissing} ${p}"
+      warn "未拿到 $p 的 .torrent（请先 ./scripts/release.sh market $tag）"
+    fi
+  done
+
+  log "写入 $magnets"
+  if command -v jq >/dev/null 2>&1; then
+    local resp
+    resp="$(curl -fsS "${PUBLIC_SITE}/api/client/releases")" || resp=""
+    if [[ -n "$resp" ]] && [[ "$(echo "$resp" | jq -r '.code')" == "0" ]]; then
+      {
+        echo "# DataKeep ${tag} magnets — $(date -Iseconds)"
+        for p in android linux macos windows; do
+          echo "$p$(echo "$resp" | jq -r --arg p "$p" '.data[] | select(.platform==$p) | "\t" + (.magnetUrl // "")')"
+        done
+      } >"$magnets"
+    else
+      warn "无法从官网 API 写入 magnets.txt"
+    fi
+  else
+    warn "未安装 jq，跳过 magnets.txt"
+  fi
+
+  ok "已下载到 $out"
+  ls -lh "$packages"
+  if [[ -z "$tmissing" ]]; then
+    ls -lh "$torrents"
+  fi
+  [[ -f "$magnets" ]] && ok "磁力链: $magnets"
+  echo
+  ok "做种：qBittorrent 添加 $torrents/*.torrent，数据目录指向 $packages"
+  exit 0
+}
+
 cmd_links() {
   cd "$ROOT"
   REPO="$(resolve_repo)"
@@ -400,6 +530,10 @@ fi
 
 if [[ "$ACTION" == "torrents" ]]; then
   cmd_torrents
+fi
+
+if [[ "$ACTION" == "download" ]]; then
+  cmd_download
 fi
 
 if [[ "$ACTION" == "market" ]]; then
