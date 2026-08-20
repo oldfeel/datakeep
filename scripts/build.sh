@@ -16,7 +16,7 @@
 # 说明:
 #   - Flutter 官方不支持跨 OS 交叉编译桌面端（Linux 编不出 Windows/macOS 安装包）
 #   - Android 可在 Linux / macOS / Windows 上构建（需 Android SDK + syncthing_core AAR）
-#   - 桌面端依赖系统已安装的 syncthing；移动端内嵌 syncthing_core
+#   - 桌面端捆绑 bin/syncthing（Windows: syncthing.exe）；移动端内嵌 syncthing_core
 #   - 也可用 GitHub Actions（公开仓免费）: 仓库 → Actions → Build packages
 #     或: gh workflow run build.yml
 
@@ -166,8 +166,30 @@ build_linux() {
   fi
 }
 
+ensure_windows_syncthing() {
+  mkdir -p "$APP_DIR/bin"
+  local exe="$APP_DIR/bin/syncthing.exe"
+  if [[ -f "$exe" ]]; then
+    ok "已有 syncthing.exe: $exe"
+    return 0
+  fi
+  log "编译 Windows Syncthing（syncthing.exe）…"
+  if [[ ! -f "$APP_DIR/scripts/build_desktop_syncthing.sh" ]]; then
+    warn "缺少 build_desktop_syncthing.sh"
+    return 1
+  fi
+  SYNCTHING_GOOS=windows SYNCTHING_GOARCH=amd64 \
+    bash "$APP_DIR/scripts/build_desktop_syncthing.sh" || return 1
+  [[ -f "$exe" ]] || {
+    err "未生成 $exe"
+    return 1
+  }
+}
+
 build_windows() {
   log "构建 Windows release…"
+  ensure_windows_syncthing || warn "无法捆绑 syncthing.exe；产物运行需本机已安装 Syncthing"
+
   flutter build windows --release
 
   local release
@@ -176,6 +198,13 @@ build_windows() {
     err "未找到 Windows Release 目录"
     return 1
   }
+
+  # CMake install 应已拷到 data/bin；若未生效则手动补齐
+  if [[ -f "$APP_DIR/bin/syncthing.exe" ]]; then
+    mkdir -p "$release/data/bin"
+    cp -f "$APP_DIR/bin/syncthing.exe" "$release/data/bin/syncthing.exe"
+    ok "已放入 $release/data/bin/syncthing.exe"
+  fi
 
   local out="$DIST/datakeep-${VERSION}-windows-x64.zip"
   if command -v zip >/dev/null 2>&1; then
@@ -192,12 +221,19 @@ build_windows() {
   fi
   ARTIFACTS+=("$out")
   ok "Windows → $out"
-  warn "运行前请确保系统已安装 syncthing；首次运行 CEF 体积较大"
+  if [[ -f "$APP_DIR/bin/syncthing.exe" ]]; then
+    ok "安装包已内含 syncthing.exe（data/bin/syncthing.exe）"
+  else
+    warn "安装包未内含 syncthing；首次运行 CEF 体积较大"
+  fi
 }
 
 build_macos() {
   log "构建 macOS release…"
   # CEF / Pod 可能较久；部署目标由 Podfile 约束
+  if [[ -f "$APP_DIR/scripts/build_desktop_syncthing.sh" ]]; then
+    bash "$APP_DIR/scripts/build_desktop_syncthing.sh" || warn "Syncthing 编译失败，.app 可能无捆绑引擎"
+  fi
   flutter build macos --release
 
   local app

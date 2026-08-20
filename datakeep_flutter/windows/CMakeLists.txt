@@ -120,3 +120,18 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# 捆绑桌面 Syncthing（与 Linux data/bin 一致；由 scripts/build_desktop_syncthing.sh 生成）
+set(BIN_DIR "${CMAKE_SOURCE_DIR}/../bin")
+if(EXISTS "${BIN_DIR}/syncthing.exe")
+  install(FILES "${BIN_DIR}/syncthing.exe"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/bin"
+    COMPONENT Runtime)
+  message(STATUS "Found syncthing.exe, will bundle with application")
+elseif(EXISTS "${BIN_DIR}/syncthing")
+  install(FILES "${BIN_DIR}/syncthing"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/bin"
+    RENAME "syncthing.exe"
+    COMPONENT Runtime)
+  message(STATUS "Found syncthing (no .exe suffix), will bundle as syncthing.exe")
+endif()

@@ -205,6 +205,20 @@ jobs:
           channel: ${{ env.FLUTTER_CHANNEL }}
           cache: true
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: syncthing/go.sum
+
+      - name: Build Syncthing for Windows bundle
+        shell: bash
+        working-directory: datakeep_flutter
+        run: |
+          SYNCTHING_GOOS=windows SYNCTHING_GOARCH=amd64 \
+            bash scripts/build_desktop_syncthing.sh
+          test -f bin/syncthing.exe
+          ls -lh bin/syncthing.exe
+
       - name: Build Windows
         shell: pwsh
         run: |
@@ -235,6 +249,15 @@ jobs:
             Where-Object { $_.FullName -match '\\runner\\Release$' } |
             Select-Object -First 1
           if (-not $release) { throw 'Release directory not found' }
+          $bundled = Join-Path $release.FullName 'data\bin\syncthing.exe'
+          if (-not (Test-Path $bundled)) {
+            $src = Join-Path (Get-Location) 'bin\syncthing.exe'
+            if (-not (Test-Path $src)) { throw 'syncthing.exe not found for bundling' }
+            New-Item -ItemType Directory -Force -Path (Split-Path $bundled) | Out-Null
+            Copy-Item -Force $src $bundled
+            Write-Host "Copied syncthing.exe → $bundled"
+          }
+          if (-not (Test-Path $bundled)) { throw 'Release missing data\bin\syncthing.exe' }
           $outDir = Join-Path $env:GITHUB_WORKSPACE 'dist'
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
           $name = "datakeep-$version-windows"
@@ -246,6 +269,7 @@ jobs:
           if (Test-Path $zip) { Remove-Item -Force $zip }
           Compress-Archive -Path $stage -DestinationPath $zip -Force
           Get-Item $zip | Format-List FullName, Length
+          Get-Item $bundled | Format-List FullName, Length
 
       - uses: actions/upload-artifact@v4
         with:
@@ -273,6 +297,18 @@ jobs:
         with:
           channel: ${{ env.FLUTTER_CHANNEL }}
           cache: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: syncthing/go.sum
+
+      - name: Build Syncthing for macOS bundle
+        working-directory: datakeep_flutter
+        run: |
+          bash scripts/build_desktop_syncthing.sh
+          test -x bin/syncthing
+          ls -lh bin/syncthing
 
       - run: |
           flutter config --enable-macos-desktop

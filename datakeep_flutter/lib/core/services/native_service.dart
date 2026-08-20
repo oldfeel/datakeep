@@ -178,7 +178,7 @@ class NativeService {
       final syncthingPath = await _findSyncthingExecutable();
       if (syncthingPath == null) {
         debugPrint('未找到 Syncthing 可执行文件');
-        debugPrint('请先编译：bash scripts/build_desktop_syncthing.sh 或 ./start_macos.sh');
+        debugPrint('请先编译：bash scripts/build_desktop_syncthing.sh（Windows 用 SYNCTHING_GOOS=windows）');
         return false;
       }
 
@@ -280,22 +280,24 @@ class NativeService {
   /// 查找 Syncthing 可执行文件
   static Future<String?> _findSyncthingExecutable() async {
     final possiblePaths = <String>[];
+    final name = Platform.isWindows ? 'syncthing.exe' : 'syncthing';
 
-    // 1. 打包后的应用目录（Linux: data/bin；macOS: Resources/bin）
+    // 1. 打包后的应用目录（Linux/Windows: data/bin；macOS: Resources/bin）
     final executablePath = Platform.resolvedExecutable;
     final executableDir = File(executablePath).parent;
     possiblePaths.addAll([
-      '${executableDir.path}/../data/bin/syncthing',
-      '${executableDir.path}/data/bin/syncthing',
-      if (Platform.isMacOS) '${executableDir.path}/../Resources/bin/syncthing',
+      '${executableDir.path}/../data/bin/$name',
+      '${executableDir.path}/data/bin/$name',
+      '${executableDir.path}/$name',
+      if (Platform.isMacOS) '${executableDir.path}/../Resources/bin/$name',
     ]);
 
-    // 2. 从可执行文件位置向上查找 syncthing/bin/syncthing 或 bin/syncthing（开发/本地构建）
+    // 2. 从可执行文件位置向上查找（开发/本地构建）
     var searchDir = executableDir;
     for (var i = 0; i < 10; i++) {
       possiblePaths.addAll([
-        '${searchDir.path}/syncthing/bin/syncthing',
-        '${searchDir.path}/bin/syncthing',
+        '${searchDir.path}/syncthing/bin/$name',
+        '${searchDir.path}/bin/$name',
       ]);
       final parent = searchDir.parent;
       if (parent.path == searchDir.path) break;
@@ -314,8 +316,8 @@ class NativeService {
     var currentDir = Directory.current;
     while (true) {
       possiblePaths.addAll([
-        '${currentDir.path}/syncthing/bin/syncthing',
-        '${currentDir.path}/bin/syncthing',
+        '${currentDir.path}/syncthing/bin/$name',
+        '${currentDir.path}/bin/$name',
       ]);
       final parent = currentDir.parent;
       if (parent.path == currentDir.path) break;
@@ -330,7 +332,7 @@ class NativeService {
       }
     }
 
-    // 4. 系统 PATH
+    // 5. 系统 PATH
     try {
       if (Platform.isLinux || Platform.isMacOS) {
         final result = await Process.run('which', ['syncthing']);
@@ -341,12 +343,21 @@ class NativeService {
             return path;
           }
         }
+      } else if (Platform.isWindows) {
+        final result = await Process.run('where', ['syncthing.exe']);
+        if (result.exitCode == 0) {
+          final path = result.stdout.toString().split(RegExp(r'\r?\n')).first.trim();
+          if (path.isNotEmpty && await File(path).exists()) {
+            debugPrint('找到 Syncthing 可执行文件: $path');
+            return path;
+          }
+        }
       }
     } catch (e) {
-      debugPrint('which 命令执行失败: $e');
+      debugPrint('查找系统 Syncthing 失败: $e');
     }
 
-    // 5. Windows: 常见安装路径
+    // 6. Windows 常见安装路径
     if (Platform.isWindows) {
       final commonPaths = [
         r'C:\Program Files\Syncthing\syncthing.exe',
@@ -354,6 +365,7 @@ class NativeService {
       ];
       for (final path in commonPaths) {
         if (await File(path).exists()) {
+          debugPrint('找到 Syncthing 可执行文件: $path');
           return path;
         }
       }
