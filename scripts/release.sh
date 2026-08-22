@@ -571,7 +571,12 @@ bump_semver() {
 write_pubspec_version() {
   local full="$1"
   if grep -qE '^version:' "$PUBSPEC"; then
-    sed -i "s/^version: .*/version: ${full}/" "$PUBSPEC"
+    # macOS BSD sed 需要 sed -i ''；Linux GNU sed 用 sed -i
+    if [[ "$(uname -s)" == Darwin ]]; then
+      sed -i '' "s/^version: .*/version: ${full}/" "$PUBSPEC"
+    else
+      sed -i "s/^version: .*/version: ${full}/" "$PUBSPEC"
+    fi
   else
     err "pubspec.yaml 中找不到 version:"
     exit 1
