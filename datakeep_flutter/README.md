@@ -159,7 +159,7 @@ static const String baseUrl = 'http://localhost:8080/api';
 
 ## 许可证
 
-本项目采用 MIT 许可证。
+本项目采用 [Mozilla Public License 2.0](../LICENSE)（MPL-2.0）。
 
 ## 联系方式
 

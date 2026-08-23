@@ -85,7 +85,7 @@ bash scripts/build_desktop_syncthing.sh
 
 ## 许可证
 
-[MIT](LICENSE)
+本项目采用 [Mozilla Public License 2.0](LICENSE)（MPL-2.0），与所捆绑/引用的 [Syncthing](https://syncthing.net/) 一致。若分发含 Syncthing 引擎的二进制，须遵守 MPL-2.0 对对应源码的提供义务。
 
 ## 致谢
 
