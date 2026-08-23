@@ -1,86 +1,93 @@
-# DataKeep - 跨平台文件同步应用
+# DataKeep
 
-基于 Syncthing 的跨平台文件同步应用，桌面与移动端共用同一套 Flutter 代码。
+跨平台文件同步客户端，基于 [Syncthing](https://syncthing.net/) 引擎。桌面与移动端共用同一套 Flutter 代码（`datakeep_flutter/`）。
 
-## 产品定位
+**定位**：面向日常的「加设备、加文件夹、看文件、管共享」；**不**复刻原版 Syncthing Web GUI 的全部设置。深度配置请用应用内「打开 Syncthing 管理页」（`http://127.0.0.1:8384`）或编辑 `config.xml`。功能取舍见 [AGENTS.md](AGENTS.md)。
 
-DataKeep 是易用的跨平台同步客户端，**不实现**原版 Syncthing Web GUI 的全部功能。高级配置请使用应用内「打开 Syncthing 管理页」入口（`http://127.0.0.1:8384`）。功能取舍详见 [AGENTS.md](AGENTS.md)。
+## 下载
 
-## 功能特性
+| 渠道 | 说明 |
+|------|------|
+| [GitHub Releases](https://github.com/oldfeel/datakeep/releases) | Linux / Windows / macOS / Android 安装包 |
+| [datakeep.site](https://datakeep.site/) | 官网下载页（含 BT 磁力链） |
 
-- **文件夹同步**：双向同步，实时变更同步到各设备
-- **设备管理**：局域网发现、连接状态、共享与访问权限（同步 / 只读 / 隐藏）
-- **文件浏览**：浏览本机与对端文件夹
-- **多平台**：Linux / Windows / macOS / Android（Flutter）
-- **应用市场客户端**：可配置外部市场 API；服务端与管理后台在私有仓 [datakeep-market](https://github.com/oldfeel/datakeep-market)
+发版与官网同步：`./scripts/release.sh`（详见脚本内 `--help`）。
+
+## 功能概览
+
+- **文件夹同步**：双向 / 仅发送 / 仅接收；忽略规则、暂停、手动扫描
+- **设备与共享**：局域网发现；文件夹 ACL（同步 / 只读 / 隐藏）
+- **文件浏览**：本机与对端只读浏览；图片/视频/音频/文本/PDF 预览；列表缩略图
+- **对外分享**：系统分享（微信、邮件等），发送本机文件
+- **应用市场客户端**：可配置市场 API；服务端在私有仓 [datakeep-market](https://github.com/oldfeel/datakeep-market)
 
 ## 技术架构
 
 | 层级 | 技术 |
-|---|---|
-| 应用 UI | Flutter |
-| 进程内 API | Dart shelf（HTTPS `:8443`） |
-| 同步引擎 | Syncthing（本机 `127.0.0.1:8384`） |
+|------|------|
+| UI | Flutter（Material 3） |
+| 进程内 API | Dart [shelf](https://pub.dev/packages/shelf)（HTTPS `:8443`） |
+| 同步引擎 | Syncthing（`127.0.0.1:8384`） |
+| 移动端引擎 | `syncthing_core`（gomobile AAR / xcframework） |
+| 桌面引擎 | 捆绑 `bin/syncthing`（或系统已安装的 Syncthing） |
 
-### 项目结构
+## 仓库结构
 
 ```
 datakeep/
-├── datakeep_flutter/          # Flutter 跨平台应用（主力）
-│   ├── lib/                 # Dart UI + 进程内后端
-│   ├── android/             # Android 工程（含 jniLibs/Syncthing）
-│   └── backend/             # Go 后端旧版（已停维）
-├── syncthing/               # Syncthing 源码（参考 + 交叉编译）
-├── parse_email/             # 独立工具：eml → markdown
-└── scripts/                 # 辅助脚本（如 AVD 启动）
+├── datakeep_flutter/           # Flutter 应用（主力）
+│   ├── lib/core/backend/       # 进程内 Dart 后端（shelf）
+│   ├── syncthing_core/         # 移动端共用 Syncthing 引擎
+│   └── backend/                # 旧 Go 后端（已停维，仅供参考）
+├── syncthing/                  # Syncthing 源码（编译桌面二进制 / gomobile replace）
+├── scripts/                    # 构建、发版、模拟器等脚本
+├── docs/                       # 文档（如应用包规范）
+└── examples/                   # 示例应用
 ```
 
 ## 快速开始
 
-### 环境要求
+### 环境
 
-- Flutter（stable）
-- Android SDK / NDK（仅 Android）
-- Go（仅编译 Syncthing 原生库时需要）
+- Flutter stable
+- 桌面：系统依赖见 `datakeep_flutter/scripts/linux_media_deps.sh`（Linux 音视频）
+- Android：SDK / NDK；需先编译 `syncthing_core` AAR
+- 编译 Syncthing / gomobile 时需 Go（见 [AGENTS.md](AGENTS.md)）
 
-### 桌面调试
-
-```bash
-cd datakeep_flutter
-flutter pub get
-flutter run -d linux
-```
-
-### Android 调试
+### 桌面（推荐）
 
 ```bash
 cd datakeep_flutter
-./start_android.sh          # 必要时交叉编译 libsyncthing.so 并运行
-# 或已有 jniLibs 时：
-flutter run -d android
+./start_desktop.sh          # 自动处理 Syncthing 与依赖
+# macOS：./start_macos.sh
 ```
 
-### Syncthing 源码编译（可选）
+### Android
 
 ```bash
-cd syncthing
-/snap/go/current/bin/go run build.go -version v2.1.0
+cd datakeep_flutter
+./start_android.sh          # 编译 syncthing_core + 运行
 ```
 
-## API 约定
+### 仅编译桌面 Syncthing
 
-- 本机 DataKeep API：`https://localhost:8443`（自签名证书）
-- 成功：`{"code": 0, "data": ...}`
-- 失败：`{"code": 非0, "data": "错误信息"}`
-- Syncthing REST：`http://127.0.0.1:8384`
+```bash
+bash scripts/build_desktop_syncthing.sh
+```
 
-更完整的开发约定见 [AGENTS.md](AGENTS.md)。
+## API 约定（摘要）
+
+- DataKeep：`https://localhost:8443`（自签名证书）
+- 响应：`{"code": 0, "data": ...}` 成功 / `{"code": 非0, "data": "..."}` 失败
+- Syncthing REST：`http://127.0.0.1:8384`（由 Dart 后端代理，前端不直连）
+
+完整开发命令、目录说明与踩坑见 **[AGENTS.md](AGENTS.md)**。Flutter 子项目说明见 [datakeep_flutter/README.md](datakeep_flutter/README.md)。
 
 ## 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE)。
+[MIT](LICENSE)
 
 ## 致谢
 
-- [Syncthing](https://syncthing.net/) — 文件同步引擎
-- [Flutter](https://flutter.dev/) — 跨平台 UI 框架
+- [Syncthing](https://syncthing.net/) — 同步引擎
+- [Flutter](https://flutter.dev/) — 跨平台 UI
