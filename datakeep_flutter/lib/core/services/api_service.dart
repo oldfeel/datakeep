@@ -1309,19 +1309,4 @@ class ApiService {
     }
     return Map<String, dynamic>.from(resp['data'] as Map? ?? {});
   }
-
-  /// 为本机同步文件夹内单文件生成 BT 种子与磁力链
-  static Future<Map<String, dynamic>> createShareTorrent({
-    required String folderPath,
-    required String relativePath,
-  }) async {
-    final resp = await _post('/share/torrent', {
-      'folderPath': folderPath,
-      'relativePath': relativePath,
-    });
-    if (resp['code'] != 0) {
-      throw Exception(resp['data']?.toString() ?? '生成磁力链失败');
-    }
-    return Map<String, dynamic>.from(resp['data'] as Map? ?? {});
-  }
 }
