@@ -70,6 +70,8 @@ dependencies:
   crypto: ^3.0.3
   # 缩略图解码（EXIF 方向 + 等比缩放）
   image: ^4.5.0
+  # 视频首帧缩略图（Android/iOS；桌面优先 ffmpeg）
+  video_thumbnail: ^0.5.6
   
   # JSON 处理
   json_annotation: ^4.8.1

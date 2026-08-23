@@ -6,11 +6,16 @@ import '../../core/services/thumbnail_service.dart';
 import '../../desktop/widgets/file_icon.dart';
 import '../utils/file_types.dart';
 
-/// 文件列表缩略图：本机图片走缓存缩略图，其余显示类型图标。
+/// 文件列表缩略图：本机或对端图片/视频缩略图，其余显示类型图标。
 class FileThumbnail extends StatefulWidget {
   const FileThumbnail({
     super.key,
     this.localPath,
+    this.deviceId,
+    this.folderId,
+    this.relativePath,
+    this.fileModTime,
+    this.fileSize,
     required this.fileName,
     this.isDir = false,
     this.isApp = false,
@@ -21,6 +26,11 @@ class FileThumbnail extends StatefulWidget {
   });
 
   final String? localPath;
+  final String? deviceId;
+  final String? folderId;
+  final String? relativePath;
+  final int? fileModTime;
+  final int? fileSize;
   final String fileName;
   final bool isDir;
   final bool isApp;
@@ -28,6 +38,10 @@ class FileThumbnail extends StatefulWidget {
   final double borderRadius;
   final bool circular;
   final BoxFit fit;
+
+  bool get _isVideo =>
+      FileTypes.isVideo(fileName) ||
+      (localPath != null && FileTypes.isVideo(localPath!));
 
   @override
   State<FileThumbnail> createState() => _FileThumbnailState();
@@ -47,22 +61,42 @@ class _FileThumbnailState extends State<FileThumbnail> {
   void didUpdateWidget(covariant FileThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.localPath != widget.localPath ||
-        oldWidget.fileName != widget.fileName) {
+        oldWidget.fileName != widget.fileName ||
+        oldWidget.deviceId != widget.deviceId ||
+        oldWidget.folderId != widget.folderId ||
+        oldWidget.relativePath != widget.relativePath ||
+        oldWidget.fileModTime != widget.fileModTime ||
+        oldWidget.fileSize != widget.fileSize) {
       _thumbPath = null;
       _scheduleLoad();
     }
   }
 
   void _scheduleLoad() {
-    final path = widget.localPath;
-    if (path == null ||
-        widget.isDir ||
-        widget.isApp ||
-        !FileTypes.isImage(path)) {
+    if (widget.isDir || widget.isApp) return;
+    if (!ThumbnailService.supportsFileName(widget.fileName)) return;
+
+    _loading = true;
+    final local = widget.localPath;
+    Future<String?> task;
+    if (local != null) {
+      task = ThumbnailService.instance.thumbnailPath(local);
+    } else if (widget.deviceId != null &&
+        widget.folderId != null &&
+        widget.relativePath != null) {
+      task = ThumbnailService.instance.remoteThumbnailPath(
+        deviceId: widget.deviceId!,
+        folderId: widget.folderId!,
+        relativePath: widget.relativePath!,
+        modTime: widget.fileModTime,
+        size: widget.fileSize,
+      );
+    } else {
+      _loading = false;
       return;
     }
-    _loading = true;
-    ThumbnailService.instance.imageThumbnailPath(path).then((thumb) {
+
+    task.then((thumb) {
       if (!mounted) return;
       setState(() {
         _thumbPath = thumb;
@@ -81,17 +115,31 @@ class _FileThumbnailState extends State<FileThumbnail> {
 
     Widget child;
     if (_thumbPath != null) {
-      child = Image.file(
-        File(_thumbPath!),
-        width: widget.size,
-        height: widget.size,
-        fit: widget.fit,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => _icon(),
+      child = Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.file(
+            File(_thumbPath!),
+            width: widget.size,
+            height: widget.size,
+            fit: widget.fit,
+            gaplessPlayback: true,
+            errorBuilder: (_, __, ___) => _icon(),
+          ),
+          if (widget._isVideo)
+            Center(
+              child: Icon(
+                Icons.play_circle_fill,
+                size: widget.size * 0.45,
+                color: Colors.white.withValues(alpha: 0.92),
+                shadows: const [
+                  Shadow(blurRadius: 4, color: Colors.black54),
+                ],
+              ),
+            ),
+        ],
       );
-    } else if (_loading &&
-        widget.localPath != null &&
-        FileTypes.isImage(widget.localPath!)) {
+    } else if (_loading && ThumbnailService.supportsFileName(widget.fileName)) {
       child = SizedBox(
         width: widget.size,
         height: widget.size,

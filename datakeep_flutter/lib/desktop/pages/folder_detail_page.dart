@@ -553,7 +553,12 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                       ReorderableDragStartListener(index: i, child: const Icon(Icons.drag_handle, size: 20, color: Colors.grey)),
                       const SizedBox(width: 8),
                       FileThumbnail(
-                        localPath: _localFilePath(name),
+                        localPath: widget.device.isLocal ? _localFilePath(name) : null,
+                        deviceId: widget.device.isLocal ? null : widget.device.id,
+                        folderId: widget.folder.id,
+                        relativePath: _relativePath(name),
+                        fileModTime: _val(f['modTime'] ?? f['modified']),
+                        fileSize: _val(f['size']),
                         fileName: name,
                         isDir: isDir,
                         isApp: isApp,
@@ -663,7 +668,12 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       FileThumbnail(
-                        localPath: _localFilePath(name),
+                        localPath: widget.device.isLocal ? _localFilePath(name) : null,
+                        deviceId: widget.device.isLocal ? null : widget.device.id,
+                        folderId: widget.folder.id,
+                        relativePath: _relativePath(name),
+                        fileModTime: _val(f['modTime'] ?? f['modified']),
+                        fileSize: _val(f['size']),
                         fileName: name,
                         isDir: isDir,
                         isApp: isApp,

@@ -11,7 +11,10 @@ import 'syncthing_api.dart';
 import 'peer_client.dart';
 import 'folder_acl_store.dart';
 import 'folder_kind_store.dart';
+import '../../shared/utils/file_types.dart';
+import '../../shared/utils/preview_limits.dart';
 import '../../shared/utils/sync_folder_paths.dart';
+import '../services/thumbnail_service.dart';
 
 class BackendServer {
   final SyncthingApi _api = SyncthingApi();
@@ -40,6 +43,7 @@ class BackendServer {
       ..get('/api/device/<deviceId>/folders', _handleDeviceFolders)
       ..get('/api/device/<deviceId>/folder/<folderId>/files', _handleDeviceFolderFiles)
       ..get('/api/device/<deviceId>/folder/<folderId>/preview', _handleDeviceFolderPreview)
+      ..get('/api/device/<deviceId>/folder/<folderId>/thumbnail', _handleDeviceFolderThumbnail)
       ..put('/api/device/<deviceId>/folder/<folderId>/file', _handleDeviceFolderPutFile)
       ..delete('/api/device/<deviceId>/folder/<folderId>/file', _handleDeviceFolderDeleteFile)
       ..post('/api/device/local/folders', _handleCreateFolder)
@@ -60,6 +64,7 @@ class BackendServer {
       ..get('/api/folder/<folderId>/issues', _handleFolderIssues)
       ..post('/api/folder/<folderId>/fix-path', _handleFixFolderPath)
       ..get('/api/folder/<folderId>/preview', _handleFilePreview)
+      ..get('/api/folder/<folderId>/thumbnail', _handleFolderThumbnail)
       ..get('/api/wifi', _handleWifiInfo)
       ..get('/api/wifi-info', _handleWifiInfo)
       ..post('/api/folder/<folderId>/sharing', _handleSharing)
@@ -75,6 +80,7 @@ class BackendServer {
       ..get('/api/peer/folders', _handlePeerFolders)
       ..get('/api/peer/folder/<folderId>/files', _handlePeerFolderFiles)
       ..get('/api/peer/folder/<folderId>/preview', _handlePeerFolderPreview)
+      ..get('/api/peer/folder/<folderId>/thumbnail', _handlePeerFolderThumbnail)
       ..put('/api/peer/folder/<folderId>/file', _handlePeerFolderPutFile)
       ..delete('/api/peer/folder/<folderId>/file', _handlePeerFolderDeleteFile)
       ..get('/api/peer/health', _handlePeerHealth)
@@ -414,6 +420,18 @@ class BackendServer {
     return _serveLocalFilePreview(folderId, request.url.queryParameters['path'] ?? '');
   }
 
+  /// 对端拉取本机文件缩略图（只读 ACL 即可）
+  Future<Response> _handlePeerFolderThumbnail(Request request, String folderId) async {
+    final auth = await _authorizePeer(request);
+    if (auth != null) return auth;
+    final callerId = request.headers['x-datakeep-device-id'] ?? '';
+    final access = await _resolveAccessForCaller(folderId, callerId);
+    if (!access.isPeerVisible) {
+      return Response(403, body: '无权限访问该文件夹');
+    }
+    return _serveLocalFolderThumbnail(folderId, request.url.queryParameters['path'] ?? '');
+  }
+
   /// 对端写入本机文件（仅 ACL=sync）
   Future<Response> _handlePeerFolderPutFile(Request request, String folderId) async {
     final auth = await _authorizePeer(request);
@@ -481,6 +499,19 @@ class BackendServer {
       return _serveLocalFilePreview(folderId, path);
     }
     return _proxyPeerFolderPreview(deviceId, folderId, path);
+  }
+
+  Future<Response> _handleDeviceFolderThumbnail(
+    Request request,
+    String deviceId,
+    String folderId,
+  ) async {
+    final path = request.url.queryParameters['path'] ?? '';
+    final isLocal = await _isLocalDeviceId(deviceId);
+    if (isLocal) {
+      return _serveLocalFolderThumbnail(folderId, path);
+    }
+    return _proxyPeerFolderThumbnail(deviceId, folderId, path);
   }
 
   Future<Response> _handleDeviceFolderPutFile(
@@ -620,6 +651,55 @@ class BackendServer {
         'Content-Type': contentType,
         'Content-Length': '$size',
       },
+    );
+  }
+
+  Future<Response> _proxyPeerFolderThumbnail(
+    String deviceId,
+    String folderId,
+    String path,
+  ) async {
+    if (path.isEmpty) return Response(400, body: '缺少 path 参数');
+    if (!await _api.isRunning()) {
+      return Response(503, body: 'Syncthing 未运行');
+    }
+    final conn = await _api.getDeviceConnection(deviceId);
+    if (!conn.connected) {
+      return Response(503, body: '设备离线');
+    }
+    final ip = PeerClient.extractLanIp(conn.address);
+    if (ip == null) {
+      return Response(
+        503,
+        body: '无法解析对端局域网地址（需同网且对端已打开 DataKeep）',
+      );
+    }
+    final localId = await _api.getLocalDeviceId();
+    if (localId == null || localId.isEmpty) {
+      return Response(503, body: '本机设备 ID 未知');
+    }
+    final encoded = Uri.encodeComponent(folderId);
+    final q = '?path=${Uri.encodeComponent(path)}';
+    debugPrint('[peer] 拉取对端缩略图: device=$deviceId folder=$folderId path=$path');
+
+    final peer = await PeerClient.getBytes(
+      ip,
+      '/api/peer/folder/$encoded/thumbnail$q',
+      headers: {PeerClient.deviceIdHeader: localId},
+      maxBytes: kMaxThumbnailProxyBytes,
+      timeout: const Duration(seconds: 90),
+    );
+    if (peer.containsKey('error')) {
+      final code = peer['statusCode'] is int ? peer['statusCode'] as int : 503;
+      return Response(code, body: peer['error']?.toString() ?? '对端不可达');
+    }
+    final bytes = peer['bytes'];
+    if (bytes is! List<int> || bytes.isEmpty) {
+      return Response(404, body: '无缩略图');
+    }
+    return Response.ok(
+      bytes,
+      headers: {'Content-Type': 'image/png'},
     );
   }
 
@@ -1203,6 +1283,10 @@ class BackendServer {
     return _serveLocalFilePreview(folderId, request.url.queryParameters['path'] ?? '');
   }
 
+  Future<Response> _handleFolderThumbnail(Request request, String folderId) async {
+    return _serveLocalFolderThumbnail(folderId, request.url.queryParameters['path'] ?? '');
+  }
+
   static const int _maxPreviewBytes = 200 * 1024 * 1024; // 200MB
 
   Future<String?> _resolveFolderRootPath(String folderId) async {
@@ -1360,6 +1444,46 @@ class BackendServer {
         'Content-Type': _mimeType(ext),
         'Content-Length': '$size',
       },
+    );
+  }
+
+  /// 本机同步目录内图片/视频缩略图（PNG）
+  Future<Response> _serveLocalFolderThumbnail(String folderId, String filePath) async {
+    if (filePath.isEmpty) return Response(400, body: '缺少 path 参数');
+
+    var folderPath = await _resolveFolderRootPath(folderId);
+    if (folderPath == null || folderPath.isEmpty) {
+      return Response(404, body: '文件夹未找到');
+    }
+
+    final safe = _resolvePreviewPath(folderPath, filePath);
+    if (safe == null) {
+      return Response(403, body: '非法路径');
+    }
+    final file = File(safe);
+    if (!file.existsSync()) {
+      return Response(404, body: '文件未找到');
+    }
+    if (!FileTypes.isImage(safe) && !FileTypes.isVideo(safe)) {
+      return Response(404, body: '非图片或视频');
+    }
+
+    final size = await file.length();
+    if (FileTypes.isVideo(safe) && size > kMaxThumbnailSourceBytes) {
+      return Response(413, body: '视频过大，无法生成缩略图');
+    }
+    if (FileTypes.isImage(safe) && size > _maxPreviewBytes) {
+      return Response(413, body: '图片过大，无法生成缩略图');
+    }
+
+    final thumb = await ThumbnailService.instance.thumbnailPath(safe);
+    if (thumb == null) {
+      return Response(404, body: '无法生成缩略图');
+    }
+    final bytes = await File(thumb).readAsBytes();
+    return Response.ok(
+      bytes,
+      headers: {'Content-Type': 'image/png'},
     );
   }
 

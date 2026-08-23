@@ -97,6 +97,7 @@ class PeerClient {
     String destPath, {
     Map<String, String>? headers,
     Duration timeout = const Duration(minutes: 5),
+    int? maxBytes,
     void Function(int received, int? total)? onProgress,
   }) async {
     final uri = Uri.parse('https://$ip:$peerPort$path');
@@ -106,7 +107,8 @@ class PeerClient {
       headers?.forEach(req.headers.set);
       final res = await req.close().timeout(timeout);
       final contentLen = res.contentLength >= 0 ? res.contentLength : null;
-      if (contentLen != null && contentLen > kMaxPreviewBytes) {
+      final byteLimit = maxBytes ?? kMaxPreviewBytes;
+      if (contentLen != null && contentLen > byteLimit) {
         await res.drain();
         return {
           'error': PreviewTooLargeException(contentLen).toString(),
@@ -136,7 +138,7 @@ class PeerClient {
       try {
         await for (final chunk in res.timeout(timeout)) {
           received += chunk.length;
-          if (received > kMaxPreviewBytes) {
+          if (received > byteLimit) {
             await sink.close();
             await file.delete();
             return {
@@ -184,6 +186,7 @@ class PeerClient {
     String path, {
     Map<String, String>? headers,
     Duration timeout = const Duration(minutes: 3),
+    int? maxBytes,
   }) async {
     final temp = await Directory.systemTemp.createTemp('datakeep_peer_');
     final dest = '${temp.path}/download.bin';
@@ -193,6 +196,7 @@ class PeerClient {
       dest,
       headers: headers,
       timeout: timeout,
+      maxBytes: maxBytes,
     );
     if (result.containsKey('error')) {
       try {

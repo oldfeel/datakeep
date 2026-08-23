@@ -1061,6 +1061,46 @@ class ApiService {
     return Uri.parse(uriStr);
   }
 
+  /// 图片/视频缩略图（本机或对端 peer 代理）
+  static Future<Uint8List?> fetchThumbnailBytes(
+    String folderId,
+    String filePath, {
+    String? deviceId,
+  }) async {
+    await initialize();
+    final uri = await _thumbnailUri(folderId, filePath, deviceId: deviceId);
+    debugPrint('API GET thumbnail: $uri');
+    final resp = await _httpClient.get(uri).timeout(
+      const Duration(seconds: 90),
+      onTimeout: () => throw Exception('缩略图超时（对端需同网且已打开 DataKeep）'),
+    );
+    if (resp.statusCode != 200) return null;
+    if (resp.bodyBytes.length > kMaxThumbnailProxyBytes) return null;
+    return resp.bodyBytes;
+  }
+
+  static Future<Uri> _thumbnailUri(
+    String folderId,
+    String filePath, {
+    String? deviceId,
+  }) async {
+    final localId = await getLocalDeviceId();
+    final isLocal = deviceId == null ||
+        deviceId.isEmpty ||
+        deviceId == 'local' ||
+        deviceId == localId;
+
+    final String uriStr;
+    if (isLocal) {
+      uriStr =
+          '$_baseUrl/folder/${Uri.encodeComponent(folderId)}/thumbnail?path=${Uri.encodeComponent(filePath)}';
+    } else {
+      uriStr =
+          '$_baseUrl/device/${Uri.encodeComponent(deviceId)}/folder/${Uri.encodeComponent(folderId)}/thumbnail?path=${Uri.encodeComponent(filePath)}';
+    }
+    return Uri.parse(uriStr);
+  }
+
   /// 更新文件夹
   static Future<Folder> updateFolder({
     required String folderId,

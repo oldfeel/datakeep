@@ -674,7 +674,12 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 
     return ListTile(
       leading: FileThumbnail(
-        localPath: _localFilePath(name),
+        localPath: _folderInfo?.isLocal == true ? _localFilePath(name) : null,
+        deviceId: _folderInfo?.isLocal == true ? null : widget.deviceId,
+        folderId: widget.folderId,
+        relativePath: _relativePath(name),
+        fileModTime: modTime,
+        fileSize: size,
         fileName: name,
         isDir: isDir,
         isApp: isApp,
