@@ -10,7 +10,9 @@ import '../../../features/folders/providers/folder_provider.dart';
 import '../../../shared/utils/app_dir.dart';
 import '../../../shared/utils/file_types.dart';
 import '../../../shared/utils/file_opener.dart';
+import '../../../shared/utils/local_file_path.dart';
 import '../../../shared/widgets/add_item_dialog.dart';
+import '../../../shared/widgets/file_thumbnail.dart';
 import '../../../shared/widgets/folder_sync_banner.dart';
 import '../../../shared/widgets/share_to_cloud_sheet.dart';
 
@@ -655,6 +657,15 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     );
   }
 
+  String _relativePath(String name) =>
+      _currentPath.isEmpty ? name : '${_currentPath.join('/')}/$name';
+
+  String? _localFilePath(String name) => resolveLocalSyncedFilePath(
+        isLocalDevice: _folderInfo?.isLocal == true,
+        folderPath: _folderInfo?.path ?? '',
+        relativePath: _relativePath(name),
+      );
+
   Widget _buildFileItem(Map<String, dynamic> file, bool isDesktop, bool isDir) {
     final name = file['name'] as String? ?? '未知';
     final size = file['size'] as int? ?? 0;
@@ -662,20 +673,13 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     final isApp = isDir && _entryIsApp(name, file);
 
     return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: isApp
-            ? Theme.of(context).colorScheme.tertiaryContainer
-            : (isDir
-                ? Theme.of(context).colorScheme.primaryContainer
-                : Theme.of(context).colorScheme.secondaryContainer),
-        child: Icon(
-          isApp ? Icons.apps : (isDir ? Icons.folder : _getFileIcon(name)),
-          color: isApp
-              ? Theme.of(context).colorScheme.onTertiaryContainer
-              : (isDir
-                  ? Theme.of(context).colorScheme.onPrimaryContainer
-                  : Theme.of(context).colorScheme.onSecondaryContainer),
-        ),
+      leading: FileThumbnail(
+        localPath: _localFilePath(name),
+        fileName: name,
+        isDir: isDir,
+        isApp: isApp,
+        size: 40,
+        circular: true,
       ),
       title: Row(
         children: [
@@ -747,25 +751,6 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         }
       },
     );
-  }
-
-  IconData _getFileIcon(String fileName) {
-    final ext = fileName.split('.').last.toLowerCase();
-    if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'].contains(ext)) {
-      return Icons.image;
-    } else if (ext == 'pdf') {
-      return Icons.picture_as_pdf;
-    } else if (['doc', 'docx', 'txt', 'rtf'].contains(ext)) {
-      return Icons.description;
-    } else if (['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv'].contains(ext)) {
-      return Icons.video_file;
-    } else if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma'].contains(ext)) {
-      return Icons.audiotrack;
-    } else if (['zip', 'rar', '7z', 'tar', 'gz'].contains(ext)) {
-      return Icons.archive;
-    } else {
-      return Icons.insert_drive_file;
-    }
   }
 
   String _formatFileSize(int bytes) {

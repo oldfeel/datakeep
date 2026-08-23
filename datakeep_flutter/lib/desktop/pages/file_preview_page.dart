@@ -7,6 +7,7 @@ import '../../shared/utils/file_types.dart';
 import '../../shared/utils/local_file_path.dart';
 import '../../shared/utils/open_system_file.dart';
 import '../../shared/utils/preview_limits.dart';
+import '../../shared/utils/text_file_reader.dart';
 import '../../shared/widgets/audio_preview.dart';
 import '../../shared/widgets/share_to_cloud_sheet.dart';
 import '../../shared/widgets/video_preview.dart';
@@ -93,8 +94,8 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
     try {
       final size = await File(_localFilePath).length();
       if (size > kMaxPreviewBytes) throw PreviewTooLargeException(size);
-      var text = await File(_localFilePath).readAsString();
-      if (text.length > 500000) {
+      var text = await readTextFileForPreview(_localFilePath);
+      if (text.length >= 500000) {
         text = '${text.substring(0, 500000)}\n\n…（已截断）';
       }
       _textContent = text;
@@ -162,8 +163,8 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
     _tempFilePath = result.path;
     _tempDirPath = result.tempDirPath;
     if (decodeText) {
-      var text = await File(result.path).readAsString();
-      if (text.length > 500000) {
+      var text = await readTextFileForPreview(result.path);
+      if (text.length >= 500000) {
         text = '${text.substring(0, 500000)}\n\n…（已截断）';
       }
       _textContent = text;

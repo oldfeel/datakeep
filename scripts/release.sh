@@ -21,6 +21,7 @@
 #   ./scripts/release.sh download         # 下载四端包 + .torrent 到 dist-release/（默认最新 tag）
 #   ./scripts/release.sh download v0.0.4  # 指定 tag
 #   DATAKEEP_USE_PROXY=1 ./scripts/release.sh download v0.0.4  # 走本机代理（默认 127.0.0.1:7897）
+#   ./scripts/release.sh download v0.0.6 --torrents-only      # 仅补拉 .torrent（安装包已有时）
 #
 # 官网同步（编完后默认尝试）:
 #   优先读环境变量 DATAKEEP_MARKET_TOKEN / USER / PASSWORD
@@ -55,6 +56,7 @@ MODE="patch" # 默认每次 +0.0.1；可被 patch|minor|major|x.y.z 覆盖
 ACTION="release" # release | market | links | torrents | download
 RELEASE_TAG=""
 USE_PROXY=0
+TORRENTS_ONLY=0
 
 MARKET_URL="${DATAKEEP_MARKET_URL:-https://admin.datakeep.site}"
 MARKET_URL="${MARKET_URL%/}"
@@ -86,6 +88,7 @@ DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions
   ./scripts/release.sh download v0.0.4     # 指定 tag
   DATAKEEP_USE_PROXY=1 ./scripts/release.sh download v0.0.4
     # 或先 export https_proxy=http://127.0.0.1:7897 http_proxy=... all_proxy=...
+  ./scripts/release.sh download v0.0.6 --torrents-only   # 仅补拉 .torrent
 
 官网同步：默认用旁路 datakeep-market/market_server/.env 的 ADMIN_*；
 也可设 DATAKEEP_MARKET_TOKEN，或 DATAKEEP_MARKET_USER + DATAKEEP_MARKET_PASSWORD。
@@ -102,6 +105,7 @@ for arg in "$@"; do
     --skip-market) SKIP_MARKET=1 ;;
     --proxy) USE_PROXY=1 ;;
     --no-proxy) USE_PROXY=0 ;;
+    --torrents-only) TORRENTS_ONLY=1 ;;
     qiniu|sync|market)
       ACTION="market"
       ;;
@@ -299,6 +303,38 @@ apply_download_proxy() {
   fi
 }
 
+# 访问官网 API（带重试；失败返回非 0）
+curl_public_site() {
+  local url="$1"
+  local out="${2:-}"
+  local label="${3:-$url}"
+  local tries="${DATAKEEP_CURL_RETRIES:-5}"
+  local delay=2
+  local i
+
+  for ((i = 1; i <= tries; i++)); do
+    if [[ -n "$out" ]]; then
+      if curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 20 --max-time 180 \
+        "$url" -o "$out"; then
+        return 0
+      fi
+    else
+      if curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 20 --max-time 180 \
+        "$url"; then
+        return 0
+      fi
+    fi
+    if [[ "$i" -lt "$tries" ]]; then
+      warn "${label} 失败，${delay}s 后重试 (${i}/${tries})…"
+      sleep "$delay"
+      if [[ "$delay" -lt 30 ]]; then
+        delay=$((delay * 2))
+      fi
+    fi
+  done
+  return 1
+}
+
 cmd_download() {
   cd "$ROOT"
   REPO="$(resolve_repo)"
@@ -319,7 +355,11 @@ cmd_download() {
   log "Repo: $REPO  Tag: $tag"
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    warn "dry-run：将下载四端包到 $packages，.torrent 到 $torrents"
+    if [[ "$TORRENTS_ONLY" -eq 1 ]]; then
+      warn "dry-run：将仅补拉 .torrent 到 $torrents"
+    else
+      warn "dry-run：将下载四端包到 $packages，.torrent 到 $torrents"
+    fi
     exit 0
   fi
 
@@ -333,7 +373,9 @@ cmd_download() {
     "datakeep-${ver}-macos.zip"
   )
 
-  if command -v gh >/dev/null 2>&1; then
+  if [[ "$TORRENTS_ONLY" -eq 1 ]]; then
+    log "仅补拉 .torrent / magnets（跳过安装包）"
+  elif command -v gh >/dev/null 2>&1; then
     log "gh release download（四端安装包）…"
     gh release download "$tag" --repo "$REPO" --dir "$packages" \
       -p 'datakeep-*-android.apk' \
@@ -351,38 +393,46 @@ cmd_download() {
     done
   fi
 
-  local missing=""
-  local name
-  for name in "${names[@]}"; do
-    if [[ ! -f "$packages/$name" ]]; then
-      missing="${missing} ${name}"
+  if [[ "$TORRENTS_ONLY" -eq 0 ]]; then
+    local missing=""
+    local name
+    for name in "${names[@]}"; do
+      if [[ ! -f "$packages/$name" ]]; then
+        missing="${missing} ${name}"
+      fi
+    done
+    if [[ -n "$missing" ]]; then
+      err "缺少文件:${missing}"
+      exit 1
     fi
-  done
-  if [[ -n "$missing" ]]; then
-    err "缺少文件:${missing}"
-    exit 1
   fi
 
   log "从官网拉取 .torrent → $torrents"
-  local p tmissing=""
+  local p tmissing="" url
   for p in android linux macos windows; do
-    if ! curl -fsS "${PUBLIC_SITE}/api/client/${p}/torrent" -o "$torrents/${p}.torrent"; then
+    url="${PUBLIC_SITE}/api/client/${p}/torrent"
+    if curl_public_site "$url" "$torrents/${p}.torrent" "${p} .torrent"; then
+      :
+    else
       tmissing="${tmissing} ${p}"
-      warn "未拿到 $p 的 .torrent（请先 ./scripts/release.sh market $tag）"
+      err "未拿到 $p 的 .torrent（可先: ./scripts/release.sh market $tag）"
     fi
   done
 
   log "写入 $magnets"
+  local resp=""
   if command -v jq >/dev/null 2>&1; then
-    local resp
-    resp="$(curl -fsS "${PUBLIC_SITE}/api/client/releases")" || resp=""
-    if [[ -n "$resp" ]] && [[ "$(echo "$resp" | jq -r '.code')" == "0" ]]; then
-      {
-        echo "# DataKeep ${tag} magnets — $(date -Iseconds)"
-        for p in android linux macos windows; do
-          echo "$p$(echo "$resp" | jq -r --arg p "$p" '.data[] | select(.platform==$p) | "\t" + (.magnetUrl // "")')"
-        done
-      } >"$magnets"
+    if resp="$(curl_public_site "${PUBLIC_SITE}/api/client/releases" "" "releases API")"; then
+      if [[ "$(echo "$resp" | jq -r '.code')" == "0" ]]; then
+        {
+          echo "# DataKeep ${tag} magnets — $(date -Iseconds)"
+          for p in android linux macos windows; do
+            echo "$p$(echo "$resp" | jq -r --arg p "$p" '.data[] | select(.platform==$p) | "\t" + (.magnetUrl // "")')"
+          done
+        } >"$magnets"
+      else
+        warn "官网 API 返回错误，未写入 magnets.txt"
+      fi
     else
       warn "无法从官网 API 写入 magnets.txt"
     fi
@@ -391,9 +441,15 @@ cmd_download() {
   fi
 
   ok "已下载到 $out"
-  ls -lh "$packages"
+  if [[ -d "$packages" ]] && ls "$packages"/* >/dev/null 2>&1; then
+    ls -lh "$packages"
+  fi
   if [[ -z "$tmissing" ]]; then
     ls -lh "$torrents"
+  else
+    warn "缺少 .torrent:${tmissing}"
+    warn "可重试: ./scripts/release.sh download $tag --torrents-only"
+    exit 1
   fi
   [[ -f "$magnets" ]] && ok "磁力链: $magnets"
   echo

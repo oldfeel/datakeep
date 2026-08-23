@@ -10,10 +10,11 @@ import '../../core/models/folder.dart';
 import '../../core/services/api_service.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../shared/utils/app_dir.dart';
+import '../../shared/utils/local_file_path.dart';
 import '../../shared/widgets/add_item_dialog.dart';
+import '../../shared/widgets/file_thumbnail.dart';
 import '../../shared/widgets/folder_sync_banner.dart';
 import '../../shared/widgets/share_to_cloud_sheet.dart';
-import '../widgets/file_icon.dart';
 
 enum _SortField { name, size, mtime, ctime }
 
@@ -248,6 +249,12 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
   /// 相对文件夹根的路径（含子目录），供预览/打开使用
   String _relativePath(String name) =>
       _currentPath.isEmpty ? name : '${_currentPath.join('/')}/$name';
+
+  String? _localFilePath(String name) => resolveLocalSyncedFilePath(
+        isLocalDevice: widget.device.isLocal,
+        folderPath: widget.folder.path,
+        relativePath: _relativePath(name),
+      );
 
   /// 当前浏览目录的本机绝对路径
   String get _absoluteCurrentPath {
@@ -545,12 +552,13 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                     child: Row(children: [
                       ReorderableDragStartListener(index: i, child: const Icon(Icons.drag_handle, size: 20, color: Colors.grey)),
                       const SizedBox(width: 8),
-                      Icon(
-                        isApp ? Icons.apps : getFileIcon(name, isDir: isDir),
-                        size: 20,
-                        color: isApp
-                            ? Theme.of(context).colorScheme.tertiary
-                            : getFileIconColor(name, isDir: isDir),
+                      FileThumbnail(
+                        localPath: _localFilePath(name),
+                        fileName: name,
+                        isDir: isDir,
+                        isApp: isApp,
+                        size: 32,
+                        borderRadius: 4,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -654,12 +662,13 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Icon(
-                        isApp ? Icons.apps : getFileIcon(name, isDir: isDir),
-                        size: 48,
-                        color: isApp
-                            ? Theme.of(context).colorScheme.tertiary
-                            : getFileIconColor(name, isDir: isDir),
+                      FileThumbnail(
+                        localPath: _localFilePath(name),
+                        fileName: name,
+                        isDir: isDir,
+                        isApp: isApp,
+                        size: 72,
+                        borderRadius: 8,
                       ),
                       const SizedBox(height: 8),
                       Padding(

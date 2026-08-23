@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../shared/utils/open_system_file.dart';
 import '../../../shared/utils/preview_limits.dart';
+import '../../../shared/utils/text_file_reader.dart';
 import '../../../shared/widgets/share_to_cloud_sheet.dart';
 
 /// 只读文本预览（大文件截断提示）
@@ -39,12 +40,8 @@ class _TextPreviewScreenState extends State<TextPreviewScreen> {
       if (size > kMaxPreviewBytes) {
         throw PreviewTooLargeException(size);
       }
-      var text = await file.readAsString();
-      var truncated = false;
-      if (text.length > _maxChars) {
-        text = text.substring(0, _maxChars);
-        truncated = true;
-      }
+      var text = await readTextFileForPreview(widget.filePath, maxChars: _maxChars);
+      final truncated = text.length >= _maxChars;
       if (mounted) {
         setState(() {
           _content = text;
