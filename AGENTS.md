@@ -23,7 +23,7 @@
 4. ~~失败/冲突文件的基础提示~~ — 文件夹编辑「问题」页
 5. ~~本机设备 ID 二维码展示~~ — 本机设备信息 / 侧栏 / 抽屉
 6. ~~多媒体预览打磨~~ — 流式预览、PDF/系统打开、邻图滑动、统一分发
-7. ~~对外分享~~ — 系统分享（微信/邮件等）；不做公网直链/网盘 API
+7. ~~对外分享~~ — 系统分享（微信/邮件等）+ 可选 BT 磁力链（本机生成，分享者做种）；不做中心网盘/永久 HTTP 直链
 8. ~~移动端 Syncthing 进程内引擎~~ — 共用 `syncthing_core`（gomobile：iOS xcframework + Android AAR）；桌面编译 `bin/syncthing`（Windows 为 `syncthing.exe`，见 `scripts/build_desktop_syncthing.sh`）
 
 应用市场（`datakeep-market`）市场应用包仍在服务器本机 `STORAGE_DIR`；**客户端安装包**经 GitHub Release + BT/磁力分发（`sync-github` 拉 GitHub 写链并生成 `.torrent`；家宽 PC 用 qBittorrent 做种加速国内用户）。

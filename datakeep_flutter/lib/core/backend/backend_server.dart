@@ -11,6 +11,7 @@ import 'syncthing_api.dart';
 import 'peer_client.dart';
 import 'folder_acl_store.dart';
 import 'folder_kind_store.dart';
+import 'torrent_create.dart';
 import '../../shared/utils/sync_folder_paths.dart';
 
 class BackendServer {
@@ -21,6 +22,7 @@ class BackendServer {
   HttpServer? _server;
   String? _defaultLocalDeviceName;
   bool _deviceNameEnsureAttempted = false;
+  String? _dataDir;
 
   bool get isRunning => _server != null;
 
@@ -30,6 +32,7 @@ class BackendServer {
     _api.init(configPath: syncthingConfigPath, defaultLocalDeviceName: defaultLocalDeviceName);
 
     final dataDir = await _resolveDataDir();
+    _dataDir = dataDir;
     _certMgr = CertManager('$dataDir/certs');
     await _certMgr.ensureReady();
     await _acl.init(dataDir);
@@ -78,6 +81,7 @@ class BackendServer {
       ..put('/api/peer/folder/<folderId>/file', _handlePeerFolderPutFile)
       ..delete('/api/peer/folder/<folderId>/file', _handlePeerFolderDeleteFile)
       ..get('/api/peer/health', _handlePeerHealth)
+      ..post('/api/share/torrent', _handleCreateShareTorrent)
       ..get('/health', _handleHealth);
 
     final handler = Pipeline()
@@ -1204,6 +1208,7 @@ class BackendServer {
   }
 
   static const int _maxPreviewBytes = 200 * 1024 * 1024; // 200MB
+  static const int _maxShareTorrentBytes = 4 * 1024 * 1024 * 1024; // 4GB
 
   Future<String?> _resolveFolderRootPath(String folderId) async {
     var folderPath = await _api.getFolderPath(folderId);
@@ -1361,6 +1366,84 @@ class BackendServer {
         'Content-Length': '$size',
       },
     );
+  }
+
+  /// 生成单文件 BT 种子与磁力链（须落在已配置同步文件夹内）
+  Future<Response> _handleCreateShareTorrent(Request request) async {
+    Map<String, dynamic> body;
+    try {
+      body = json.decode(await request.readAsString()) as Map<String, dynamic>;
+    } catch (_) {
+      return _json({'code': 1001, 'data': '无效 JSON'}, status: 400);
+    }
+
+    final folderPath = body['folderPath']?.toString().trim() ?? '';
+    final relativePath = body['relativePath']?.toString().trim() ?? '';
+    if (folderPath.isEmpty || relativePath.isEmpty) {
+      return _json({'code': 1001, 'data': '缺少 folderPath 或 relativePath'}, status: 400);
+    }
+    if (!_isConfiguredFolderRoot(folderPath)) {
+      return _json({'code': 1003, 'data': 'folderPath 不在已配置同步目录内'}, status: 403);
+    }
+
+    final safe = _resolvePreviewPath(folderPath, relativePath);
+    if (safe == null) {
+      return _json({'code': 1003, 'data': '非法路径'}, status: 403);
+    }
+    final file = File(safe);
+    if (!file.existsSync()) {
+      return _json({'code': 1004, 'data': '文件未找到'}, status: 404);
+    }
+    final size = await file.length();
+    if (size > _maxShareTorrentBytes) {
+      return _json({
+        'code': 1002,
+        'data': '文件超过 4 GB，暂不支持 BT 分享',
+      }, status: 413);
+    }
+
+    try {
+      final displayName = relativePath.split('/').last;
+      final result = await createTorrentFromFile(
+        filePath: safe,
+        displayName: displayName,
+      );
+      final shareId = result.infoHash.toLowerCase();
+      final dataDir = _dataDir ?? await _resolveDataDir();
+      final torrentDir = Directory('$dataDir/share_torrents');
+      await torrentDir.create(recursive: true);
+      await File('${torrentDir.path}/$shareId.torrent')
+          .writeAsBytes(result.torrentData);
+
+      return _json({
+        'code': 0,
+        'data': {
+          'shareId': shareId,
+          'magnetUrl': result.magnetUrl,
+          'infoHash': result.infoHash,
+          'torrentFileName': '${result.displayName}.torrent',
+          'torrentBase64': base64Encode(result.torrentData),
+        },
+      });
+    } catch (e) {
+      debugPrint('[share/torrent] 生成失败: $e');
+      return _json({'code': 1005, 'data': '生成种子失败: $e'}, status: 500);
+    }
+  }
+
+  bool _isConfiguredFolderRoot(String folderPath) {
+    try {
+      final target = Directory(folderPath).resolveSymbolicLinksSync();
+      for (final f in _api.getFoldersFromConfig()) {
+        final p = f['path']?.toString();
+        if (p == null || p.isEmpty) continue;
+        final canon = Directory(p).resolveSymbolicLinksSync();
+        if (canon == target) return true;
+      }
+    } catch (e) {
+      debugPrint('[share/torrent] folderPath 校验失败: $e');
+    }
+    return false;
   }
 
   /// 规范化路径并确保落在 folder root 内，防止目录穿越
