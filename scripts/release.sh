@@ -754,10 +754,30 @@ if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
 fi
 
 ok "Run #$RUN_ID — 跟踪中（CEF/多平台可能较久）…"
-gh run watch "$RUN_ID" --repo "$REPO" --exit-status || {
-  err "构建失败，查看: gh run view $RUN_ID --repo $REPO --log-failed"
+watch_ok=0
+for attempt in 1 2 3; do
+  if gh run watch "$RUN_ID" --repo "$REPO" --exit-status; then
+    watch_ok=1
+    break
+  fi
+  conclusion="$(gh run view "$RUN_ID" --repo "$REPO" --json conclusion -q .conclusion 2>/dev/null || true)"
+  if [[ "$conclusion" == "success" ]]; then
+    watch_ok=1
+    warn "gh run watch 中断，但 workflow 已成功（GitHub API 临时故障）"
+    break
+  fi
+  if [[ "$conclusion" == "failure" ]]; then
+    break
+  fi
+  if [[ "$attempt" -lt 3 ]]; then
+    warn "gh run watch 中断（attempt $attempt/3），5s 后重试…"
+    sleep 5
+  fi
+done
+if [[ "$watch_ok" -ne 1 ]]; then
+  err "构建失败或跟踪中断，查看: gh run view $RUN_ID --repo $REPO --log-failed"
   exit 1
-}
+fi
 
 ok "构建成功"
 ok "GitHub Release: https://github.com/${REPO}/releases/tag/${TAG}"
