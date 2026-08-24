@@ -1131,6 +1131,14 @@ class BackendServer {
       collectNeed(needRes['data']);
     }
 
+    final pathError = sync['pathError']?.toString() ?? '';
+    if (pathError.isNotEmpty) {
+      errors.insert(0, {
+        'path': sync['currentPath']?.toString() ?? id,
+        'error': pathError,
+      });
+    }
+
     return _json({
       'code': 0,
       'data': {
@@ -1138,6 +1146,10 @@ class BackendServer {
         'needFiles': sync['needFiles'] ?? 0,
         'needBytes': sync['needBytes'] ?? 0,
         'status': sync['status'] ?? 'unknown',
+        'pathError': pathError.isEmpty ? null : pathError,
+        'needsPathFix': sync['needsPathFix'] == true,
+        'pathMissing': sync['pathMissing'] == true,
+        'currentPath': sync['currentPath'],
         'errors': errors,
         'pending': pending.take(20).toList(),
         'conflicts': conflicts.take(20).toList(),

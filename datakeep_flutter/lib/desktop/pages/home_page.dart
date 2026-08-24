@@ -104,8 +104,9 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
         case 'ConfigSaved':
           message = '配置已保存';
           bgColor = Colors.blue;
-          context.read<DeviceProvider>().fetchDevices();
-          break;
+          context.read<DeviceProvider>().fetchDevices(silent: true);
+          context.read<FolderProvider>().fetchFolders(silent: true);
+          return;
         default:
           return;
       }
@@ -290,6 +291,11 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
   }
 
   void _handlePendingFoldersChanged(SyncthingEvent event) async {
+    final removed = event.data['removed'];
+    if (removed is List && removed.isNotEmpty && mounted) {
+      await context.read<FolderProvider>().fetchFolders(silent: true);
+    }
+
     final added = event.data['added'];
     if (added is List) {
       for (final item in added) {

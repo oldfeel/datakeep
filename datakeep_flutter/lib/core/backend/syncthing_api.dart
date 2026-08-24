@@ -715,6 +715,9 @@ class SyncthingApi {
     }
 
     final state = status['state']?.toString() ?? 'unknown';
+    final stateError = status['error']?.toString().trim() ?? '';
+    final hasStateError =
+        stateError.isNotEmpty && stateError != 'null';
     final needBytes = (status['needBytes'] as num?)?.toInt() ?? 0;
     final needFiles = (status['needFiles'] as num?)?.toInt() ?? 0;
     final globalBytes = (status['globalBytes'] as num?)?.toInt() ?? 0;
@@ -750,7 +753,7 @@ class SyncthingApi {
         state == 'idle' && (needFiles > 0 || needBytes > 0);
 
     String uiStatus;
-    if (pullErrors > 0) {
+    if (pullErrors > 0 || hasStateError || state == 'error') {
       uiStatus = 'error';
     } else if (stalledIdle) {
       uiStatus = 'stalled';
@@ -779,7 +782,7 @@ class SyncthingApi {
       '↓${rates.inBps} ↑${rates.outBps} B/s',
     );
 
-    return {
+    final summary = {
       'state': state,
       'status': uiStatus,
       'completion': completion,
@@ -796,6 +799,62 @@ class SyncthingApi {
       'outBps': rates.outBps,
       'stalled': stalledIdle,
     };
+    await _applyPathDiagnostics(id, status, summary);
+    return summary;
+  }
+
+  String _folderErrorMessage(String raw, String? path) {
+    final lower = raw.toLowerCase();
+    if (lower.contains('folder path missing')) {
+      if (path != null && path.isNotEmpty) {
+        return 'Syncthing 找不到同步目录：$path';
+      }
+      return 'Syncthing 同步目录不存在';
+    }
+    return raw;
+  }
+
+  /// 检测配置路径是否存在，并解析 db/status 中的 folder 级错误
+  Future<void> _applyPathDiagnostics(
+    String folderId,
+    Map<String, dynamic> status,
+    Map<String, dynamic> result,
+  ) async {
+    final stateError = status['error']?.toString().trim() ?? '';
+    final hasStateError =
+        stateError.isNotEmpty && stateError != 'null';
+    final watchError = status['watchError']?.toString().trim() ?? '';
+    final folderPath = await getFolderPath(folderId);
+
+    String? pathError;
+    var needsPathFix = false;
+    var pathMissing = false;
+
+    if (folderPath != null && folderPath.isNotEmpty) {
+      result['currentPath'] = folderPath;
+      if (!await Directory(folderPath).exists()) {
+        pathMissing = true;
+        needsPathFix = true;
+        pathError = '同步目录不存在：$folderPath';
+      }
+    }
+
+    if (hasStateError) {
+      needsPathFix = true;
+      pathError ??= _folderErrorMessage(stateError, folderPath);
+    }
+
+    if (watchError.isNotEmpty) {
+      needsPathFix = true;
+      pathError = pathError != null ? '$pathError（$watchError）' : watchError;
+    }
+
+    if (needsPathFix) {
+      result['needsPathFix'] = true;
+      result['pathMissing'] = pathMissing;
+      if (pathError != null) result['pathError'] = pathError;
+      result['status'] = 'error';
+    }
   }
 
   /// 格式化为 Syncthing 标准设备 ID（带连字符）

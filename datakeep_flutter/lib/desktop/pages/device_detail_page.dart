@@ -66,28 +66,63 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   }
 
   Future<void> _loadFolders() async {
-    setState(() { _isLoading = true; _error = null; });
+    if (widget.device.isLocal) {
+      await context
+          .read<FolderProvider>()
+          .fetchDeviceFolders(widget.device.id);
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
     try {
-      final folders =
-          await context.read<FolderProvider>().getDeviceFolders(widget.device.id);
+      final folders = await context
+          .read<FolderProvider>()
+          .getDeviceFolders(widget.device.id);
       debugPrint(
         '[device-detail] device=${widget.device.id} '
         'local=${widget.device.isLocal} folders=${folders.length} '
         'ids=${folders.map((f) => f.id).join(",")}',
       );
       _waitTimer?.cancel();
-      if (mounted) setState(() { _folders = folders; _isLoading = false; });
+      if (mounted) {
+        setState(() {
+          _folders = folders;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       debugPrint('[device-detail] 加载失败 device=${widget.device.id}: $e');
       if (mounted) {
-        setState(() { _error = e.toString(); _isLoading = false; });
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
         _scheduleWaitRetry();
       }
     }
   }
 
+  ({List<Folder> folders, bool isLoading, String? error}) _folderViewState(
+    FolderProvider folderProvider,
+  ) {
+    if (widget.device.isLocal) {
+      return (
+        folders: folderProvider.folders,
+        isLoading: folderProvider.isLoading,
+        error: folderProvider.error,
+      );
+    }
+    return (folders: _folders, isLoading: _isLoading, error: _error);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final folderProvider = context.watch<FolderProvider>();
+    final view = _folderViewState(folderProvider);
+
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -101,7 +136,14 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
             onDeleted: widget.onBack,
           ),
           const SizedBox(height: 16),
-          Expanded(child: _buildFolderList(context)),
+          Expanded(
+            child: _buildFolderList(
+              context,
+              folders: view.folders,
+              isLoading: view.isLoading,
+              error: view.error,
+            ),
+          ),
         ],
       ),
     );
@@ -128,15 +170,20 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
     );
   }
 
-  Widget _buildFolderList(BuildContext context) {
-    if (_isLoading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
+  Widget _buildFolderList(
+    BuildContext context, {
+    required List<Folder> folders,
+    required bool isLoading,
+    required String? error,
+  }) {
+    if (isLoading) return const Center(child: CircularProgressIndicator());
+    if (error != null) {
       return PeerFolderStatusView(
-        error: _error,
+        error: error,
         onRetry: _loadFolders,
       );
     }
-    if (_folders.isEmpty) {
+    if (folders.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -191,9 +238,9 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
         const SizedBox(height: 12),
         Expanded(
           child: ListView.builder(
-            itemCount: _folders.length,
+            itemCount: folders.length,
             itemBuilder: (context, index) {
-              final folder = _folders[index];
+              final folder = folders[index];
               return Card(
                 margin: const EdgeInsets.only(bottom: 8),
                 child: ListTile(

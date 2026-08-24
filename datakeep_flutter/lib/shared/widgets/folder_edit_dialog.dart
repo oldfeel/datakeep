@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -101,6 +102,7 @@ class _FolderEditFormState extends State<FolderEditForm> {
   final _ignoresController = TextEditingController();
   Map<String, dynamic>? _issues;
   bool _scanning = false;
+  bool _fixingPath = false;
   bool _saving = false;
 
   String _normId(String id) => id.replaceAll(RegExp(r'[\s-]'), '').toUpperCase();
@@ -605,6 +607,42 @@ class _FolderEditFormState extends State<FolderEditForm> {
     );
   }
 
+  Future<void> _fixFolderPathFromIssues() async {
+    if (_fixingPath) return;
+    setState(() => _fixingPath = true);
+    try {
+      var result = await ApiService.fixFolderPath(widget.folder.id);
+      final pathMissing = _issues?['pathMissing'] == true;
+      if (pathMissing && (Platform.isMacOS || Platform.isLinux || Platform.isWindows)) {
+        final current = _issues?['currentPath']?.toString() ?? '';
+        final picked = await FilePicker.platform.getDirectoryPath(
+          dialogTitle: '选择同步目录',
+          initialDirectory: current.isNotEmpty ? current : null,
+        );
+        if (picked != null && picked.isNotEmpty) {
+          result = await ApiService.fixFolderPath(widget.folder.id, path: picked);
+        }
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result['message']?.toString() ?? '已更新同步目录'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      final issues = await ApiService.getFolderIssues(widget.folder.id);
+      if (mounted) setState(() => _issues = issues);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('修复目录失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _fixingPath = false);
+    }
+  }
+
   List<Widget> _buildIssuesChildren() {
     final issues = _issues;
     if (issues == null) {
@@ -612,25 +650,58 @@ class _FolderEditFormState extends State<FolderEditForm> {
     }
     final pullErrors = (issues['pullErrors'] as num?)?.toInt() ?? 0;
     final needFiles = (issues['needFiles'] as num?)?.toInt() ?? 0;
+    final needsPathFix = issues['needsPathFix'] == true;
+    final pathMissing = issues['pathMissing'] == true;
+    final pathError = issues['pathError']?.toString() ?? '';
+    final currentPath = issues['currentPath']?.toString() ?? '';
     final errors = (issues['errors'] as List?) ?? [];
     final pending = (issues['pending'] as List?) ?? [];
     final conflicts = (issues['conflicts'] as List?) ?? [];
+    final hasSerious = pullErrors > 0 ||
+        conflicts.isNotEmpty ||
+        needsPathFix ||
+        pathError.isNotEmpty;
 
     return [
+      if (needsPathFix) ...[
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.folder_off, color: Colors.red),
+          title: Text(pathMissing ? '同步目录不存在' : '同步目录异常'),
+          subtitle: Text(
+            pathError.isNotEmpty
+                ? pathError
+                : (currentPath.isNotEmpty ? currentPath : '请重新选择或创建目录'),
+          ),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.icon(
+            onPressed: _fixingPath ? null : _fixFolderPathFromIssues,
+            icon: _fixingPath
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.folder_open, size: 18),
+            label: Text(_fixingPath ? '处理中…' : '创建/修复目录'),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
       ListTile(
         contentPadding: EdgeInsets.zero,
         leading: Icon(
-          pullErrors > 0 || conflicts.isNotEmpty
-              ? Icons.error_outline
-              : Icons.check_circle_outline,
-          color: pullErrors > 0 || conflicts.isNotEmpty
-              ? Colors.orange
-              : Colors.green,
+          hasSerious ? Icons.error_outline : Icons.check_circle_outline,
+          color: hasSerious ? Colors.orange : Colors.green,
         ),
         title: Text(
           pullErrors > 0
               ? '拉取错误 $pullErrors 个'
-              : (conflicts.isNotEmpty ? '发现冲突文件' : '暂无严重错误'),
+              : (conflicts.isNotEmpty
+                  ? '发现冲突文件'
+                  : (needsPathFix ? '目录问题待修复' : '暂无严重错误')),
         ),
         subtitle: Text('待同步文件约 $needFiles 个'),
       ),
@@ -675,7 +746,10 @@ class _FolderEditFormState extends State<FolderEditForm> {
               ),
             ),
       ],
-      if (errors.isEmpty && conflicts.isEmpty && pending.isEmpty)
+      if (!needsPathFix &&
+          errors.isEmpty &&
+          conflicts.isEmpty &&
+          pending.isEmpty)
         const Padding(
           padding: EdgeInsets.only(top: 8),
           child: Text('当前没有需要关注的问题'),

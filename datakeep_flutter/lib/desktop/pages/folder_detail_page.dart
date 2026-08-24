@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
@@ -49,6 +50,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
   Map<String, dynamic>? _syncInfo;
   Timer? _syncTimer;
   bool _scanning = false;
+  bool _fixingPath = false;
 
   bool _isGrid = false;
   _SortField _sortField = _SortField.name;
@@ -99,6 +101,41 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
       }
     } catch (e) {
       debugPrint('[sync-ui][desktop] 刷新失败: $e');
+    }
+  }
+
+  Future<void> _fixFolderPath() async {
+    if (_fixingPath) return;
+    setState(() => _fixingPath = true);
+    try {
+      var result = await ApiService.fixFolderPath(widget.folder.id);
+      final pathMissing = _syncInfo?['pathMissing'] == true;
+      if (pathMissing) {
+        final current = _syncInfo?['currentPath']?.toString() ?? '';
+        final picked = await FilePicker.platform.getDirectoryPath(
+          dialogTitle: '选择同步目录',
+          initialDirectory: current.isNotEmpty ? current : null,
+        );
+        if (picked != null && picked.isNotEmpty) {
+          result = await ApiService.fixFolderPath(widget.folder.id, path: picked);
+        }
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result['message']?.toString() ?? '已更新同步目录'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      await _refreshSync();
+      await _loadFiles();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('修复目录失败: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _fixingPath = false);
     }
   }
 
@@ -354,38 +391,59 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
           const SizedBox(height: 12),
           FolderSyncBanner(
             info: _syncInfo!,
-            actions: (_syncInfo!['status']?.toString() == 'stalled' ||
-                    _syncInfo!['stalled'] == true)
-                ? Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: _scanning ? null : _rescanFolder,
-                        icon: _scanning
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.refresh, size: 18),
-                        label: Text(_scanning ? '处理中…' : '重新扫描'),
-                      ),
-                      FilledButton.icon(
-                        onPressed: _scanning ? null : _resetFolderIndex,
-                        icon: const Icon(Icons.restart_alt, size: 18),
-                        label: const Text('重建索引'),
-                      ),
-                    ],
-                  )
-                : null,
+            actions: _buildSyncBannerActions(),
           ),
         ],
         const SizedBox(height: 16),
         Expanded(child: _buildContent(context)),
       ]),
     );
+  }
+
+  Widget? _buildSyncBannerActions() {
+    final info = _syncInfo!;
+    final needsPathFix = info['needsPathFix'] == true;
+    final stalled =
+        info['status']?.toString() == 'stalled' || info['stalled'] == true;
+    if (!needsPathFix && !stalled) return null;
+
+    final buttons = <Widget>[];
+    if (needsPathFix) {
+      buttons.add(
+        FilledButton.icon(
+          onPressed: _fixingPath ? null : _fixFolderPath,
+          icon: _fixingPath
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.folder_open, size: 18),
+          label: Text(_fixingPath ? '处理中…' : '创建/修复目录'),
+        ),
+      );
+    }
+    if (stalled || needsPathFix) {
+      buttons.addAll([
+        OutlinedButton.icon(
+          onPressed: _scanning ? null : _rescanFolder,
+          icon: _scanning
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.refresh, size: 18),
+          label: Text(_scanning ? '处理中…' : '重新扫描'),
+        ),
+        FilledButton.icon(
+          onPressed: _scanning ? null : _resetFolderIndex,
+          icon: const Icon(Icons.restart_alt, size: 18),
+          label: const Text('重建索引'),
+        ),
+      ]);
+    }
+    return Wrap(spacing: 8, runSpacing: 8, children: buttons);
   }
 
   Widget _buildBreadcrumb(BuildContext context) {
@@ -482,18 +540,49 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
 
   // ── Sort header ────────────────────────────────────────────
 
+  /// 列表列宽：与数据行对齐（拖拽 + 缩略图 + 间距 = 72）
+  static const double _listLeadingWidth = 72;
+  static const double _listActionWidth = 40;
+
+  ({double size, double date, bool showCtime}) _listColumnLayout(double width) {
+    final showCtime = width >= 520;
+    if (width < 480) {
+      return (size: 64, date: 88, showCtime: showCtime);
+    }
+    return (size: 88, date: showCtime ? 108 : 120, showCtime: showCtime);
+  }
+
   Widget _sortHeader(String label, _SortField field) {
     final active = _sortField == field;
     return GestureDetector(
       onTap: () => _toggleSort(field),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(label, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13,
-            color: active ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurfaceVariant)),
-          if (active) Icon(_sortAscending ? Icons.arrow_upward : Icons.arrow_downward,
-            size: 14, color: Theme.of(context).colorScheme.primary),
-        ]),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  color: active
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            if (active)
+              Icon(
+                _sortAscending ? Icons.arrow_upward : Icons.arrow_downward,
+                size: 14,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -511,124 +600,222 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
   Widget _buildList(BuildContext context) {
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: Column(children: [
-        Container(
-          color: Theme.of(context).colorScheme.surfaceContainerLow,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(children: [
-            const SizedBox(width: 32),
-            Expanded(child: _sortHeader('名称', _SortField.name)),
-            const SizedBox(width: 40), // 与行内分享按钮对齐
-            SizedBox(width: 100, child: _sortHeader('大小', _SortField.size)),
-            SizedBox(width: 140, child: _sortHeader('创建时间', _SortField.ctime)),
-            SizedBox(width: 140, child: _sortHeader('修改时间', _SortField.mtime)),
-          ]),
-        ),
-        Expanded(
-          child: ReorderableListView.builder(
-            buildDefaultDragHandles: false,
-            itemCount: _files.length,
-            onReorder: _onReorder,
-            proxyDecorator: (child, _, __) => Material(elevation: 2, borderRadius: BorderRadius.circular(4), child: child),
-            itemBuilder: (_, i) {
-              final f = _files[i];
-              final name = _name(f);
-              final isDir = _isDir(f);
-              final isApp = isDir && _entryIsApp(name, f);
-              return Container(
-                key: ValueKey('f_$i'),
-                decoration: BoxDecoration(
-                  border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.3))),
-                ),
-                child: InkWell(
-                  onTap: isDir
-                      ? (isApp
-                          ? () => _openEntryApp(name)
-                          : () => _enterFolder(name))
-                      : () => widget.onFileTap(_relativePath(name)),
-                  onSecondaryTap: isDir ? null : () => _shareFile(context, name),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                    child: Row(children: [
-                      ReorderableDragStartListener(index: i, child: const Icon(Icons.drag_handle, size: 20, color: Colors.grey)),
-                      const SizedBox(width: 8),
-                      FileThumbnail(
-                        localPath: widget.device.isLocal ? _localFilePath(name) : null,
-                        deviceId: widget.device.isLocal ? null : widget.device.id,
-                        folderId: widget.folder.id,
-                        relativePath: _relativePath(name),
-                        fileModTime: _val(f['modTime'] ?? f['modified']),
-                        fileSize: _val(f['size']),
-                        fileName: name,
-                        isDir: isDir,
-                        isApp: isApp,
-                        size: 32,
-                        borderRadius: 4,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final cols = _listColumnLayout(constraints.maxWidth);
+          return Column(
+            children: [
+              Container(
+                color: Theme.of(context).colorScheme.surfaceContainerLow,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(
+                  children: [
+                    const SizedBox(width: _listLeadingWidth),
+                    Expanded(child: _sortHeader('名称', _SortField.name)),
+                    const SizedBox(width: _listActionWidth),
+                    SizedBox(
+                      width: cols.size,
+                      child: _sortHeader('大小', _SortField.size),
+                    ),
+                    if (cols.showCtime)
+                      SizedBox(
+                        width: cols.date,
+                        child: _sortHeader('创建时间', _SortField.ctime),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                name,
-                                style: const TextStyle(fontSize: 13),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                    SizedBox(
+                      width: cols.date,
+                      child: _sortHeader('修改时间', _SortField.mtime),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ReorderableListView.builder(
+                  buildDefaultDragHandles: false,
+                  itemCount: _files.length,
+                  onReorder: _onReorder,
+                  proxyDecorator: (child, _, __) => Material(
+                    elevation: 2,
+                    borderRadius: BorderRadius.circular(4),
+                    child: child,
+                  ),
+                  itemBuilder: (_, i) {
+                    final f = _files[i];
+                    final name = _name(f);
+                    final isDir = _isDir(f);
+                    final isApp = isDir && _entryIsApp(name, f);
+                    return Container(
+                      key: ValueKey('f_$i'),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: Theme.of(context)
+                                .dividerColor
+                                .withOpacity(0.3),
+                          ),
+                        ),
+                      ),
+                      child: InkWell(
+                        onTap: isDir
+                            ? (isApp
+                                ? () => _openEntryApp(name)
+                                : () => _enterFolder(name))
+                            : () => widget.onFileTap(_relativePath(name)),
+                        onSecondaryTap:
+                            isDir ? null : () => _shareFile(context, name),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 4,
+                          ),
+                          child: Row(
+                            children: [
+                              ReorderableDragStartListener(
+                                index: i,
+                                child: const Icon(
+                                  Icons.drag_handle,
+                                  size: 20,
+                                  color: Colors.grey,
+                                ),
                               ),
-                            ),
-                            if (isApp) ...[
                               const SizedBox(width: 8),
-                              Text(
-                                '应用',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Theme.of(context).colorScheme.tertiary,
+                              FileThumbnail(
+                                localPath: widget.device.isLocal
+                                    ? _localFilePath(name)
+                                    : null,
+                                deviceId: widget.device.isLocal
+                                    ? null
+                                    : widget.device.id,
+                                folderId: widget.folder.id,
+                                relativePath: _relativePath(name),
+                                fileModTime:
+                                    _val(f['modTime'] ?? f['modified']),
+                                fileSize: _val(f['size']),
+                                fileName: name,
+                                isDir: isDir,
+                                isApp: isApp,
+                                size: 32,
+                                borderRadius: 4,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        name,
+                                        style: const TextStyle(fontSize: 13),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    if (isApp) ...[
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '应用',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .tertiary,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              SizedBox(
+                                width: _listActionWidth,
+                                child: isApp
+                                    ? IconButton(
+                                        icon: const Icon(
+                                          Icons.folder_open,
+                                          size: 20,
+                                        ),
+                                        tooltip: '浏览文件',
+                                        visualDensity: VisualDensity.compact,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(
+                                          minWidth: 36,
+                                          minHeight: 36,
+                                        ),
+                                        onPressed: () => _enterFolder(name),
+                                      )
+                                    : (isDir
+                                        ? null
+                                        : IconButton(
+                                            icon: const Icon(
+                                              Icons.share_outlined,
+                                              size: 18,
+                                            ),
+                                            tooltip: '分享到互联网',
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(
+                                              minWidth: 36,
+                                              minHeight: 36,
+                                            ),
+                                            onPressed: () =>
+                                                _shareFile(context, name),
+                                          )),
+                              ),
+                              SizedBox(
+                                width: cols.size,
+                                child: Text(
+                                  isDir ? '-' : _sizeStr(f['size']),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                              if (cols.showCtime)
+                                SizedBox(
+                                  width: cols.date,
+                                  child: Text(
+                                    _dateStr(f['ctime']),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                              SizedBox(
+                                width: cols.date,
+                                child: Text(
+                                  _dateStr(f['modTime'] ?? f['modified']),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                                 ),
                               ),
                             ],
-                          ],
+                          ),
                         ),
                       ),
-                      SizedBox(
-                        width: 40,
-                        child: isApp
-                            ? IconButton(
-                                icon: const Icon(Icons.folder_open, size: 20),
-                                tooltip: '浏览文件',
-                                visualDensity: VisualDensity.compact,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                  minWidth: 36,
-                                  minHeight: 36,
-                                ),
-                                onPressed: () => _enterFolder(name),
-                              )
-                            : (isDir
-                                ? null
-                                : IconButton(
-                                    icon: const Icon(Icons.share_outlined, size: 18),
-                                    tooltip: '分享到互联网',
-                                    visualDensity: VisualDensity.compact,
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                    onPressed: () => _shareFile(context, name),
-                                  )),
-                      ),
-                      SizedBox(width: 100, child: Text(isDir ? '-' : _sizeStr(f['size']),
-                        style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant))),
-                      SizedBox(width: 140, child: Text(_dateStr(f['ctime']),
-                        style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant))),
-                      SizedBox(width: 140, child: Text(_dateStr(f['modTime'] ?? f['modified']),
-                        style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant))),
-                    ]),
-                  ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
-        ),
-      ]),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 

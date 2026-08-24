@@ -37,9 +37,16 @@ class FolderSyncBanner extends StatelessWidget {
     Color color;
     String title;
     IconData icon;
+    final pathMissing = info['pathMissing'] == true;
     if (status == 'error' || pullErrors > 0 || needsPathFix) {
       color = Colors.red;
-      title = needsPathFix ? '目录无写入权限' : '同步出错';
+      if (needsPathFix && pathMissing) {
+        title = '同步目录不存在';
+      } else if (needsPathFix) {
+        title = '目录无写入权限';
+      } else {
+        title = '同步出错';
+      }
       icon = Icons.error_outline;
     } else if (stalled) {
       color = Colors.amber.shade800;
