@@ -20,6 +20,7 @@
 #   ./scripts/release.sh torrents v0.0.3  # 指定版本（仅校验 tag，链来自当前官网 API）
 #   ./scripts/release.sh download         # 下载四端包 + .torrent 到 dist-release/（默认最新 tag）
 #   ./scripts/release.sh download v0.0.4  # 指定 tag
+#   ./scripts/release.sh --proxy           # 等待 CI / gh 走本机代理（同 download）
 #   DATAKEEP_USE_PROXY=1 ./scripts/release.sh download v0.0.4  # 走本机代理（默认 127.0.0.1:7897）
 #   ./scripts/release.sh download v0.0.6 --torrents-only      # 仅补拉 .torrent（安装包已有时）
 #
@@ -271,6 +272,36 @@ sync_market_from_github() {
 
 resolve_repo() {
   git -C "$ROOT" remote get-url origin | sed -E 's#.*github.com[:/]([^/]+/[^/.]+)(\.git)?#\1#'
+}
+
+# 查找 tag 发版触发的 workflow run（commit / tag / 最近列表 三重兜底）
+find_workflow_run_id() {
+  local repo="$1" tag="$2" sha="$3"
+  local id=""
+
+  id="$(gh run list --repo "$repo" --workflow=build.yml --commit "$sha" --limit 1 \
+    --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
+  if [[ -n "$id" && "$id" != "null" ]]; then
+    printf '%s' "$id"
+    return 0
+  fi
+
+  id="$(gh run list --repo "$repo" --workflow=build.yml --branch "$tag" --limit 1 \
+    --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
+  if [[ -n "$id" && "$id" != "null" ]]; then
+    printf '%s' "$id"
+    return 0
+  fi
+
+  id="$(gh run list --repo "$repo" --workflow=build.yml --limit 15 \
+    --json databaseId,headBranch,headSha -q \
+    ".[] | select(.headBranch==\"$tag\" or .headSha==\"$sha\") | .databaseId" 2>/dev/null | head -1 || true)"
+  if [[ -n "$id" && "$id" != "null" ]]; then
+    printf '%s' "$id"
+    return 0
+  fi
+
+  return 1
 }
 
 resolve_release_tag() {
@@ -738,18 +769,39 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 0
 fi
 
-log "等待 workflow 出现…"
+apply_download_proxy
+
+if ! gh auth status >/dev/null 2>&1; then
+  warn "gh 未登录，无法跟踪 CI。请运行: gh auth login"
+  warn "或设置 GH_TOKEN；发版与 CI 本身不受影响，请到 Actions 页查看"
+  exit 0
+fi
+
+RELEASE_SHA="$(git -C "$ROOT" rev-parse HEAD)"
+log "等待 workflow 出现（commit ${RELEASE_SHA:0:7} / $TAG）…"
 RUN_ID=""
-for _ in $(seq 1 30); do
-  RUN_ID="$(gh run list --repo "$REPO" --workflow=build.yml --branch "$TAG" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
-  if [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]]; then
+GH_ERR=""
+for _ in $(seq 1 45); do
+  if RUN_ID="$(find_workflow_run_id "$REPO" "$TAG" "$RELEASE_SHA")"; then
     break
+  fi
+  if [[ -z "$GH_ERR" ]]; then
+    GH_ERR="$(gh run list --repo "$REPO" --workflow=build.yml --limit 1 2>&1 >/dev/null || true)"
   fi
   sleep 2
 done
 
 if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
-  warn "暂未查到 run，请稍后: gh run list --workflow=build.yml"
+  warn "暂未通过 gh 查到 workflow run（CI 可能已在跑，见上方 Actions 链接）"
+  if [[ -n "$GH_ERR" ]]; then
+    warn "gh 报错: ${GH_ERR//$'\n'/; }"
+    if [[ "$GH_ERR" == *"auth"* || "$GH_ERR" == *"401"* ]]; then
+      warn "请先: gh auth login  或 export GH_TOKEN=..."
+    elif [[ "$GH_ERR" == *"timeout"* || "$GH_ERR" == *"connect"* || "$GH_ERR" == *"TLS"* ]]; then
+      warn "GitHub API 可能需代理: DATAKEEP_USE_PROXY=1 ./scripts/release.sh  或 export https_proxy=..."
+    fi
+  fi
+  warn "手动跟踪: gh run list --repo $REPO --workflow=build.yml --commit $RELEASE_SHA"
   exit 0
 fi
 
