@@ -242,7 +242,7 @@
 				3399D490228B24CF009A79C7 /* ShellScript */,
 				EF9E1CB9B1B270FF5FC7A987 /* [CP] Embed Pods Frameworks */,
 				A1B2C3D4E5F60718293A4B5C /* Bundle Syncthing */,
-				7A19EFD461B88EEA9C5F7B47 /* Embed CEF Helpers */,
+				D34956A96949105231F0EF34 /* Embed CEF Helpers */,
 			);
 			buildRules = (
 			);
@@ -363,25 +363,6 @@
 			shellPath = /bin/sh;
 			shellScript = "\"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh && touch Flutter/ephemeral/tripwire";
 		};
-		7A19EFD461B88EEA9C5F7B47 /* Embed CEF Helpers */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Embed CEF Helpers";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/bash;
-			shellScript = "bash \"${SRCROOT}/Flutter/ephemeral/.symlinks/plugins/webview_cef/macos/scripts/embed_cef_helpers.sh\"";
-		};
 		A1B2C3D4E5F60718293A4B5C /* Bundle Syncthing */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -402,6 +383,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
 			shellScript = "bash \"${SRCROOT}/Runner/bundle_syncthing.sh\"\n";
+		};
+		D34956A96949105231F0EF34 /* Embed CEF Helpers */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed CEF Helpers";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "bash \"${SRCROOT}/Flutter/ephemeral/.symlinks/plugins/webview_cef/macos/scripts/embed_cef_helpers.sh\"";
 		};
 		D65F67B3E4DC67EBE28333F8 /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;

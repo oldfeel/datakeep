@@ -77,7 +77,7 @@ SPEC CHECKSUMS:
   shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
   url_launcher_macos: f87a979182d112f911de6820aefddaf56ee9fbfd
   wakelock_plus: 917609be14d812ddd9e9528876538b2263aaa03b
-  webview_cef: 6e0b9bd5f5f7eb906aeeb09a2c198d5d5d710c77
+  webview_cef: 7ae5d3c240dcab1e09d11b876786223432c7729c
   webview_flutter_wkwebview: 8ebf4fded22593026f7dbff1fbff31ea98573c8d
 
 PODFILE CHECKSUM: f2c1454e0ed6905b2c094acdb4548bde67728f1f
