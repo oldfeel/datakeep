@@ -16,6 +16,8 @@ import '../../apps/open_app.dart';
 import '../../apps/screens/market_screen.dart';
 import '../../../shared/widgets/add_item_dialog.dart';
 import '../../../shared/widgets/peer_folder_status_view.dart';
+import '../../../shared/constants/app_info.dart';
+import '../../../shared/widgets/app_logo.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -46,7 +48,13 @@ class _HomeScreenState extends State<HomeScreen> {
             _showMenu(context);
           },
         ),
-        title: const Text('DataKeep'),
+        title: const Row(
+          children: [
+            AppLogo(size: 28),
+            SizedBox(width: 8),
+            Text(kAppDisplayName),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -506,9 +514,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.pop(context);
                 showAboutDialog(
                   context: context,
-                  applicationName: 'DataKeep',
+                  applicationName: kAppDisplayName,
                   applicationVersion: '1.0.0',
-                  applicationIcon: const Icon(Icons.sync),
+                  applicationIcon: const AppLogo(size: 48),
                 );
               },
             ),

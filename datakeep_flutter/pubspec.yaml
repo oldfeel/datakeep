@@ -1,5 +1,5 @@
 name: datakeep_flutter
-description: "DataKeep - 跨平台文件同步应用，基于 Flutter 开发"
+description: "文件管理 - 跨平台文件同步应用，基于 Flutter 开发"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -118,14 +118,27 @@ dev_dependencies:
   # 启动图标生成
   flutter_launcher_icons: ^0.14.4
 
-# 启动图标配置（Android / Linux）
+# 启动图标配置（源图：assets/icons/app_icon.png）
 flutter_launcher_icons:
   android: true
-  ios: false
+  ios: true
+  remove_alpha_ios: true
   image_path: assets/icons/app_icon.png
   min_sdk_android: 21
   adaptive_icon_background: "#2196F3"
   adaptive_icon_foreground: assets/icons/app_icon.png
+  macos:
+    generate: true
+    image_path: assets/icons/app_icon.png
+  windows:
+    generate: true
+    image_path: assets/icons/app_icon.png
+    icon_size: 256
+  web:
+    generate: true
+    image_path: assets/icons/app_icon.png
+    background_color: "#2196F3"
+    theme_color: "#2196F3"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

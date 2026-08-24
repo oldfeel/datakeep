@@ -13,6 +13,8 @@ import 'file_preview_page.dart';
 import '../../shared/widgets/accept_pending_folder_dialog.dart';
 import '../../shared/utils/open_syncthing_gui.dart';
 import '../../shared/widgets/folder_edit_dialog.dart';
+import '../../shared/constants/app_info.dart';
+import '../../shared/widgets/app_logo.dart';
 import '../../features/apps/screens/market_screen.dart';
 
 class DesktopHomePage extends StatefulWidget {
@@ -438,11 +440,11 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
         children: [
           Row(
             children: [
-              Icon(Icons.sync, color: Theme.of(context).colorScheme.primary),
+              const AppLogo(size: 28),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'DataKeep',
+                  kAppDisplayName,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.bold,
@@ -734,9 +736,9 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.sync, size: 80, color: Theme.of(context).colorScheme.primary.withOpacity(0.3)),
+          const AppBrandLogo(height: 96),
           const SizedBox(height: 24),
-          Text('DataKeep', style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+          Text(kAppDisplayName, style: Theme.of(context).textTheme.headlineMedium?.copyWith(
             fontWeight: FontWeight.bold,
           )),
           const SizedBox(height: 8),
@@ -888,7 +890,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
 
   String _discoveryStatusText(List<Map<String, String>> available) {
     if (_discoveredDevices.isEmpty) {
-      return '未发现设备：请确认对方已启动 DataKeep 且在同一 WiFi';
+      return '未发现设备：请确认对方已启动文件管理且在同一 WiFi';
     }
     if (available.isEmpty) {
       return '已发现 ${_discoveredDevices.length} 个设备，均已添加';

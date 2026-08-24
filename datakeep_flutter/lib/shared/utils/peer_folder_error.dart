@@ -4,7 +4,7 @@ enum PeerFolderErrorKind {
   unpaired,
   /// Syncthing 尚未连上
   offline,
-  /// 对端 DataKeep 服务不可达等
+  /// 对端文件管理服务不可达等
   unreachable,
   other,
 }

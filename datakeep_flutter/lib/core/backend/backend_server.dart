@@ -342,7 +342,7 @@ class BackendServer {
     if (peer.containsKey('error')) {
       return _json({
         'code': 1008,
-        'data': peer['error']?.toString() ?? '对端 DataKeep 不可达',
+        'data': peer['error']?.toString() ?? '对端文件管理不可达',
       }, status: 503);
     }
     if (peer['code'] != 0) {
@@ -599,7 +599,7 @@ class BackendServer {
     if (ip == null) {
       return Response(
         503,
-        body: '无法解析对端局域网地址（需同网且对端已打开 DataKeep）',
+        body: '无法解析对端局域网地址（需同网且对端已打开文件管理）',
       );
     }
     final localId = await _api.getLocalDeviceId();
@@ -671,7 +671,7 @@ class BackendServer {
     if (ip == null) {
       return Response(
         503,
-        body: '无法解析对端局域网地址（需同网且对端已打开 DataKeep）',
+        body: '无法解析对端局域网地址（需同网且对端已打开文件管理）',
       );
     }
     final localId = await _api.getLocalDeviceId();
@@ -721,7 +721,7 @@ class BackendServer {
     if (ip == null) {
       return Response(
         503,
-        body: '无法解析对端局域网地址（需同网且对端已打开 DataKeep）',
+        body: '无法解析对端局域网地址（需同网且对端已打开文件管理）',
       );
     }
     final localId = await _api.getLocalDeviceId();
@@ -775,7 +775,7 @@ class BackendServer {
     if (ip == null) {
       return Response(
         503,
-        body: '无法解析对端局域网地址（需同网且对端已打开 DataKeep）',
+        body: '无法解析对端局域网地址（需同网且对端已打开文件管理）',
       );
     }
     final localId = await _api.getLocalDeviceId();

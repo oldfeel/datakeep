@@ -115,7 +115,7 @@ class ServiceControlWidget extends StatelessWidget {
                 const Divider(height: 1),
                 const SizedBox(height: 8),
                 Text(
-                  '忽略规则、限速、中继等高级项请使用原版管理页，DataKeep 不自建完整设置中心。',
+                  '忽略规则、限速、中继等高级项请使用原版管理页，文件管理不自建完整设置中心。',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),

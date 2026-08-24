@@ -57,7 +57,7 @@ Future<void> _showMobileEscapeHatch(BuildContext context) async {
       title: const Text('高级配置'),
       content: const Text(
         '忽略规则、限速、中继、版本控制等高级项请使用原版 Syncthing 管理页，'
-        'DataKeep 不自建完整设置中心。\n\n'
+        '文件管理不自建完整设置中心。\n\n'
         '本机地址：\n$syncthingGuiUrl\n\n'
         '可在同一设备的浏览器中打开（需 Syncthing 已运行）。',
       ),

@@ -869,7 +869,7 @@ class ApiService {
     debugPrint('API GET preview: $uri');
     return await _httpClient.get(uri).timeout(
       const Duration(minutes: 3),
-      onTimeout: () => throw Exception('预览超时（对端需同网且已打开 DataKeep）'),
+      onTimeout: () => throw Exception('预览超时（对端需同网且已打开文件管理）'),
     );
   }
 
@@ -983,7 +983,7 @@ class ApiService {
     final request = http.Request('GET', uri);
     final streamed = await _httpClient.send(request).timeout(
       const Duration(seconds: 30),
-      onTimeout: () => throw Exception('预览连接超时（对端需同网且已打开 DataKeep）'),
+      onTimeout: () => throw Exception('预览连接超时（对端需同网且已打开文件管理）'),
     );
 
     if (streamed.statusCode == 413) {
@@ -1072,7 +1072,7 @@ class ApiService {
     debugPrint('API GET thumbnail: $uri');
     final resp = await _httpClient.get(uri).timeout(
       const Duration(seconds: 90),
-      onTimeout: () => throw Exception('缩略图超时（对端需同网且已打开 DataKeep）'),
+      onTimeout: () => throw Exception('缩略图超时（对端需同网且已打开文件管理）'),
     );
     if (resp.statusCode != 200) return null;
     if (resp.bodyBytes.length > kMaxThumbnailProxyBytes) return null;

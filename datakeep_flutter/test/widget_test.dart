@@ -4,6 +4,6 @@ import 'package:datakeep_flutter/app.dart';
 void main() {
   testWidgets('App renders', (WidgetTester tester) async {
     await tester.pumpWidget(const DataKeepApp());
-    expect(find.text('DataKeep'), findsWidgets);
+    expect(find.text('文件管理'), findsWidgets);
   });
 }

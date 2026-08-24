@@ -1,11 +1,11 @@
 {
-    "name": "datakeep_flutter",
-    "short_name": "datakeep_flutter",
+    "name": "文件管理",
+    "short_name": "文件管理",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#2196F3",
+    "theme_color": "#2196F3",
+    "description": "跨平台文件管理与同步",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

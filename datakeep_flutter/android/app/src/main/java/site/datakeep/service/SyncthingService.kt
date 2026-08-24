@@ -27,7 +27,7 @@ class SyncthingService : Service() {
         private const val TAG = "SyncthingService"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "syncthing_service_channel"
-        private const val CHANNEL_NAME = "Syncthing Service"
+        private const val CHANNEL_NAME = "文件同步"
 
         const val ACTION_START = "site.datakeep.service.START"
         const val ACTION_STOP = "site.datakeep.service.STOP"
@@ -191,7 +191,7 @@ class SyncthingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("DataKeep")
+            .setContentTitle("文件管理")
             .setContentText(content)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)

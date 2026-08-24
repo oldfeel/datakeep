@@ -208,7 +208,7 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
     } catch (e) {
       return Response(
         503,
-        body: '对端不可达：$e（需同网且对端已打开 DataKeep）',
+        body: '对端不可达：$e（需同网且对端已打开文件管理）',
       );
     }
   }

@@ -242,7 +242,7 @@
 				3399D490228B24CF009A79C7 /* ShellScript */,
 				EF9E1CB9B1B270FF5FC7A987 /* [CP] Embed Pods Frameworks */,
 				A1B2C3D4E5F60718293A4B5C /* Bundle Syncthing */,
-				D7BA6C3E7B7C9F6C406C41FB /* Embed CEF Helpers */,
+				7A19EFD461B88EEA9C5F7B47 /* Embed CEF Helpers */,
 			);
 			buildRules = (
 			);
@@ -363,6 +363,25 @@
 			shellPath = /bin/sh;
 			shellScript = "\"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh && touch Flutter/ephemeral/tripwire";
 		};
+		7A19EFD461B88EEA9C5F7B47 /* Embed CEF Helpers */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed CEF Helpers";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "bash \"${SRCROOT}/Flutter/ephemeral/.symlinks/plugins/webview_cef/macos/scripts/embed_cef_helpers.sh\"";
+		};
 		A1B2C3D4E5F60718293A4B5C /* Bundle Syncthing */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -405,25 +424,6 @@
 			shellPath = /bin/sh;
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
-		};
-		D7BA6C3E7B7C9F6C406C41FB /* Embed CEF Helpers */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Embed CEF Helpers";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/bash;
-			shellScript = "bash \"${SRCROOT}/Flutter/ephemeral/.symlinks/plugins/webview_cef/macos/scripts/embed_cef_helpers.sh\"";
 		};
 		EF9E1CB9B1B270FF5FC7A987 /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;

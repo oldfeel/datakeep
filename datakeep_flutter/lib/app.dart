@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:io';
 import 'package:provider/provider.dart';
 import 'shared/themes/app_theme.dart';
+import 'shared/constants/app_info.dart';
 import 'features/folders/providers/folder_provider.dart';
 import 'features/devices/providers/device_provider.dart';
 import 'core/services/syncthing_service_manager.dart';
@@ -24,7 +25,7 @@ class DataKeepApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => SyncthingServiceManager()),
       ],
       child: MaterialApp(
-        title: 'DataKeep - 文件同步',
+        title: kAppDisplayName,
         theme: AppTheme.lightTheme,
         darkTheme: AppTheme.darkTheme,
         themeMode: ThemeMode.system,
