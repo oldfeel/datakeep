@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
+import 'package:provider/provider.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_static/shelf_static.dart';
@@ -14,7 +15,11 @@ import 'package:webview_cef/webview_cef.dart' as cef;
 import 'package:webview_flutter/webview_flutter.dart' as wf;
 
 import '../../../core/services/api_service.dart';
+import '../../folders/providers/folder_provider.dart';
+import '../delete_app.dart';
+import '../app_about.dart';
 import '../../../shared/utils/app_dir.dart';
+import '../../../shared/utils/app_manifest.dart';
 import '../../../shared/utils/open_url_external.dart';
 
 /// 在本地 HTTP 服务上打开应用目录（入口默认 index.html）
@@ -42,6 +47,9 @@ class AppRunnerPage extends StatefulWidget {
   /// 对端 ACL 为「同步」时可写；「只读」为 false
   final bool peerWritable;
 
+  /// 已注册的 Syncthing 文件夹 id（本机顶层应用删除用）
+  final String? folderId;
+
   const AppRunnerPage({
     super.key,
     required this.appPath,
@@ -51,6 +59,7 @@ class AppRunnerPage extends StatefulWidget {
     this.peerFolderId,
     this.appRelPath = '',
     this.peerWritable = false,
+    this.folderId,
   });
 
   bool get isPeerMode =>
@@ -75,12 +84,14 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
   bool _useWebView = false;
   bool _useCef = false;
   bool _pulling = false;
+  bool _deleting = false;
 
   Timer? _revTimer;
   int? _lastAppRev;
   int? _lastDataRev;
   DateTime? _localDataWriteAt;
   bool _reloadingApp = false;
+  AppManifest? _manifest;
 
   static bool _cefManagerReady = false;
 
@@ -733,6 +744,21 @@ window.__DATAKEEP_READONLY=true;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  Future<void> _showAbout() async {
+    final manifest =
+        _manifest ?? AppManifest.tryReadFromDirectory(widget.appPath);
+    if (manifest == null) {
+      _snack('无法读取应用信息（app.json）');
+      return;
+    }
+    if (!mounted) return;
+    await showAppAboutDialog(
+      context,
+      manifest: manifest,
+      installPath: _isPeer ? null : widget.appPath,
+    );
+  }
+
   /// 触发所属同步文件夹扫描，等待局域网对端同步落盘后对比 revision。
   Future<void> _refreshFromPeers() async {
     if (_isPeer) {
@@ -865,6 +891,8 @@ window.__DATAKEEP_READONLY=true;
         return;
       }
 
+      _manifest = AppManifest.tryReadFromDirectory(widget.appPath);
+
       var entryRel = widget.entry;
       final meta = File(p.join(widget.appPath, 'app.json'));
       if (meta.existsSync()) {
@@ -955,6 +983,38 @@ window.__DATAKEEP_READONLY=true;
     }
   }
 
+  Future<void> _deleteApp() async {
+    if (_isPeer || widget.appPath.isEmpty || _deleting) return;
+    final ok = await confirmDeleteApp(context, widget.title);
+    if (!ok || !mounted) return;
+
+    final folderProvider = context.read<FolderProvider>();
+    setState(() => _deleting = true);
+    _revTimer?.cancel();
+    await _server?.close(force: true);
+    _server = null;
+
+    try {
+      await deleteAppInstallation(
+        folderProvider,
+        appPath: widget.appPath,
+        folderId: widget.folderId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已删除「${widget.title}」')),
+      );
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
+      );
+      setState(() => _deleting = false);
+      unawaited(_start());
+    }
+  }
+
   @override
   void dispose() {
     _revTimer?.cancel();
@@ -975,7 +1035,7 @@ window.__DATAKEEP_READONLY=true;
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(widget.title),
+            Text(_manifest?.displayName(fallback: widget.title) ?? widget.title),
             if (_isPeer)
               Text(
                 _peerWritable ? '对端同步（可写）' : '对端只读',
@@ -989,6 +1049,27 @@ window.__DATAKEEP_READONLY=true;
           ],
         ),
         actions: [
+          if (!_isPeer && widget.appPath.isNotEmpty)
+            IconButton(
+              tooltip: '关于',
+              onPressed: _showAbout,
+              icon: const Icon(Icons.info_outline),
+            ),
+          if (!_isPeer && widget.appPath.isNotEmpty)
+            IconButton(
+              tooltip: '删除应用',
+              onPressed: _deleting ? null : () => unawaited(_deleteApp()),
+              icon: _deleting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      Icons.delete_outline,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+            ),
           if (_url != null && !_isPeer)
             IconButton(
               tooltip: _pulling ? '正在对比其他设备…' : '刷新：对比其他设备数据',

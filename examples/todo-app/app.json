@@ -1,7 +1,7 @@
 {
-  "id": "todo",
+  "id": "site.datakeep.todo",
   "name": "待办清单",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "entry": "index.html",
   "description": "待办示例：todo.db + 冲突合并；数据/代码变更自动刷新"
 }

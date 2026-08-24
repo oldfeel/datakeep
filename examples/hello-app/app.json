@@ -1,7 +1,7 @@
 {
-  "id": "hello",
-  "name": "Hello DataKeep",
-  "version": "1.0.0",
+  "id": "site.datakeep.hello",
+  "name": "入门示例",
+  "version": "1.0.1",
   "entry": "index.html",
   "description": "DataKeep 应用市场示例"
 }

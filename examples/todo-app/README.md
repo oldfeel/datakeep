@@ -1,4 +1,4 @@
-# 待办清单（todo）
+# 待办清单
 
 符合 [应用包规范](../../docs/app-package-spec.md)。
 
@@ -29,7 +29,7 @@ todo.sync-conflict-YYYYMMDD-HHMMSS-XXXXX.db
 
 ```bash
 cd examples && ./pack.sh todo-app
-# => dist/todo-1.2.1.zip
+# => dist/site.datakeep.todo-1.2.3.zip
 ```
 
 上架：管理后台「应用」上传 zip。

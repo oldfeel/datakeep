@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_service.dart';
 import '../../shared/utils/app_dir.dart';
+import '../../shared/utils/app_manifest.dart';
 
 class MarketAppInfo {
   final String appKey;
@@ -250,17 +251,31 @@ class MarketService {
       return;
     }
 
+    final manifest = AppManifest.tryReadFromDirectory(target.path);
+    final displayName = manifest?.displayName(fallback: app.name) ?? app.name;
+    if (displayName.isEmpty) {
+      throw Exception('应用包缺少有效 name（app.json）');
+    }
+
     final already = existing.any((f) => f.id == folderId);
     if (!already) {
       onProgress?.call('注册同步文件夹…');
       await ApiService.createFolder(
         id: folderId,
-        name: app.name,
+        name: displayName,
         path: target.path,
         kind: 'app',
       );
     } else {
       await ApiService.setFolderKind(folderId, 'app');
+      final folder = existing.firstWhere((f) => f.id == folderId);
+      if (folder.name != displayName || folder.path != target.path) {
+        await ApiService.updateFolder(
+          folderId: folderId,
+          name: displayName,
+          path: target.path,
+        );
+      }
       debugPrint('应用文件夹已存在，已更新 kind: $folderId');
     }
 

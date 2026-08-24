@@ -179,9 +179,12 @@ class FoldersScreen extends StatelessWidget {
                         );
                       }
                     : null,
-                onTap: () {
+                onTap: () async {
                   if (folder.isApp) {
-                    openFolderApp(context, folder);
+                    final deleted = await openFolderApp(context, folder);
+                    if (deleted == true && context.mounted) {
+                      await context.read<FolderProvider>().fetchFolders(silent: true);
+                    }
                     return;
                   }
                   Navigator.of(context).push(
@@ -237,9 +240,12 @@ class FoldersScreen extends StatelessWidget {
                         );
                       }
                     : null,
-                onTap: () {
+                onTap: () async {
                   if (folder.isApp) {
-                    openFolderApp(context, folder);
+                    final deleted = await openFolderApp(context, folder);
+                    if (deleted == true && context.mounted) {
+                      await context.read<FolderProvider>().fetchFolders(silent: true);
+                    }
                     return;
                   }
                   Navigator.of(context).push(

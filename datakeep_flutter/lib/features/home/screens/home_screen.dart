@@ -406,9 +406,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     }
                   : null,
-              onTap: () {
+              onTap: () async {
                 if (folder.isApp) {
-                  openFolderApp(context, folder);
+                  final deleted = await openFolderApp(context, folder);
+                  if (deleted == true && context.mounted && _selectedDeviceId != null) {
+                    await context.read<FolderProvider>().fetchDeviceFolders(
+                          _selectedDeviceId!,
+                          silent: true,
+                        );
+                  }
                   return;
                 }
                 Navigator.of(context).push(

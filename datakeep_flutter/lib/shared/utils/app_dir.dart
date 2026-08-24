@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../../core/models/folder.dart';
 import '../../features/apps/screens/app_runner_page.dart';
+import '../../shared/utils/app_manifest.dart';
 
 /// 规范化路径便于比较（去尾斜杠）
 String normalizeFsPath(String path) {
@@ -63,33 +64,44 @@ Folder? findRegisteredApp(List<Folder> folders, String absolutePath) {
   return null;
 }
 
-/// 打开应用：优先用已注册 Folder，否则直接用路径
-void openAppAtPath(
+/// 打开应用：优先用已注册 Folder，否则直接用路径。
+/// 删除应用后返回 `true`。
+Future<bool?> openAppAtPath(
   BuildContext context, {
   required String absolutePath,
   String? title,
   Folder? folder,
-}) {
+}) async {
   final f = folder;
   if (f != null && f.isApp && f.path.isNotEmpty) {
-    Navigator.of(context).push(
+    final manifest = AppManifest.tryReadFromDirectory(f.path);
+    final displayTitle = manifest?.displayName(fallback: f.name) ?? f.name;
+    return Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => AppRunnerPage(appPath: f.path, title: f.name),
+        builder: (_) => AppRunnerPage(
+          appPath: f.path,
+          title: displayTitle,
+          folderId: f.id,
+        ),
       ),
     );
-    return;
   }
   if (absolutePath.isEmpty || !isAppDirectory(absolutePath)) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('不是有效的应用目录')),
     );
-    return;
+    return null;
   }
-  Navigator.of(context).push(
+  final manifest = AppManifest.tryReadFromDirectory(absolutePath);
+  final displayTitle =
+      manifest?.displayName(fallback: title ?? p.basename(absolutePath)) ??
+      title ??
+      p.basename(absolutePath);
+  return Navigator.of(context).push<bool>(
     MaterialPageRoute(
       builder: (_) => AppRunnerPage(
         appPath: absolutePath,
-        title: title ?? p.basename(absolutePath),
+        title: displayTitle,
       ),
     ),
   );

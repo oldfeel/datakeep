@@ -18,22 +18,22 @@ cd examples
 ```
 
 - `app.json` 的 `id` / `version` 决定 zip 文件名。
-- 改逻辑或数据协议后务必升 `version` 再打包上架。
+- 改 `id` 或逻辑/数据协议后务必升 `version` 再打包上架；`id` 变更视为新应用，需在市场新建条目。
 
 ## app.json
 
 ```json
 {
-  "id": "todo",
+  "id": "site.datakeep.todo",
   "name": "待办清单",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "entry": "index.html",
   "description": "…",
   "syncIgnore": []
 }
 ```
 
-- `id`：稳定、小写字母/数字/连字符；文件夹 id 为 `app-<id>`。
+- `id`：稳定包名（至少两段，如 `site.datakeep.todo`）；文件夹 id 为 `app-<id>`。
 - `syncIgnore`：可选。**仅**对本机缓存、且**不是**跨设备同步源的文件使用（见下节）。
 
 ## 运行环境
@@ -110,6 +110,6 @@ Syncthing 同步的是**文件**，不懂表行。应用必须自己处理「行
 
 | 目录 | 说明 |
 |------|------|
-| `hello-app` | 最小包结构 |
-| `todo-app` | SQLite + 冲突合并 + 自动刷新（范本） |
-| `ledger-app` | SQLite 记账 + 自动刷新（可按 todo 同样补齐 id/冲突合并） |
+| `hello-app` | 入门示例：最小包结构 |
+| `todo-app` | 待办清单：SQLite + 冲突合并 + 自动刷新（范本） |
+| `ledger-app` | 简单记账：SQLite 记账 + 自动刷新 |

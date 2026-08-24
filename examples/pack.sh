@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 打包 examples/*-app 到 examples/dist/<id>-<version>.zip
+# 打包 examples/*-app 到 examples/dist/<id>-<version>.zip（id 为包名，如 site.datakeep.hello）
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 DIST="$ROOT/dist"

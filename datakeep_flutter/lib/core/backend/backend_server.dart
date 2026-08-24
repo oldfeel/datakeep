@@ -14,6 +14,7 @@ import 'folder_kind_store.dart';
 import '../../shared/utils/file_types.dart';
 import '../../shared/utils/preview_limits.dart';
 import '../../shared/utils/sync_folder_paths.dart';
+import '../../shared/utils/app_manifest.dart';
 import '../services/thumbnail_service.dart';
 
 class BackendServer {
@@ -1778,10 +1779,22 @@ class BackendServer {
     final sync = folderId.isNotEmpty
         ? await _api.getFolderSyncSummary(folderId)
         : <String, dynamic>{'status': 'unknown', 'completion': 0.0};
+    var label = map['label']?.toString() ?? map['id']?.toString() ?? '';
+    final path = map['path']?.toString() ?? '';
+    final kind = _kind.getKind(folderId);
+    Map<String, dynamic>? appMeta;
+    if (kind == 'app' && path.isNotEmpty) {
+      final manifest = AppManifest.tryReadFromDirectory(path);
+      if (manifest != null) {
+        final display = manifest.displayName(fallback: label);
+        if (display.isNotEmpty) label = display;
+        appMeta = manifest.toJson();
+      }
+    }
     return {
       'id': folderId,
-      'label': map['label'] ?? map['id'] ?? '',
-      'path': map['path'] ?? '',
+      'label': label,
+      'path': path,
       'type': map['type']?.toString() ?? 'sendreceive',
       'paused': map['paused'] == true,
       'sharedDevices': (map['sharedDevices'] as List?) ?? [],
@@ -1799,7 +1812,8 @@ class BackendServer {
       'inSyncBytes': sync['inSyncBytes'] ?? 0,
       'inBps': sync['inBps'] ?? 0,
       'outBps': sync['outBps'] ?? 0,
-      'kind': _kind.getKind(folderId),
+      'kind': kind,
+      if (appMeta != null) 'appMeta': appMeta,
     };
   }
 

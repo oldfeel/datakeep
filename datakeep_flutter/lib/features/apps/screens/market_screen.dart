@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../core/services/market_service.dart';
 import '../../../features/folders/providers/folder_provider.dart';
 import 'app_runner_page.dart';
+import '../delete_app.dart';
 
 class MarketScreen extends StatefulWidget {
   const MarketScreen({super.key});
@@ -108,24 +109,25 @@ class _MarketScreenState extends State<MarketScreen> {
   Future<void> _open(MarketAppInfo app) async {
     final path = await MarketService.installPathFor(app.appKey);
     if (!mounted) return;
-    await Navigator.of(context).push(
+    await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => AppRunnerPage(appPath: path, title: app.name),
+        builder: (_) => AppRunnerPage(
+          appPath: path,
+          title: app.name,
+          folderId: app.folderId,
+        ),
       ),
     );
+    if (!mounted) return;
+    await context.read<FolderProvider>().fetchFolders(silent: true);
   }
 
   Future<void> _uninstall(MarketAppInfo app) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('卸载应用'),
-        content: Text('确定卸载 ${app.name}？将删除同步文件夹与本地文件。'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('卸载')),
-        ],
-      ),
+    final ok = await confirmDeleteApp(
+      context,
+      app.name,
+      title: '卸载应用',
+      actionLabel: '卸载',
     );
     if (ok != true) return;
     setState(() => _busy.add(app.appKey));

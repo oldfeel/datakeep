@@ -8,6 +8,7 @@ import '../../../core/services/android_storage_service.dart';
 import '../../../core/models/folder.dart';
 import '../../../features/folders/providers/folder_provider.dart';
 import '../../../shared/utils/app_dir.dart';
+import '../../../shared/utils/app_manifest.dart';
 import '../../../shared/utils/file_types.dart';
 import '../../../shared/utils/file_opener.dart';
 import '../../../shared/utils/local_file_path.dart';
@@ -205,7 +206,17 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     return isAppDirectory(abs);
   }
 
-  void _openEntryApp(String name) {
+  String _entryDisplayName(String name, [Map<String, dynamic>? file]) {
+    if (!_entryIsApp(name, file)) return name;
+    if (_folderInfo?.isLocal == true) {
+      final abs = p.join(_absoluteCurrentPath, name);
+      final manifest = AppManifest.tryReadFromDirectory(abs);
+      if (manifest != null) return manifest.displayName(fallback: name);
+    }
+    return name;
+  }
+
+  Future<void> _openEntryApp(String name) async {
     final rel = _currentPath.isEmpty ? name : '${_currentPath.join('/')}/$name';
     if (_folderInfo?.isLocal != true) {
       openPeerApp(
@@ -223,12 +234,15 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       context.read<FolderProvider>().folders,
       abs,
     );
-    openAppAtPath(
+    final deleted = await openAppAtPath(
       context,
       absolutePath: abs,
       title: registered?.name ?? name,
       folder: registered,
     );
+    if (deleted == true && mounted) {
+      await _loadFiles();
+    }
   }
 
   Future<void> _previewFile(String filePath) async {
@@ -668,6 +682,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 
   Widget _buildFileItem(Map<String, dynamic> file, bool isDesktop, bool isDir) {
     final name = file['name'] as String? ?? '未知';
+    final displayName = _entryDisplayName(name, file);
     final size = file['size'] as int? ?? 0;
     final modTime = file['modTime'] as int? ?? 0;
     final isApp = isDir && _entryIsApp(name, file);
@@ -688,7 +703,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       ),
       title: Row(
         children: [
-          Flexible(child: Text(name)),
+          Flexible(child: Text(displayName)),
           if (isApp) ...[
             const SizedBox(width: 8),
             Text(

@@ -3,9 +3,10 @@ import 'package:flutter/material.dart';
 import '../../core/models/folder.dart';
 import '../../features/apps/screens/app_runner_page.dart';
 import '../../shared/utils/app_dir.dart';
+import '../../shared/utils/app_manifest.dart';
 
-void openFolderApp(BuildContext context, Folder folder) {
-  if (!folder.isApp) return;
+Future<bool?> openFolderApp(BuildContext context, Folder folder) async {
+  if (!folder.isApp) return null;
   if (!folder.isLocal) {
     openPeerApp(
       context,
@@ -15,19 +16,22 @@ void openFolderApp(BuildContext context, Folder folder) {
       title: folder.name,
       writable: folder.isSyncAccess,
     );
-    return;
+    return null;
   }
   if (folder.path.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('应用路径为空')),
     );
-    return;
+    return null;
   }
-  Navigator.of(context).push(
+  final manifest = AppManifest.tryReadFromDirectory(folder.path);
+  final title = manifest?.displayName(fallback: folder.name) ?? folder.name;
+  return Navigator.of(context).push<bool>(
     MaterialPageRoute(
       builder: (_) => AppRunnerPage(
         appPath: folder.path,
-        title: folder.name,
+        title: title,
+        folderId: folder.id,
       ),
     ),
   );

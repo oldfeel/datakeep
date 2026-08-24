@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../../core/models/folder.dart';
 import '../../../core/services/api_service.dart';
+import '../../../shared/utils/app_dir.dart';
 import '../../../shared/utils/peer_folder_error.dart';
 
 class FolderProvider with ChangeNotifier {
@@ -97,6 +98,40 @@ class FolderProvider with ChangeNotifier {
         fetchDeviceFolders(deviceId, silent: true);
       }
     });
+  }
+
+  /// 删除文件夹/应用后刷新；API 可能短暂仍返回已删项，需再次剔除。
+  Future<void> refreshAfterDelete({
+    String? removedFolderId,
+    String? removedPath,
+    bool silent = true,
+  }) async {
+    _pruneFolders(removedFolderId: removedFolderId, removedPath: removedPath);
+
+    final deviceId = _loadedDeviceId;
+    if (deviceId != null) {
+      await fetchDeviceFolders(deviceId, silent: silent);
+    } else {
+      await fetchFolders(silent: silent);
+    }
+
+    _pruneFolders(removedFolderId: removedFolderId, removedPath: removedPath);
+  }
+
+  void _pruneFolders({String? removedFolderId, String? removedPath}) {
+    var changed = false;
+    if (removedFolderId != null && removedFolderId.isNotEmpty) {
+      final before = _folders.length;
+      _folders.removeWhere((f) => f.id == removedFolderId);
+      if (_folders.length != before) changed = true;
+    }
+    if (removedPath != null && removedPath.isNotEmpty) {
+      final norm = normalizeFsPath(removedPath);
+      final before = _folders.length;
+      _folders.removeWhere((f) => normalizeFsPath(f.path) == norm);
+      if (_folders.length != before) changed = true;
+    }
+    if (changed) notifyListeners();
   }
 
   // 获取所有文件夹（本机）

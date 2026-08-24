@@ -230,9 +230,12 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   );
                 }
               : null,
-          onTap: () {
+          onTap: () async {
             if (folder.isApp) {
-              openFolderApp(context, folder);
+              final deleted = await openFolderApp(context, folder);
+              if (deleted == true && mounted) {
+                await _loadData();
+              }
               return;
             }
             Navigator.of(context).push(
@@ -271,9 +274,12 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   );
                 }
               : null,
-          onTap: () {
+          onTap: () async {
             if (folder.isApp) {
-              openFolderApp(context, folder);
+              final deleted = await openFolderApp(context, folder);
+              if (deleted == true && mounted) {
+                await _loadData();
+              }
               return;
             }
             Navigator.of(context).push(

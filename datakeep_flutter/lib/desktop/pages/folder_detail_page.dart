@@ -11,6 +11,7 @@ import '../../core/models/folder.dart';
 import '../../core/services/api_service.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../shared/utils/app_dir.dart';
+import '../../shared/utils/app_manifest.dart';
 import '../../shared/utils/local_file_path.dart';
 import '../../shared/widgets/add_item_dialog.dart';
 import '../../shared/widgets/file_thumbnail.dart';
@@ -318,7 +319,24 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
     return isAppDirectory(abs);
   }
 
-  void _openEntryApp(String name) {
+  String _entryDisplayName(String name, [Map<String, dynamic>? file]) {
+    if (!_entryIsApp(name, file)) return name;
+    if (widget.device.isLocal) {
+      final abs = p.join(_absoluteCurrentPath, name);
+      final manifest = AppManifest.tryReadFromDirectory(abs);
+      if (manifest != null) return manifest.displayName(fallback: name);
+      final registered = findRegisteredApp(
+        context.read<FolderProvider>().folders,
+        abs,
+      );
+      if (registered != null && registered.name.isNotEmpty) {
+        return registered.name;
+      }
+    }
+    return name;
+  }
+
+  Future<void> _openEntryApp(String name) async {
     final rel = _currentPath.isEmpty ? name : '${_currentPath.join('/')}/$name';
     if (!widget.device.isLocal) {
       openPeerApp(
@@ -336,12 +354,15 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
       context.read<FolderProvider>().folders,
       abs,
     );
-    openAppAtPath(
+    final deleted = await openAppAtPath(
       context,
       absolutePath: abs,
       title: registered?.name ?? name,
       folder: registered,
     );
+    if (deleted == true && mounted) {
+      await _loadFiles();
+    }
   }
 
   void _showAddDialog() {
@@ -645,6 +666,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                     final name = _name(f);
                     final isDir = _isDir(f);
                     final isApp = isDir && _entryIsApp(name, f);
+                    final displayName = _entryDisplayName(name, f);
                     return Container(
                       key: ValueKey('f_$i'),
                       decoration: BoxDecoration(
@@ -704,7 +726,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                                   children: [
                                     Flexible(
                                       child: Text(
-                                        name,
+                                        displayName,
                                         style: const TextStyle(fontSize: 13),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
@@ -838,6 +860,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
         final name = _name(f);
         final isDir = _isDir(f);
         final isApp = isDir && _entryIsApp(name, f);
+        final displayName = _entryDisplayName(name, f);
         return Card(
           clipBehavior: Clip.antiAlias,
           child: InkWell(
@@ -871,7 +894,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         child: Text(
-                          name,
+                          displayName,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           textAlign: TextAlign.center,

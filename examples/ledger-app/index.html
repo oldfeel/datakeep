@@ -20,13 +20,15 @@
 
     <form id="form" class="form">
       <div class="row">
-        <label>
-          类型
-          <select name="kind" required>
-            <option value="expense">支出</option>
-            <option value="income">收入</option>
-          </select>
-        </label>
+        <div class="field">
+          <span class="field-label">类型</span>
+          <div class="kind-toggle" role="radiogroup" aria-label="类型">
+            <input type="radio" name="kind" id="kind-expense" value="expense" checked required />
+            <label for="kind-expense">支出</label>
+            <input type="radio" name="kind" id="kind-income" value="income" />
+            <label for="kind-income">收入</label>
+          </div>
+        </div>
         <label>
           金额
           <input name="amount" type="number" step="0.01" min="0.01" required placeholder="0.00" />

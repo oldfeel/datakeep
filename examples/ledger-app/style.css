@@ -79,7 +79,47 @@ label {
   font-size: 0.85rem;
   color: var(--muted);
 }
-input, select, button {
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.field-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.kind-toggle {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.kind-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  pointer-events: none;
+}
+.kind-toggle label {
+  flex: 1;
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--muted);
+  background: #fff;
+  cursor: pointer;
+  user-select: none;
+}
+.kind-toggle input:checked + label {
+  background: var(--primary);
+  color: #fff;
+  font-weight: 650;
+}
+input, button {
   font: inherit;
   border-radius: 8px;
   border: 1px solid var(--line);

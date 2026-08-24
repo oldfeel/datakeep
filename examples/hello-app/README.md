@@ -1,4 +1,4 @@
-# Hello DataKeep 示例应用
+# 入门示例
 
 符合 [应用包规范](../../docs/app-package-spec.md)。
 
@@ -6,5 +6,5 @@
 
 ```bash
 cd examples && ./pack.sh hello-app
-# => dist/hello-1.0.0.zip
+# => dist/site.datakeep.hello-1.0.1.zip
 ```

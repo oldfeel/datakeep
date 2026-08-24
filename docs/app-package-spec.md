@@ -17,8 +17,8 @@ zip 解压后根目录（或唯一顶层目录）须包含：
 
 ```json
 {
-  "id": "hello",
-  "name": "Hello DataKeep",
+  "id": "site.datakeep.hello",
+  "name": "入门示例",
   "version": "1.0.0",
   "entry": "index.html",
   "description": "示例应用",
@@ -28,7 +28,7 @@ zip 解压后根目录（或唯一顶层目录）须包含：
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `id` | 是 | 稳定标识，小写字母/数字/连字符；本地文件夹 id 为 `app-{id}` |
+| `id` | 是 | 稳定标识，类似 Android 包名（至少两段，如 `site.datakeep.hello`）；本地文件夹 id 为 `app-{id}` |
 | `name` | 是 | 显示名 |
 | `version` | 是 | semver，如 `1.0.0` |
 | `entry` | 否 | 入口 HTML，默认 `index.html` |
@@ -82,4 +82,4 @@ zip 解压后根目录（或唯一顶层目录）须包含：
 
 ## 示例
 
-仓库 `examples/`：`hello-app`、`ledger-app`（记账）、`todo-app`（待办）。
+仓库 `examples/`：`hello-app`（入门示例）、`ledger-app`（简单记账）、`todo-app`（待办清单）。

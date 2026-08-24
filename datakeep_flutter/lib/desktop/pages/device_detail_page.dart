@@ -307,9 +307,12 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                           ],
                         )
                       : null,
-                  onTap: () {
+                  onTap: () async {
                     if (folder.isApp) {
-                      openFolderApp(context, folder);
+                      final deleted = await openFolderApp(context, folder);
+                      if (deleted == true && context.mounted) {
+                        await _loadFolders();
+                      }
                       return;
                     }
                     widget.onFolderTap(folder);
