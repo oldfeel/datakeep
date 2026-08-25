@@ -742,19 +742,42 @@ class ApiService {
   }
 
   /// 获取局域网发现的设备 ID 列表（带名称）
+  ///
+  /// Syncthing 本地 beacon 间隔约 30s；冷启动时需等引擎就绪后再扫，
+  /// 默认轮询约 60s，避免正式版首次打开「添加设备」时列表为空。
   static Future<List<Map<String, String>>> getDiscoveredDevices({
-    int retries = 5,
+    int retries = 20,
     Duration interval = const Duration(seconds: 3),
+    void Function(List<Map<String, String>> devices)? onUpdate,
   }) async {
+    await _waitSyncthingReadyForDiscovery();
     for (var attempt = 0; attempt < retries; attempt++) {
       final devices = await _fetchDiscoveredDevicesOnce();
-      if (devices.isNotEmpty) return devices;
+      if (devices.isNotEmpty) {
+        onUpdate?.call(devices);
+        return devices;
+      }
       if (attempt < retries - 1) {
-        debugPrint('局域网扫描未发现设备，${interval.inSeconds}s 后重试 (${attempt + 1}/$retries)');
+        debugPrint(
+          '局域网扫描未发现设备，${interval.inSeconds}s 后重试 '
+          '(${attempt + 1}/$retries)',
+        );
         await Future.delayed(interval);
       }
     }
     return [];
+  }
+
+  /// 扫描前等待本机 Syncthing API 可用（移动端冷启动尤其重要）
+  static Future<void> _waitSyncthingReadyForDiscovery() async {
+    if (kIsWeb) return;
+    for (var i = 0; i < 30; i++) {
+      try {
+        if (await NativeService.ensureSyncthingRunning()) return;
+      } catch (_) {}
+      await Future.delayed(const Duration(seconds: 1));
+    }
+    debugPrint('[discovery] 等待 Syncthing 就绪超时，仍继续扫描');
   }
 
   static Future<List<Map<String, String>>> _fetchDiscoveredDevicesOnce() async {

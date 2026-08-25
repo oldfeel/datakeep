@@ -856,10 +856,21 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     try {
       final provider = context.read<DeviceProvider>();
       await provider.fetchDevices();
-      // 多次重试扫描局域网（Syncthing 本地发现需要几秒）
+      // Syncthing 局域网通告约 30s 一轮；冷启动需更长等待
       final devices = await ApiService.getDiscoveredDevices(
-        retries: 5,
+        retries: 20,
         interval: const Duration(seconds: 3),
+        onUpdate: (partial) {
+          if (!mounted || partial.isEmpty) return;
+          setState(() {
+            _discoveredDevices = partial;
+            if (!_manualInput && partial.isNotEmpty) {
+              _selectedDeviceId = partial.first['id'];
+              _applySelectedDevice(partial.first);
+              _validate(_selectedDeviceId!);
+            }
+          });
+        },
       );
       if (!mounted) return;
       setState(() {
@@ -941,7 +952,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
         decoration: const InputDecoration(
           labelText: '局域网设备',
           border: OutlineInputBorder(),
-          helperText: '正在扫描局域网设备...',
+          helperText: '正在扫描局域网设备（首次启动可能需约 1 分钟）...',
         ),
         child: Row(
           children: [

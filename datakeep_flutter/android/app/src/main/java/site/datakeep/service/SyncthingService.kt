@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -50,6 +51,7 @@ class SyncthingService : Service() {
         Thread(r, "SyncthingEngine").apply { isDaemon = true }
     }
     private val wakeLockRef = AtomicReference<PowerManager.WakeLock?>()
+    private val multicastLockRef = AtomicReference<WifiManager.MulticastLock?>()
 
     inner class SyncthingServiceBinder : Binder() {
         fun getService(): SyncthingService = this@SyncthingService
@@ -94,12 +96,14 @@ class SyncthingService : Service() {
                 ConfigHelper.ensureNoQuicListenAddresses(this)
                 ConfigHelper.ensureAndroidFoldersReady(this)
                 acquireWakeLock()
+                acquireMulticastLock()
                 SyncthingEngine.start(this)
                 currentState = State.ACTIVE
                 updateNotification("Syncthing 正在运行")
             } catch (e: Exception) {
                 Log.e(TAG, "启动 Syncthing 失败", e)
                 currentState = State.ERROR
+                releaseMulticastLock()
                 releaseWakeLock()
                 updateNotification("Syncthing 启动失败: ${e.message ?: ""}")
             }
@@ -113,6 +117,7 @@ class SyncthingService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "停止 Syncthing 失败", e)
         } finally {
+            releaseMulticastLock()
             releaseWakeLock()
             currentState = State.STOPPED
         }
@@ -168,6 +173,34 @@ class SyncthingService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "release wakeLock 失败", e)
+        }
+    }
+
+    /** WiFi 组播锁：局域网 discovery beacon 依赖 UDP multicast */
+    private fun acquireMulticastLock() {
+        try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                ?: return
+            val lock = wifi.createMulticastLock("DataKeep:SyncthingDiscovery").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            multicastLockRef.getAndSet(lock)?.let { old ->
+                if (old.isHeld) old.release()
+            }
+            Log.i(TAG, "已获取 MulticastLock")
+        } catch (e: Exception) {
+            Log.w(TAG, "MulticastLock 失败", e)
+        }
+    }
+
+    private fun releaseMulticastLock() {
+        try {
+            multicastLockRef.getAndSet(null)?.let { lock ->
+                if (lock.isHeld) lock.release()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "release MulticastLock 失败", e)
         }
     }
 
