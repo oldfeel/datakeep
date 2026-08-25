@@ -219,7 +219,7 @@ market_login_token() {
 sync_market_from_github() {
   local token="$1"
   need_cmd curl
-  log "通知官网从 GitHub Release 同步到市场服务器（$MARKET_URL）…"
+  log "通知官网从 GitHub Release 同步到市场服务器（${MARKET_URL}）…"
   local start_resp
   start_resp="$(curl -fsS -X POST "$MARKET_URL/admin/client-releases/sync-github" \
     -H "Authorization: Bearer $token" \
@@ -389,7 +389,7 @@ cmd_download() {
     if [[ "$TORRENTS_ONLY" -eq 1 ]]; then
       warn "dry-run：将仅补拉 .torrent 到 $torrents"
     else
-      warn "dry-run：将下载四端包到 $packages，.torrent 到 $torrents"
+      warn "dry-run：将下载四端包到 ${packages}，.torrent 到 $torrents"
     fi
     exit 0
   fi
@@ -446,7 +446,7 @@ cmd_download() {
       :
     else
       tmissing="${tmissing} ${p}"
-      err "未拿到 $p 的 .torrent（可先: ./scripts/release.sh market $tag）"
+      err "未拿到 $p 的 .torrent（可先: ./scripts/release.sh market ${tag}）"
     fi
   done
 
@@ -542,7 +542,7 @@ cmd_torrents() {
     ver="${tag#v}"
   fi
 
-  log "从官网 API 读取磁力链（$PUBLIC_SITE）…"
+  log "从官网 API 读取磁力链（${PUBLIC_SITE}）…"
   local resp
   resp="$(curl -fsS "$PUBLIC_SITE/api/client/releases")" || {
     err "无法访问 $PUBLIC_SITE/api/client/releases"
@@ -563,7 +563,7 @@ cmd_torrents() {
       magnet="$(echo "$resp" | jq -r --arg p "$p" '.data[] | select(.platform==$p) | .magnetUrl // empty')"
       api_ver="$(echo "$resp" | jq -r --arg p "$p" '.data[] | select(.platform==$p) | .version // empty')"
       if [[ -n "$ver" && -n "$api_ver" && "$api_ver" != "$ver" ]]; then
-        warn "官网 $p 版本为 v$api_ver，与指定 v$ver 不一致"
+        warn "官网 $p 版本为 v${api_ver}，与指定 v$ver 不一致"
       fi
       if [[ -z "$magnet" ]]; then
         missing="${missing} ${p}"
@@ -729,7 +729,7 @@ log "发版版本:     $FULL  (+0.0.1 或指定版本)"
 log "Git tag:      $TAG"
 
 if git -C "$ROOT" rev-parse "$TAG" >/dev/null 2>&1; then
-  err "本地已存在 tag $TAG，请先 bump 版本或删除旧 tag"
+  err "本地已存在 tag ${TAG}，请先 bump 版本或删除旧 tag"
   exit 1
 fi
 if git -C "$ROOT" ls-remote --tags origin "refs/tags/$TAG" 2>/dev/null | grep -q "$TAG"; then
@@ -748,7 +748,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "  将: git tag $TAG && git push origin HEAD && git push origin $TAG"
     echo "  将触发 Actions: Build packages → Release"
     if [[ "$SKIP_MARKET" -eq 0 ]]; then
-      echo "  将: 官网 sync-github → $MARKET_URL （tag $TAG）"
+      echo "  将: 官网 sync-github → $MARKET_URL （tag ${TAG}）"
     fi
   fi
   exit 0
@@ -804,7 +804,7 @@ if ! gh auth status >/dev/null 2>&1; then
 fi
 
 RELEASE_SHA="$(git -C "$ROOT" rev-parse HEAD)"
-log "等待 workflow 出现（commit ${RELEASE_SHA:0:7} / $TAG）…"
+log "等待 workflow 出现（commit ${RELEASE_SHA:0:7} / ${TAG}）…"
 RUN_ID=""
 GH_ERR=""
 for _ in $(seq 1 45); do
