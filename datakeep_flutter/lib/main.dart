@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 import 'package:media_kit/media_kit.dart';
 import 'app.dart';
 import 'core/backend/backend_server.dart';
 import 'core/backend/syncthing_api.dart';
 import 'core/services/native_service.dart';
+
+/// 保持引用，避免被 GC 后退出钩子失效
+// ignore: unused_element
+AppLifecycleListener? _desktopLifecycleListener;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,7 +25,42 @@ void main() async {
     await _startPlatformServices();
   }
 
+  if (!kIsWeb &&
+      (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+    _installDesktopShutdownHooks();
+  }
+
   runApp(const DataKeepApp());
+}
+
+/// 桌面：关闭窗口 / 退出应用时停掉 detached 的 Syncthing
+void _installDesktopShutdownHooks() {
+  _desktopLifecycleListener = AppLifecycleListener(
+    onExitRequested: () async {
+      debugPrint('[shutdown] 退出前停止 Syncthing…');
+      await NativeService.stopSyncthingService();
+      return AppExitResponse.exit;
+    },
+  );
+
+  Future<void> stopAndExit(ProcessSignal signal) async {
+    debugPrint('[shutdown] 收到 $signal，停止 Syncthing…');
+    await NativeService.stopSyncthingService();
+    exit(0);
+  }
+
+  try {
+    ProcessSignal.sigint.watch().listen(stopAndExit);
+  } catch (e) {
+    debugPrint('[shutdown] 无法监听 SIGINT: $e');
+  }
+  if (!Platform.isWindows) {
+    try {
+      ProcessSignal.sigterm.watch().listen(stopAndExit);
+    } catch (e) {
+      debugPrint('[shutdown] 无法监听 SIGTERM: $e');
+    }
+  }
 }
 
 Future<void> _startPlatformServices() async {

@@ -125,9 +125,9 @@ static void my_application_startup(GApplication* application) {
 
 // Implements GApplication::shutdown.
 static void my_application_shutdown(GApplication* application) {
-  //MyApplication* self = MY_APPLICATION(object);
-
-  // Perform any actions required at application shutdown.
+  // 停掉 detached 的 Syncthing（与 macOS applicationWillTerminate 同理）
+  g_spawn_command_line_sync("pkill -x syncthing", nullptr, nullptr, nullptr,
+                            nullptr);
 
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
 }

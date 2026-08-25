@@ -1,6 +1,7 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <cstdlib>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -40,6 +41,9 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // 停掉 detached 的 Syncthing（Dart 退出钩子可能来不及跑完）
+  system("taskkill /F /IM syncthing.exe >nul 2>&1");
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

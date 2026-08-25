@@ -184,11 +184,13 @@ class NativeService {
 
       final configPath = _syncthingConfigDir();
 
-      await Process.start(
+      // detached：主进程退出后默认不会带走子进程，需在退出钩子里显式 stop
+      final process = await Process.start(
         syncthingPath,
         ['-no-browser', '-no-restart', '-no-upgrade', '-home', configPath],
         mode: ProcessStartMode.detached,
       );
+      debugPrint('已启动 Syncthing pid=${process.pid} path=$syncthingPath');
 
       // 等待 API 就绪，最多 20 秒
       for (var i = 0; i < 20; i++) {
