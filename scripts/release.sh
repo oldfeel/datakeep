@@ -3,10 +3,10 @@
 # 编完后可选：通知官网从 GitHub Release 拉取并写入 GitHub 下载链 + 生成 BT 种子
 #
 # 用法:
-#   ./scripts/release.sh              # 默认 patch +0.0.1（从 0.0.0 → v0.0.1 → v0.0.2 …）
+#   ./scripts/release.sh              # 默认 patch：末位 +1，逢 10 进位（0.0.9 → 0.1.0，不会出现 0.0.10）
 #   ./scripts/release.sh 1.2.0        # 设为指定版本（build+1）并发版
-#   ./scripts/release.sh patch        # 同默认：修订号 +1
-#   ./scripts/release.sh minor        # 次版本 +1（0.0.x → 0.1.0）
+#   ./scripts/release.sh patch        # 同默认：修订号 +1（十进制进位）
+#   ./scripts/release.sh minor        # 次版本 +1（0.0.x → 0.1.0；次位逢 10 进主版本）
 #   ./scripts/release.sh major        # 主版本 +1（0.x.y → 1.0.0）
 #   ./scripts/release.sh --dry-run    # 只打印将要做的事
 #   ./scripts/release.sh --no-wait    # 推送后不等待 CI
@@ -53,7 +53,7 @@ DRY_RUN=0
 NO_WAIT=0
 LOCAL_ONLY=0
 SKIP_MARKET=0
-MODE="patch" # 默认每次 +0.0.1；可被 patch|minor|major|x.y.z 覆盖
+MODE="patch" # 默认末位 +1（十进制进位）；可被 patch|minor|major|x.y.z 覆盖
 ACTION="release" # release | market | links | torrents | download
 RELEASE_TAG=""
 USE_PROXY=0
@@ -70,10 +70,10 @@ DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions
 编完后默认调用官网接口：服务器从 GitHub Release 拉包、写入 GitHub 链并生成 BT 种子与磁力链。
 
 用法:
-  ./scripts/release.sh              # 默认 +0.0.1（0.0.0 → v0.0.1 → v0.0.2 …）
+  ./scripts/release.sh              # 默认末位 +1（0.0.8 → 0.0.9 → 0.1.0，无 0.0.10）
   ./scripts/release.sh 1.2.0        # 设为指定版本（build+1）并发版
-  ./scripts/release.sh patch        # 同默认
-  ./scripts/release.sh minor        # 次版本 +1
+  ./scripts/release.sh patch        # 同默认（十进制进位）
+  ./scripts/release.sh minor        # 次版本 +1（次位逢 10 进主版本）
   ./scripts/release.sh major        # 主版本 +1
   ./scripts/release.sh --dry-run    # 只打印将要做的事
   ./scripts/release.sh --no-wait    # 推送后不等待 CI
@@ -642,14 +642,40 @@ parse_version() {
   fi
 }
 
+# 三位版本每位 0–9；进位规则类似十进制计数器（避免 0.0.10）。
+# patch: 0.0.9 → 0.1.0；minor: 0.9.x → 1.0.0；major: 主版本 +1 且后两位归零。
 bump_semver() {
   local kind="$1" # patch|minor|major
   local major minor patch
   IFS=. read -r major minor patch <<<"$VER_NAME"
+  major=${major:-0}
+  minor=${minor:-0}
+  patch=${patch:-0}
   case "$kind" in
-    patch) patch=$((patch + 1)) ;;
-    minor) minor=$((minor + 1)); patch=0 ;;
-    major) major=$((major + 1)); minor=0; patch=0 ;;
+    patch)
+      patch=$((patch + 1))
+      if (( patch > 9 )); then
+        patch=0
+        minor=$((minor + 1))
+      fi
+      if (( minor > 9 )); then
+        minor=0
+        major=$((major + 1))
+      fi
+      ;;
+    minor)
+      minor=$((minor + 1))
+      patch=0
+      if (( minor > 9 )); then
+        minor=0
+        major=$((major + 1))
+      fi
+      ;;
+    major)
+      major=$((major + 1))
+      minor=0
+      patch=0
+      ;;
   esac
   VER_NAME="${major}.${minor}.${patch}"
   VER_BUILD=$((VER_BUILD + 1))

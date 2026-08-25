@@ -48,10 +48,18 @@ class MarketAppInfo {
   String get folderId => 'app-$appKey';
 }
 
-/// 应用市场客户端（默认局域网 API）
+/// 应用市场客户端
+///
+/// - 正式版默认：公网 `https://datakeep.site`（如 `/api/apps/.../package`）
+/// - 调试版默认：局域网（便于本地 market_server）
+/// - 用户可在应用市场设置里覆盖，写入 SharedPreferences
 class MarketService {
   static const _prefKey = 'market_api_base';
-  static const defaultBase = 'http://192.168.2.10:8088';
+  static const defaultBaseRelease = 'https://datakeep.site';
+  static const defaultBaseDebug = 'http://192.168.2.10:8088';
+
+  static String get defaultBase =>
+      kReleaseMode ? defaultBaseRelease : defaultBaseDebug;
 
   static Future<String> getBaseUrl() async {
     final prefs = await SharedPreferences.getInstance();

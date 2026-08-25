@@ -61,7 +61,8 @@ class _MarketScreenState extends State<MarketScreen> {
         content: TextField(
           controller: ctrl,
           decoration: const InputDecoration(
-            hintText: 'http://192.168.2.10:8088',
+            hintText: 'https://datakeep.site',
+            helperText: '正式版默认公网；调试可用局域网如 http://192.168.2.10:8088',
           ),
         ),
         actions: [
