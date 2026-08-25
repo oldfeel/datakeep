@@ -1,6 +1,6 @@
 [Desktop Entry]
-Name=文件管理
-Comment=跨平台文件管理与同步
+Name=数据管理
+Comment=跨平台数据管理与同步
 Exec=datakeep_flutter
 Icon=app_icon
 Type=Application

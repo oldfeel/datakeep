@@ -10,7 +10,7 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
-    self.title = "文件管理"
+    self.title = "数据管理"
 
     super.awakeFromNib()
   }

@@ -78,10 +78,10 @@ class PeerClient {
     } on SocketException catch (e) {
       debugPrint('[peer] 连接失败 $uri: $e');
       return {
-        'error': '对端文件管理不可达（需同局域网且对端已打开文件管理）',
+        'error': '对端数据管理不可达（需同局域网且对端已打开数据管理）',
       };
     } on TimeoutException catch (_) {
-      return {'error': '连接对端超时（需同局域网且对端已打开文件管理）'};
+      return {'error': '连接对端超时（需同局域网且对端已打开数据管理）'};
     } catch (e) {
       debugPrint('[peer] 请求失败 $uri: $e');
       return {'error': e.toString()};
@@ -168,10 +168,10 @@ class PeerClient {
     } on SocketException catch (e) {
       debugPrint('[peer] 下载失败 $uri: $e');
       return {
-        'error': '对端文件管理不可达（需同局域网且对端已打开文件管理）',
+        'error': '对端数据管理不可达（需同局域网且对端已打开数据管理）',
       };
     } on TimeoutException catch (_) {
-      return {'error': '下载对端文件超时（需同局域网且对端已打开文件管理）'};
+      return {'error': '下载对端文件超时（需同局域网且对端已打开数据管理）'};
     } catch (e) {
       debugPrint('[peer] 下载失败 $uri: $e');
       return {'error': e.toString()};
@@ -248,10 +248,10 @@ class PeerClient {
     } on SocketException catch (e) {
       debugPrint('[peer] 上传失败 $uri: $e');
       return {
-        'error': '对端文件管理不可达（需同局域网且对端已打开文件管理）',
+        'error': '对端数据管理不可达（需同局域网且对端已打开数据管理）',
       };
     } on TimeoutException catch (_) {
-      return {'error': '上传对端超时（需同局域网且对端已打开文件管理）'};
+      return {'error': '上传对端超时（需同局域网且对端已打开数据管理）'};
     } catch (e) {
       debugPrint('[peer] 上传失败 $uri: $e');
       return {'error': e.toString()};
@@ -283,7 +283,7 @@ class PeerClient {
       return {'ok': true, 'statusCode': res.statusCode};
     } on SocketException {
       return {
-        'error': '对端文件管理不可达（需同局域网且对端已打开文件管理）',
+        'error': '对端数据管理不可达（需同局域网且对端已打开数据管理）',
       };
     } on TimeoutException catch (_) {
       return {'error': '删除对端文件超时'};

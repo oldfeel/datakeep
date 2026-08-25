@@ -907,7 +907,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
 
   String _discoveryStatusText(List<Map<String, String>> available) {
     if (_discoveredDevices.isEmpty) {
-      return '未发现设备：请确认对方已启动文件管理且在同一 WiFi';
+      return '未发现设备：请确认对方已启动数据管理且在同一 WiFi';
     }
     if (available.isEmpty) {
       return '已发现 ${_discoveredDevices.length} 个设备，均已添加';

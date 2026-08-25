@@ -34,8 +34,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  // 窗口标题：文件管理
-  if (!window.Create(L"\u6587\u4ef6\u7ba1\u7406", origin, size)) {
+  // 窗口标题：数据管理
+  if (!window.Create(L"\u6570\u636e\u7ba1\u7406", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

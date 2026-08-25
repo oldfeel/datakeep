@@ -224,7 +224,7 @@ class SyncthingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("文件管理")
+            .setContentTitle("数据管理")
             .setContentText(content)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
