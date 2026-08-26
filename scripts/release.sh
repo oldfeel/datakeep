@@ -23,12 +23,18 @@
 #   ./scripts/release.sh --proxy           # 等待 CI / gh 走本机代理（同 download）
 #   DATAKEEP_USE_PROXY=1 ./scripts/release.sh download v0.0.4  # 走本机代理（默认 127.0.0.1:7897）
 #   ./scripts/release.sh download v0.0.6 --torrents-only      # 仅补拉 .torrent（安装包已有时）
+#   ./scripts/release.sh download v0.0.6 --skip-pgyer         # 跳过上传 APK 到蒲公英
 #
 # 官网同步（编完后默认尝试）:
 #   优先读环境变量 DATAKEEP_MARKET_TOKEN / USER / PASSWORD
 #   否则自动读旁路仓库 ../datakeep-market/market_server/.env 的 ADMIN_USERNAME/PASSWORD
 #   DATAKEEP_MARKET_URL 默认 https://admin.datakeep.site
 #   DATAKEEP_MARKET_ENV  可指定 .env 路径
+#
+# 蒲公英（download 完成后自动上传 Android APK）:
+#   PGYER_API_KEY  或旁路 ../datakeep-market/market_server/.env 的 PGYER_API_KEY
+#   也可 ~/.config/pgyer/config.json 的 apiKey（pgyer-cli 格式）
+#   DATAKEEP_SKIP_PGYER=1 或 --skip-pgyer 跳过
 #
 # 远程发版依赖公开仓 workflow「Build packages」（push tags: v*）。
 
@@ -58,6 +64,7 @@ ACTION="release" # release | market | links | torrents | download
 RELEASE_TAG=""
 USE_PROXY=0
 TORRENTS_ONLY=0
+SKIP_PGYER="${DATAKEEP_SKIP_PGYER:-0}"
 
 MARKET_URL="${DATAKEEP_MARKET_URL:-https://admin.datakeep.site}"
 MARKET_URL="${MARKET_URL%/}"
@@ -90,9 +97,12 @@ DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions
   DATAKEEP_USE_PROXY=1 ./scripts/release.sh download v0.0.4
     # 或先 export https_proxy=http://127.0.0.1:7897 http_proxy=... all_proxy=...
   ./scripts/release.sh download v0.0.6 --torrents-only   # 仅补拉 .torrent
+  ./scripts/release.sh download v0.0.6 --skip-pgyer        # 不上传蒲公英
 
 官网同步：默认用旁路 datakeep-market/market_server/.env 的 ADMIN_*；
 也可设 DATAKEEP_MARKET_TOKEN，或 DATAKEEP_MARKET_USER + DATAKEEP_MARKET_PASSWORD。
+
+蒲公英：download 完成后自动上传 APK；设 PGYER_API_KEY（或 .env / ~/.config/pgyer/config.json）。
 EOF
   exit 0
 }
@@ -107,6 +117,7 @@ for arg in "$@"; do
     --proxy) USE_PROXY=1 ;;
     --no-proxy) USE_PROXY=0 ;;
     --torrents-only) TORRENTS_ONLY=1 ;;
+    --skip-pgyer) SKIP_PGYER=1 ;;
     qiniu|sync|market)
       ACTION="market"
       ;;
@@ -179,6 +190,131 @@ load_market_creds_from_env_file() {
     esac
   done < "$env_file"
   [[ -n "${DATAKEEP_MARKET_USER:-}" && -n "${DATAKEEP_MARKET_PASSWORD:-}" ]]
+}
+
+# 蒲公英 API Key：PGYER_API_KEY > market .env > ~/.config/pgyer/config.json
+load_pgyer_api_key() {
+  [[ -n "${PGYER_API_KEY:-}" ]] && return 0
+
+  local env_file="${DATAKEEP_MARKET_ENV:-}"
+  if [[ -z "$env_file" ]]; then
+    env_file="$ROOT/../datakeep-market/market_server/.env"
+  fi
+  if [[ -f "$env_file" ]]; then
+    local line k v
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line#"${line%%[![:space:]]*}"}"
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      [[ "$line" == *=* ]] || continue
+      k="${line%%=*}"
+      v="${line#*=}"
+      k="${k%"${k##*[![:space:]]}"}"
+      v="${v#"${v%%[![:space:]]*}"}"
+      v="${v%"${v##*[![:space:]]}"}"
+      if [[ ${#v} -ge 2 ]]; then
+        if [[ ( "${v:0:1}" == '"' && "${v: -1}" == '"' ) || ( "${v:0:1}" == "'" && "${v: -1}" == "'" ) ]]; then
+          v="${v:1:-1}"
+        fi
+      fi
+      if [[ "$k" == "PGYER_API_KEY" && -n "$v" ]]; then
+        PGYER_API_KEY="$v"
+        return 0
+      fi
+    done < "$env_file"
+  fi
+
+  local cfg="${PGYER_CONFIG_FILE:-${HOME}/.config/pgyer/config.json}"
+  if [[ -f "$cfg" ]] && command -v jq >/dev/null 2>&1; then
+    local key
+    key="$(jq -r '.apiKey // empty' "$cfg" 2>/dev/null || true)"
+    if [[ -n "$key" && "$key" != "null" ]]; then
+      PGYER_API_KEY="$key"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# 蒲公英快速上传（getCOSToken → COS → buildInfo）
+upload_apk_to_pgyer() {
+  local apk="$1" tag="$2"
+  local api_base="${PGYER_API_BASE:-https://api.pgyer.com/apiv2}"
+  local api_key="$PGYER_API_KEY"
+  local desc result code endpoint build_key upload_key signature cos_token http_code
+  local i shortcut_url build_version
+
+  need_cmd curl
+  need_cmd jq
+
+  desc="DataKeep ${tag}"
+
+  log "上传 APK 到蒲公英: $(basename "$apk")"
+
+  result="$(curl -fsS --form-string "_api_key=${api_key}" \
+    --form-string "buildType=apk" \
+    --form-string "buildUpdateDescription=${desc}" \
+    "${api_base}/app/getCOSToken")" || {
+    err "蒲公英 getCOSToken 请求失败"
+    return 1
+  }
+  code="$(echo "$result" | jq -r '.code // empty')"
+  if [[ "$code" != "0" ]]; then
+    err "蒲公英 getCOSToken 失败: $(echo "$result" | jq -r '.message // .data // .')"
+    return 1
+  fi
+
+  endpoint="$(echo "$result" | jq -r '.data.endpoint // empty')"
+  build_key="$(echo "$result" | jq -r '.data.key // empty')"
+  upload_key="$(echo "$result" | jq -r '.data.params.key // empty')"
+  signature="$(echo "$result" | jq -r '.data.params.signature // empty')"
+  cos_token="$(echo "$result" | jq -r '.data.params["x-cos-security-token"] // empty')"
+  if [[ -z "$endpoint" || -z "$build_key" || -z "$upload_key" || -z "$signature" || -z "$cos_token" ]]; then
+    err "蒲公英 getCOSToken 响应不完整"
+    return 1
+  fi
+
+  http_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout 30 --max-time 1800 \
+    --form-string "key=${upload_key}" \
+    --form-string "signature=${signature}" \
+    --form-string "x-cos-security-token=${cos_token}" \
+    --form-string "x-cos-meta-file-name=$(basename "$apk")" \
+    -F "file=@${apk}" \
+    "${endpoint}")" || {
+    err "蒲公英 COS 上传失败"
+    return 1
+  }
+  if [[ "$http_code" != "204" ]]; then
+    err "蒲公英 COS 上传失败 HTTP ${http_code}"
+    return 1
+  fi
+
+  ok "APK 已上传，等待蒲公英处理…"
+  for i in $(seq 1 60); do
+    result="$(curl -fsS -G \
+      --data-urlencode "_api_key=${api_key}" \
+      --data-urlencode "buildKey=${build_key}" \
+      "${api_base}/app/buildInfo")" || {
+      sleep 1
+      continue
+    }
+    code="$(echo "$result" | jq -r '.code // empty')"
+    if [[ "$code" == "0" ]]; then
+      shortcut_url="$(echo "$result" | jq -r '.data.buildShortcutUrl // empty')"
+      build_version="$(echo "$result" | jq -r '.data.buildVersion // empty')"
+      ok "蒲公英构建完成: ${build_version:-$tag}"
+      if [[ -n "$shortcut_url" ]]; then
+        ok "下载: https://www.pgyer.com/${shortcut_url}"
+        ok "二维码: https://www.pgyer.com/app/qrcode/${shortcut_url}"
+      fi
+      return 0
+    fi
+    sleep 1
+  done
+
+  err "蒲公英构建超时（60s）"
+  return 1
 }
 
 market_login_token() {
@@ -483,6 +619,17 @@ cmd_download() {
     exit 1
   fi
   [[ -f "$magnets" ]] && ok "磁力链: $magnets"
+
+  local apk="$packages/datakeep-${ver}-android.apk"
+  if [[ "$SKIP_PGYER" -eq 0 && -f "$apk" ]]; then
+    echo
+    if load_pgyer_api_key; then
+      upload_apk_to_pgyer "$apk" "$tag" || warn "蒲公英上传失败（本地下载与做种不受影响）"
+    else
+      warn "未配置 PGYER_API_KEY，跳过蒲公英上传（可写入 market_server/.env 或 export PGYER_API_KEY）"
+    fi
+  fi
+
   echo
   ok "做种：qBittorrent 添加 $torrents/*.torrent，数据目录指向 $packages"
   exit 0
