@@ -24,6 +24,9 @@
 #   DATAKEEP_USE_PROXY=1 ./scripts/release.sh download v0.0.4  # 走本机代理（默认 127.0.0.1:7897）
 #   ./scripts/release.sh download v0.0.6 --torrents-only      # 仅补拉 .torrent（安装包已有时）
 #   ./scripts/release.sh download v0.0.6 --skip-pgyer         # 跳过上传 APK 到蒲公英
+#   ./scripts/release.sh seed               # Transmission 添加 dist-release 种子做种（默认最新 tag）
+#   ./scripts/release.sh seed v0.1.1        # 指定版本
+#   TRANSMISSION_AUTH=user:pass ./scripts/release.sh seed     # RPC 需认证时
 #
 # 官网同步（编完后默认尝试）:
 #   优先读环境变量 DATAKEEP_MARKET_TOKEN / USER / PASSWORD
@@ -60,11 +63,14 @@ NO_WAIT=0
 LOCAL_ONLY=0
 SKIP_MARKET=0
 MODE="patch" # 默认末位 +1（十进制进位）；可被 patch|minor|major|x.y.z 覆盖
-ACTION="release" # release | market | links | torrents | download
+ACTION="release" # release | market | links | torrents | download | seed
 RELEASE_TAG=""
 USE_PROXY=0
 TORRENTS_ONLY=0
+SEED_REMOVE_OLD=0
 SKIP_PGYER="${DATAKEEP_SKIP_PGYER:-0}"
+
+TRANSMISSION_HOST="${TRANSMISSION_HOST:-localhost:9091}"
 
 MARKET_URL="${DATAKEEP_MARKET_URL:-https://admin.datakeep.site}"
 MARKET_URL="${MARKET_URL%/}"
@@ -98,11 +104,17 @@ DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions
     # 或先 export https_proxy=http://127.0.0.1:7897 http_proxy=... all_proxy=...
   ./scripts/release.sh download v0.0.6 --torrents-only   # 仅补拉 .torrent
   ./scripts/release.sh download v0.0.6 --skip-pgyer        # 不上传蒲公英
+  ./scripts/release.sh seed                  # Transmission 做种（默认最新 tag）
+  ./scripts/release.sh seed v0.1.1           # 指定 dist-release 版本
+  TRANSMISSION_AUTH=user:pass ./scripts/release.sh seed   # RPC 认证
 
 官网同步：默认用旁路 datakeep-market/market_server/.env 的 ADMIN_*；
 也可设 DATAKEEP_MARKET_TOKEN，或 DATAKEEP_MARKET_USER + DATAKEEP_MARKET_PASSWORD。
 
 蒲公英：download 完成后自动上传 APK；设 PGYER_API_KEY（或 .env / ~/.config/pgyer/config.json）。
+
+Transmission 做种：先 ./scripts/release.sh download vX.Y.Z；Transmission 设置里开启「远程」；
+默认 RPC localhost:9091；可设 TRANSMISSION_HOST / TRANSMISSION_AUTH（或 USER+PASSWORD）。
 EOF
   exit 0
 }
@@ -118,6 +130,7 @@ for arg in "$@"; do
     --no-proxy) USE_PROXY=0 ;;
     --torrents-only) TORRENTS_ONLY=1 ;;
     --skip-pgyer) SKIP_PGYER=1 ;;
+    --remove-old) SEED_REMOVE_OLD=1 ;;
     qiniu|sync|market)
       ACTION="market"
       ;;
@@ -130,8 +143,11 @@ for arg in "$@"; do
     download|fetch|seed-prep|dist-release)
       ACTION="download"
       ;;
+    seed|seeding|transmission)
+      ACTION="seed"
+      ;;
     v[0-9]*.[0-9]*.[0-9]*)
-      if [[ "$ACTION" == "market" || "$ACTION" == "links" || "$ACTION" == "torrents" || "$ACTION" == "download" ]]; then
+      if [[ "$ACTION" == "market" || "$ACTION" == "links" || "$ACTION" == "torrents" || "$ACTION" == "download" || "$ACTION" == "seed" ]]; then
         RELEASE_TAG="$arg"
       else
         # 当版本号写成 v1.2.0 时按 1.2.0 发版
@@ -502,6 +518,318 @@ curl_public_site() {
   return 1
 }
 
+# 查找 transmission-remote（Homebrew / macOS GUI 包）
+find_transmission_remote() {
+  local candidates=()
+  if command -v transmission-remote >/dev/null 2>&1; then
+    candidates+=("$(command -v transmission-remote)")
+  fi
+  candidates+=(
+    "/opt/homebrew/bin/transmission-remote"
+    "/usr/local/bin/transmission-remote"
+    "/Applications/Transmission.app/Contents/MacOS/transmission-remote"
+    "/Applications/Transmission.app/Contents/Resources/transmission-remote"
+  )
+  local c
+  for c in "${candidates[@]}"; do
+    if [[ -n "$c" && -x "$c" ]]; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# 调用 Transmission RPC（需客户端已开远程控制）
+transmission_rpc_url() {
+  local host="${TRANSMISSION_HOST:-localhost:9091}"
+  if [[ "$host" == http://* || "$host" == https://* ]]; then
+    printf '%s/transmission/rpc' "${host%/}"
+  else
+    printf 'http://%s/transmission/rpc' "$host"
+  fi
+}
+
+transmission_curl_auth_args() {
+  TRANSMISSION_CURL_AUTH=()
+  if [[ -n "${TRANSMISSION_AUTH:-}" ]]; then
+    TRANSMISSION_CURL_AUTH=(-u "$TRANSMISSION_AUTH")
+  elif [[ -n "${TRANSMISSION_USER:-}" ]]; then
+    TRANSMISSION_CURL_AUTH=(-u "${TRANSMISSION_USER}:${TRANSMISSION_PASSWORD:-}")
+  fi
+}
+
+transmission_rpc_session_id() {
+  need_cmd curl
+  transmission_curl_auth_args
+  local url
+  url="$(transmission_rpc_url)"
+  curl -sI "${TRANSMISSION_CURL_AUTH[@]}" "$url" \
+    | awk -F': ' '/^[Xx]-[Tt]ransmission-[Ss]ession-[Ii]d/ {print $2}' \
+    | tr -d '\r\n'
+}
+
+transmission_rpc_call() {
+  local method="$1" args_json="${2:-{}}"
+  need_cmd curl
+  transmission_curl_auth_args
+  local url session resp
+  url="$(transmission_rpc_url)"
+  session="$(transmission_rpc_session_id)" || return 1
+  [[ -n "$session" ]] || return 1
+  resp="$(curl -fsS "${TRANSMISSION_CURL_AUTH[@]}" -X POST "$url" \
+    -H "X-Transmission-Session-Id: $session" \
+    -H 'Content-Type: application/json' \
+    -d "{\"method\":\"${method}\",\"arguments\":${args_json}}")" || return 1
+  printf '%s' "$resp"
+}
+
+transmission_rpc_ok() {
+  transmission_rpc_call session-get >/dev/null 2>&1
+}
+
+transmission_rpc_list_names() {
+  local resp
+  if ! resp="$(transmission_rpc_call torrent-get '{"fields":["name"]}')"; then
+    return 1
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    echo "$resp" | jq -r '.arguments.torrents[]?.name // empty'
+  else
+    echo "$resp" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  fi
+}
+
+transmission_rpc_add() {
+  local torrent="$1" download_dir="$2"
+  local torrent_esc dir_esc body resp
+  torrent_esc="${torrent//\\/\\\\}"
+  torrent_esc="${torrent_esc//\"/\\\"}"
+  dir_esc="${download_dir//\\/\\\\}"
+  dir_esc="${dir_esc//\"/\\\"}"
+  body="{\"filename\":\"${torrent_esc}\",\"download-dir\":\"${dir_esc}\"}"
+  if ! resp="$(transmission_rpc_call torrent-add "$body")"; then
+    return 1
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    local dup
+    dup="$(echo "$resp" | jq -r '.arguments.torrent-duplicate.name // empty')"
+    if [[ -n "$dup" && "$dup" != "null" ]]; then
+      printf 'duplicate: %s' "$dup"
+      return 2
+    fi
+  elif [[ "$resp" == *torrent-duplicate* ]]; then
+    printf 'duplicate torrent'
+    return 2
+  fi
+  printf '%s' "$resp"
+}
+
+transmission_rpc_remove_old() {
+  local ver="$1"
+  local resp ids id name
+  if ! resp="$(transmission_rpc_call torrent-get '{"fields":["id","name"]}')"; then
+    return 1
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    warn "未安装 jq，--remove-old 在 RPC 模式下不可用"
+    return 0
+  fi
+  while IFS=$'\t' read -r id name; do
+    [[ -n "$id" && -n "$name" ]] || continue
+    warn "移除旧种: ${name}"
+    transmission_rpc_call torrent-stop "{\"ids\":[${id}]}" >/dev/null 2>&1 || true
+    transmission_rpc_call torrent-remove "{\"ids\":[${id}],\"delete-local-data\":false}" >/dev/null 2>&1 || true
+  done < <(echo "$resp" | jq -r --arg ver "$ver" '
+    .arguments.torrents[]
+    | select(.name | test("^datakeep-"))
+    | select(.name | test("datakeep-" + $ver + "-") | not)
+    | [.id, .name] | @tsv
+  ')
+}
+
+transmission_remote() {
+  local tr="$1"
+  shift
+  local args=()
+  if [[ -n "${TRANSMISSION_AUTH:-}" ]]; then
+    args+=(-n "$TRANSMISSION_AUTH")
+  elif [[ -n "${TRANSMISSION_USER:-}" && -n "${TRANSMISSION_PASSWORD:-}" ]]; then
+    args+=(-n "${TRANSMISSION_USER}:${TRANSMISSION_PASSWORD}")
+  fi
+  "$tr" "$TRANSMISSION_HOST" "${args[@]}" "$@"
+}
+
+# 从 transmission-remote -l 输出解析 torrent id（按显示名精确匹配）
+transmission_find_id_by_name() {
+  local tr="$1" name="$2"
+  transmission_remote "$tr" -l 2>/dev/null | awk -v n="$name" '
+    NR > 1 && $0 ~ n { print $1; exit }
+  '
+}
+
+cmd_seed() {
+  cd "$ROOT"
+  REPO="$(resolve_repo)"
+  local tag ver out packages torrents tr
+  if ! tag="$(resolve_release_tag)"; then
+    err "无法确定 tag。请指定: ./scripts/release.sh seed v0.1.1"
+    exit 1
+  fi
+  ver="${tag#v}"
+  out="$ROOT/dist-release/${tag}"
+  packages="$out/packages"
+  torrents="$out/torrents"
+
+  if [[ ! -d "$packages" || ! -d "$torrents" ]]; then
+    err "缺少 $out，请先: ./scripts/release.sh download ${tag}"
+    exit 1
+  fi
+
+  if ! tr="$(find_transmission_remote)"; then
+    tr=""
+    log "未找到 transmission-remote，改用 HTTP RPC（curl）"
+  fi
+
+  log "RPC: ${TRANSMISSION_HOST}"
+  log "Tag: ${tag}"
+  log "数据目录: ${packages}"
+  [[ -n "$tr" ]] && log "Transmission: ${tr}"
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    warn "dry-run：将检测 RPC 并添加 ${torrents}/*.torrent"
+  elif [[ -n "$tr" ]]; then
+    if ! transmission_remote "$tr" -si >/dev/null 2>&1; then
+      err "无法连接 Transmission RPC（${TRANSMISSION_HOST}）"
+      err "请确认 Transmission 已启动，且设置里已开启远程控制"
+      if [[ -z "${TRANSMISSION_AUTH:-}" && -z "${TRANSMISSION_USER:-}" ]]; then
+        err "若设置了 RPC 密码，请 export TRANSMISSION_AUTH=用户名:密码"
+      fi
+      exit 1
+    fi
+  elif ! transmission_rpc_ok; then
+    err "无法连接 Transmission RPC（${TRANSMISSION_HOST}）"
+    err "macOS：Transmission → 设置 → 远程 → 勾选「允许远程访问」"
+    err "也可安装 CLI: brew install transmission"
+    if [[ -z "${TRANSMISSION_AUTH:-}" && -z "${TRANSMISSION_USER:-}" ]]; then
+      err "若设置了 RPC 密码，请 export TRANSMISSION_AUTH=用户名:密码"
+    fi
+    exit 1
+  fi
+
+  local -a platforms=(android linux macos windows)
+  local -a data_names=(
+    "datakeep-${ver}-android.apk"
+    "datakeep-${ver}-linux-x64.tar.gz"
+    "datakeep-${ver}-macos.zip"
+    "datakeep-${ver}-windows-x64.zip"
+  )
+
+  seed_list_has_name() {
+    local n="$1"
+    if [[ -n "$tr" ]]; then
+      transmission_remote "$tr" -l 2>/dev/null | grep -Fq "$n"
+    else
+      transmission_rpc_list_names 2>/dev/null | grep -Fxq "$n"
+    fi
+  }
+
+  seed_add_torrent() {
+    local torrent_path="$1" download_dir="$2" display_name="$3"
+    local add_out rc=0
+    if [[ -n "$tr" ]]; then
+      add_out="$(transmission_remote "$tr" -w "$download_dir" -a "$torrent_path" 2>&1)" || rc=$?
+    else
+      add_out="$(transmission_rpc_add "$torrent_path" "$download_dir" 2>&1)" || rc=$?
+      if [[ "$rc" -eq 2 ]]; then
+        printf '%s' "$add_out"
+        return 2
+      fi
+    fi
+    printf '%s' "$add_out"
+    return "$rc"
+  }
+
+  seed_remove_old_torrents() {
+    if [[ -n "$tr" ]]; then
+      local list_line id
+      while IFS= read -r list_line; do
+        [[ "$list_line" == *datakeep-* ]] || continue
+        [[ "$list_line" == *"datakeep-${ver}-"* ]] && continue
+        id="$(awk '{print $1}' <<<"$list_line")"
+        [[ -n "$id" && "$id" =~ ^[0-9]+$ ]] || continue
+        warn "移除旧种 #${id}"
+        transmission_remote "$tr" -t "$id" -S >/dev/null 2>&1 || true
+        transmission_remote "$tr" -t "$id" -r >/dev/null 2>&1 || true
+      done < <(transmission_remote "$tr" -l 2>/dev/null | grep -F 'datakeep-' || true)
+    else
+      transmission_rpc_remove_old "$ver"
+    fi
+  }
+
+  seed_show_list() {
+    if [[ -n "$tr" ]]; then
+      transmission_remote "$tr" -l 2>/dev/null | grep -F 'datakeep-' || true
+    else
+      transmission_rpc_list_names 2>/dev/null | grep -F 'datakeep-' | sed 's/^/  /' || true
+    fi
+  }
+
+  if [[ "$SEED_REMOVE_OLD" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
+    log "移除旧版 datakeep-* 种子（保留 ${tag}）…"
+    seed_remove_old_torrents
+  fi
+
+  local i p torrent name added=0 skipped=0 failed=0
+  for i in "${!platforms[@]}"; do
+    p="${platforms[$i]}"
+    name="${data_names[$i]}"
+    torrent="$torrents/${p}.torrent"
+    if [[ ! -f "$torrent" ]]; then
+      warn "缺少 ${torrent}"
+      failed=$((failed + 1))
+      continue
+    fi
+    if [[ ! -f "$packages/$name" ]]; then
+      err "缺少数据文件 ${packages}/${name}（须与种子内文件名一致）"
+      failed=$((failed + 1))
+      continue
+    fi
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      log "dry-run：添加 ${torrent}  →  ${packages}  (${name})"
+      continue
+    fi
+    if seed_list_has_name "$name"; then
+      warn "已在列表，跳过: ${name}"
+      skipped=$((skipped + 1))
+      continue
+    fi
+    local add_out add_rc=0
+    add_out="$(seed_add_torrent "$torrent" "$packages" "$name" 2>&1)" || add_rc=$?
+    if [[ "$add_rc" -eq 0 ]]; then
+      ok "已添加: ${name}"
+      added=$((added + 1))
+    elif [[ "$add_rc" -eq 2 || "$add_out" == *[Dd]uplicate* ]]; then
+      warn "重复，跳过: ${name}"
+      skipped=$((skipped + 1))
+    else
+      err "添加失败 ${name}: ${add_out}"
+      failed=$((failed + 1))
+    fi
+  done
+
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    echo
+    ok "做种：新增 ${added}，跳过 ${skipped}，失败 ${failed}"
+    log "当前 datakeep 任务:"
+    seed_show_list || warn "列表中暂无 datakeep 任务"
+  fi
+  if [[ "$failed" -ne 0 ]]; then
+    exit 1
+  fi
+  exit 0
+}
+
 cmd_download() {
   cd "$ROOT"
   REPO="$(resolve_repo)"
@@ -631,7 +959,8 @@ cmd_download() {
   fi
 
   echo
-  ok "做种：qBittorrent 添加 $torrents/*.torrent，数据目录指向 $packages"
+  ok "下一步做种: ./scripts/release.sh seed ${tag}"
+  ok "（Transmission 远程控制 + 数据目录 ${packages}）"
   exit 0
 }
 
@@ -768,6 +1097,10 @@ fi
 
 if [[ "$ACTION" == "download" ]]; then
   cmd_download
+fi
+
+if [[ "$ACTION" == "seed" ]]; then
+  cmd_seed
 fi
 
 if [[ "$ACTION" == "market" ]]; then
