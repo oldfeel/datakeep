@@ -26,7 +26,7 @@
 7. ~~对外分享~~ — 系统分享（微信/邮件等）；不做公网直链/网盘 API
 8. ~~移动端 Syncthing 进程内引擎~~ — 共用 `syncthing_core`（gomobile：iOS xcframework + Android AAR）；桌面编译 `bin/syncthing`（Windows 为 `syncthing.exe`，见 `scripts/build_desktop_syncthing.sh`）
 
-应用市场（`datakeep-market`）市场应用包仍在服务器本机 `STORAGE_DIR`；**客户端安装包**经 GitHub Release + BT/磁力分发（`sync-github` 拉 GitHub 写链并生成 `.torrent`；家宽 PC 用 qBittorrent 做种加速国内用户）。
+应用市场（`datakeep-market`）应用 zip 与 **sync-github 新客户端包**写入 **Cloudflare R2**，官网 API 签发短期预签名下载 URL；**GitHub Release** 仍为备用链；Android 可选上传蒲公英扫码安装。
 
 ### 代码双推（可选）
 

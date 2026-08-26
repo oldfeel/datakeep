@@ -26,7 +26,7 @@ cd scripts   # 或在仓库根目录用 ./scripts/release.sh
 | 步骤 | 做什么 | 前置条件 |
 |------|--------|----------|
 | `release` | 触发 CI「Build packages」，产物挂到 [GitHub Release](https://github.com/oldfeel/datakeep/releases) | 工作区干净；需 `git`、`gh`（跟踪 CI 时） |
-| `market` | 调用官网 `sync-github`，写入 GitHub 下载链 | **上一步 CI 已成功**；需市场管理员账号 |
+| `market` | 调用官网 `sync-github`：GitHub → R2（已配置）+ 写入下载元数据 | **上一步 CI 已成功**；需市场管理员账号；服务端需配置 R2 |
 | `download` | 从 GitHub 拉四端包；可选上传 APK 到蒲公英 | Release 已有资产 |
 
 说明：
@@ -34,7 +34,7 @@ cd scripts   # 或在仓库根目录用 ./scripts/release.sh
 - 第 1 步结束后，若本机已配置市场账号，脚本会**自动尝试**官网同步；失败或未配置时，再单独跑第 2 步 `./release.sh market`。
 - 不想等 CI 时可：`./release.sh --no-wait`，到 Actions 页确认编完后再执行 `market`。
 - 指定版本示例：`./release.sh market v0.1.1`、`./release.sh download v0.1.1`。
-- 官网下载页：各平台 **GitHub 下载**；Android 另提供 **蒲公英扫码**（由 `download` 上传或手动维护）。
+- 官网下载页：各平台 **CDN（R2 预签名）主链** + **GitHub 备用**；Android 另提供 **蒲公英扫码**（由 `download` 上传或手动维护）。
 
 ---
 

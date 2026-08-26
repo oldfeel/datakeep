@@ -9,7 +9,7 @@
 | 渠道 | 说明 |
 |------|------|
 | [GitHub Releases](https://github.com/oldfeel/datakeep/releases) | Linux / Windows / macOS / Android 安装包 |
-| [datakeep.site](https://datakeep.site/) | 官网下载页（含 BT 磁力链） |
+| [datakeep.site](https://datakeep.site/) | 官网下载页（GitHub 下载；Android 蒲公英扫码） |
 
 发版与官网同步：`./scripts/release.sh`（详见脚本内 `--help`）。
 
