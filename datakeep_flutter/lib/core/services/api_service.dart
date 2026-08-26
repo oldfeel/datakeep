@@ -771,9 +771,12 @@ class ApiService {
   /// 扫描前等待本机 Syncthing API 可用（移动端冷启动尤其重要）
   static Future<void> _waitSyncthingReadyForDiscovery() async {
     if (kIsWeb) return;
-    for (var i = 0; i < 30; i++) {
+    for (var i = 0; i < 45; i++) {
       try {
-        if (await NativeService.ensureSyncthingRunning()) return;
+        if (await NativeService.ensureSyncthingRunning()) {
+          debugPrint('[discovery] Syncthing 就绪 (${i + 1}/45)');
+          return;
+        }
       } catch (_) {}
       await Future.delayed(const Duration(seconds: 1));
     }

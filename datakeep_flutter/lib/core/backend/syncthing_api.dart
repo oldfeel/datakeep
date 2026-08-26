@@ -21,6 +21,15 @@ class SyncthingApi {
     debugPrint('Syncthing config: $_configPath, hasKey: ${_apiKey.isNotEmpty}');
   }
 
+  /// config.xml 由 Syncthing 引擎异步创建后需重新读取 apikey（Android 冷启动）
+  void reloadConfig() {
+    if (_configPath.isEmpty) {
+      _configPath = _findConfigPath();
+    }
+    _apiKey = _loadApiKey();
+    debugPrint('Syncthing config reloaded, hasKey: ${_apiKey.isNotEmpty}');
+  }
+
   String _findConfigPath() {
     final home = Platform.environment['HOME'] ?? '';
     final candidates = [

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../../shared/utils/local_http_client.dart';
+import '../backend/syncthing_api.dart';
 
 /// Platform Channel 服务，用于与原生代码通信
 /// 桌面端使用系统命令，移动端使用 Platform Channel
@@ -29,7 +30,19 @@ class NativeService {
   /// 确保 Syncthing 在运行（桌面端会在 API 不可用时自动重启）
   static Future<bool> ensureSyncthingRunning() async {
     if (_isDesktop) return _startSyncthingDesktop();
-    return _isSyncthingApiReady();
+    return _isMobileSyncthingReady();
+  }
+
+  /// 移动端：API 可用且能读到本机 device ID（避免无 apikey 时误判 403 为就绪）
+  static Future<bool> _isMobileSyncthingReady() async {
+    try {
+      SyncthingApi().reloadConfig();
+      if (!await SyncthingApi().isRunning()) return false;
+      final id = await SyncthingApi().getLocalDeviceId();
+      return id != null && id.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 停止 Syncthing 服务

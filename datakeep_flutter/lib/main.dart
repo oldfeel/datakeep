@@ -152,22 +152,14 @@ Future<void> _startIosServices() async {
 Future<void> _startAndroidServices() async {
   debugPrint('[startup] Android 启动流程开始');
 
-  String? configPath;
-  var deviceName = '';
-  for (var i = 0; i < 20; i++) {
-    final boot = await NativeService.getSyncthingBootstrap();
-    configPath = boot.path;
-    if (boot.deviceName != null && deviceName.isEmpty) {
-      deviceName = boot.deviceName!;
-    }
-    debugPrint('[startup] bootstrap 尝试 ${i + 1}/20 => path=$configPath, deviceName=$deviceName');
-    if (configPath != null && File(configPath).existsSync()) break;
-    await Future.delayed(const Duration(seconds: 1));
-  }
+  final boot = await NativeService.getSyncthingBootstrap();
+  var configPath = boot.path;
+  var deviceName = boot.deviceName ?? '';
+  debugPrint('[startup] bootstrap => path=$configPath, deviceName=$deviceName');
 
   SyncthingApi().init(configPath: configPath, defaultLocalDeviceName: deviceName);
 
-  // 热重启时 Syncthing 可能仍在运行，避免重复启动导致进程冲突
+  // 先启动引擎；首次安装时 config.xml 由 SyncthingService 异步创建，不能先等文件再启动
   if (!await SyncthingApi().isRunning()) {
     try {
       final syncthingStarted = await NativeService.startSyncthingService();
@@ -178,6 +170,24 @@ Future<void> _startAndroidServices() async {
     }
   } else {
     debugPrint('[startup] Syncthing 已在运行，跳过 startSyncthingService');
+  }
+
+  // 等待 config 落盘 + API 带 apikey 可用（修复冷启动 discovery 空列表）
+  for (var i = 0; i < 45; i++) {
+    if (configPath != null && File(configPath).existsSync()) {
+      SyncthingApi().reloadConfig();
+      if (await SyncthingApi().isRunning()) {
+        final myId = await SyncthingApi().getLocalDeviceId();
+        if (myId != null && myId.isNotEmpty) {
+          debugPrint('[startup] Syncthing API 就绪 (${i + 1}/45) myID=$myId');
+          break;
+        }
+      }
+    }
+    if (i == 44) {
+      debugPrint('[startup] Syncthing API 等待超时，Backend 仍将尝试启动');
+    }
+    await Future.delayed(const Duration(seconds: 1));
   }
 
   if (deviceName.isEmpty) {
@@ -207,13 +217,6 @@ Future<void> _startAndroidServices() async {
 
   if (deviceName.isNotEmpty) {
     try {
-      for (var i = 0; i < 15; i++) {
-        if (await NativeService.ensureSyncthingRunning()) {
-          debugPrint('[startup] Syncthing API 就绪 (${i + 1}/15)');
-          break;
-        }
-        await Future.delayed(const Duration(seconds: 1));
-      }
       await SyncthingApi().ensureLocalDeviceName(deviceName);
       await SyncthingApi().ensureAndroidFoldersReady();
     } catch (e, st) {
