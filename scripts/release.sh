@@ -550,34 +550,38 @@ transmission_rpc_url() {
   fi
 }
 
-transmission_curl_auth_args() {
-  TRANSMISSION_CURL_AUTH=()
+# macOS bash 3.2 + set -u 下 "${empty[@]}" 会 unbound；用函数包装 curl
+transmission_curl() {
   if [[ -n "${TRANSMISSION_AUTH:-}" ]]; then
-    TRANSMISSION_CURL_AUTH=(-u "$TRANSMISSION_AUTH")
+    curl -u "$TRANSMISSION_AUTH" "$@"
   elif [[ -n "${TRANSMISSION_USER:-}" ]]; then
-    TRANSMISSION_CURL_AUTH=(-u "${TRANSMISSION_USER}:${TRANSMISSION_PASSWORD:-}")
+    curl -u "${TRANSMISSION_USER}:${TRANSMISSION_PASSWORD:-}" "$@"
+  else
+    curl "$@"
   fi
 }
 
 transmission_rpc_session_id() {
   need_cmd curl
-  transmission_curl_auth_args
-  local url
+  local url session
   url="$(transmission_rpc_url)"
-  curl -sI "${TRANSMISSION_CURL_AUTH[@]}" "$url" \
+  # Transmission 对 HEAD 返回 501；需 POST 一次拿到 409 响应里的 Session-Id
+  session="$(transmission_curl -sD - -o /dev/null -X POST "$url" \
+    -H 'Content-Type: application/json' \
+    -d '{"method":"session-get","arguments":{}}' \
     | awk -F': ' '/^[Xx]-[Tt]ransmission-[Ss]ession-[Ii]d/ {print $2}' \
-    | tr -d '\r\n'
+    | tr -d '\r\n')"
+  [[ -n "$session" ]] && printf '%s' "$session"
 }
 
 transmission_rpc_call() {
   local method="$1" args_json="${2:-{}}"
   need_cmd curl
-  transmission_curl_auth_args
   local url session resp
   url="$(transmission_rpc_url)"
   session="$(transmission_rpc_session_id)" || return 1
   [[ -n "$session" ]] || return 1
-  resp="$(curl -fsS "${TRANSMISSION_CURL_AUTH[@]}" -X POST "$url" \
+  resp="$(transmission_curl -fsS -X POST "$url" \
     -H "X-Transmission-Session-Id: $session" \
     -H 'Content-Type: application/json' \
     -d "{\"method\":\"${method}\",\"arguments\":${args_json}}")" || return 1
