@@ -16,6 +16,7 @@ import '../../shared/widgets/folder_edit_dialog.dart';
 import '../../shared/constants/app_info.dart';
 import '../../shared/widgets/app_logo.dart';
 import '../../features/apps/screens/market_screen.dart';
+import '../../features/feedback/screens/feedback_screen.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({super.key});
@@ -512,6 +513,18 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
                       );
                     }
                   }
+                },
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                icon: const Icon(Icons.feedback_outlined, size: 20),
+                tooltip: '意见反馈',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const FeedbackScreen()),
+                  );
                 },
               ),
               IconButton(

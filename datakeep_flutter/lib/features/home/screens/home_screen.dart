@@ -14,6 +14,7 @@ import '../../folders/screens/folder_detail_screen.dart';
 import '../../sync/screens/sync_screen.dart';
 import '../../apps/open_app.dart';
 import '../../apps/screens/market_screen.dart';
+import '../../feedback/screens/feedback_screen.dart';
 import '../../../shared/widgets/add_item_dialog.dart';
 import '../../../shared/widgets/peer_folder_status_view.dart';
 import '../../../shared/constants/app_info.dart';
@@ -443,10 +444,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showMenu(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
             ListTile(
               leading: const Icon(Icons.devices),
               title: const Text('设备管理'),
@@ -514,6 +517,17 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const Divider(),
             ListTile(
+              leading: const Icon(Icons.feedback_outlined),
+              title: const Text('意见反馈'),
+              subtitle: const Text('提交问题或建议'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const FeedbackScreen()),
+                );
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.info),
               title: const Text('关于'),
               onTap: () {
@@ -527,6 +541,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           ],
+          ),
         ),
       ),
     );
