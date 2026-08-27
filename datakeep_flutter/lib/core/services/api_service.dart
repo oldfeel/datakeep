@@ -1353,6 +1353,24 @@ class ApiService {
     });
   }
 
+  /// 追加单条忽略规则（相对同步根目录路径）
+  static Future<void> appendFolderIgnore(
+    String folderId,
+    String relativePath, {
+    bool isDir = true,
+  }) async {
+    var norm = relativePath.replaceAll('\\', '/');
+    norm = norm.replaceAll(RegExp(r'^/+'), '').replaceAll(RegExp(r'/+$'), '');
+    if (norm.isEmpty) {
+      throw Exception('忽略路径不能为空');
+    }
+    final pattern = isDir ? '(?d)$norm/**' : '(?d)$norm';
+    final lines = await getFolderIgnores(folderId);
+    if (lines.any((l) => l.trim() == pattern)) return;
+    lines.add(pattern);
+    await setFolderIgnores(folderId, lines);
+  }
+
   static Future<void> scanFolder(String folderId) async {
     await _post('/folder/${Uri.encodeComponent(folderId)}/scan', {});
   }

@@ -14,6 +14,7 @@ import '../../../shared/utils/file_opener.dart';
 import '../../../shared/utils/local_file_path.dart';
 import '../../../shared/widgets/add_item_dialog.dart';
 import '../../../shared/widgets/file_thumbnail.dart';
+import '../../../shared/widgets/entry_context_menu.dart';
 import '../../../shared/widgets/folder_sync_banner.dart';
 import '../../../shared/widgets/share_to_cloud_sheet.dart';
 
@@ -41,6 +42,10 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   Timer? _syncTimer;
   bool _fixingPath = false;
   bool _scanning = false;
+
+  bool get _canWriteEntries =>
+      (_folderInfo?.isLocal ?? false) &&
+      !(_folderInfo?.isReadonlyAccess ?? false);
 
   @override
   void initState() {
@@ -686,6 +691,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     final size = file['size'] as int? ?? 0;
     final modTime = file['modTime'] as int? ?? 0;
     final isApp = isDir && _entryIsApp(name, file);
+    final relativePath = _relativePath(name);
 
     return ListTile(
       leading: FileThumbnail(
@@ -764,12 +770,21 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         } else if (isDir) {
           _navigateToFolder(name);
         } else {
-          final path = _currentPath.isEmpty
-              ? name
-              : '${_currentPath.join('/')}/$name';
-          _previewFile(path);
+          _previewFile(relativePath);
         }
       },
+      onLongPress: _canWriteEntries
+          ? () {
+              EntryContextActions.showEntryActionSheet(
+                context,
+                entryName: displayName,
+                folderId: widget.folderId,
+                relativePath: relativePath,
+                isDir: isDir,
+                onSuccess: _loadFiles,
+              );
+            }
+          : null,
     );
   }
 

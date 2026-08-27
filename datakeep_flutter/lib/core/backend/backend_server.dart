@@ -1354,11 +1354,17 @@ class BackendServer {
     final safe = _resolveWritePath(folderPath, filePath);
     if (safe == null) return Response(403, body: '非法路径');
     try {
-      final f = File(safe);
-      if (!await f.exists()) {
+      final entityType = FileSystemEntity.typeSync(safe);
+      if (entityType == FileSystemEntityType.notFound) {
         return Response.notFound('不存在');
       }
-      await f.delete();
+      if (entityType == FileSystemEntityType.directory) {
+        await Directory(safe).delete(recursive: true);
+      } else if (entityType == FileSystemEntityType.file) {
+        await File(safe).delete();
+      } else {
+        return Response.notFound('不存在');
+      }
       unawaited(_api.triggerFolderScan(folderId));
       return Response.ok(
         '{"ok":true}',

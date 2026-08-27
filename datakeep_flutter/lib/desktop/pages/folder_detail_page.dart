@@ -16,6 +16,7 @@ import '../../shared/utils/local_file_path.dart';
 import '../../shared/widgets/add_item_dialog.dart';
 import '../../shared/widgets/file_thumbnail.dart';
 import '../../shared/widgets/folder_sync_banner.dart';
+import '../../shared/widgets/entry_context_menu.dart';
 import '../../shared/widgets/share_to_cloud_sheet.dart';
 
 enum _SortField { name, size, mtime, ctime }
@@ -58,6 +59,9 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
   bool _sortAscending = true;
 
   bool get _showSyncBanner =>
+      widget.device.isLocal && !widget.folder.isReadonlyAccess;
+
+  bool get _canWriteEntries =>
       widget.device.isLocal && !widget.folder.isReadonlyAccess;
 
   @override
@@ -667,25 +671,26 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                     final isDir = _isDir(f);
                     final isApp = isDir && _entryIsApp(name, f);
                     final displayName = _entryDisplayName(name, f);
-                    return Container(
-                      key: ValueKey('f_$i'),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: Theme.of(context)
-                                .dividerColor
-                                .withOpacity(0.3),
-                          ),
-                        ),
-                      ),
-                      child: InkWell(
+                    final relativePath = _relativePath(name);
+                    Widget row = InkWell(
                         onTap: isDir
                             ? (isApp
                                 ? () => _openEntryApp(name)
                                 : () => _enterFolder(name))
-                            : () => widget.onFileTap(_relativePath(name)),
-                        onSecondaryTap:
-                            isDir ? null : () => _shareFile(context, name),
+                            : () => widget.onFileTap(relativePath),
+                        onSecondaryTapDown: _canWriteEntries
+                            ? (details) {
+                                EntryContextActions.showEntryDesktopMenu(
+                                  context,
+                                  details.globalPosition,
+                                  entryName: displayName,
+                                  folderId: widget.folder.id,
+                                  relativePath: relativePath,
+                                  isDir: isDir,
+                                  onSuccess: _loadFiles,
+                                );
+                              }
+                            : null,
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 16,
@@ -829,7 +834,19 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                             ],
                           ),
                         ),
+                      );
+                    return Container(
+                      key: ValueKey('f_$i'),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: Theme.of(context)
+                                .dividerColor
+                                .withOpacity(0.3),
+                          ),
+                        ),
                       ),
+                      child: row,
                     );
                   },
                 ),
@@ -861,15 +878,26 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
         final isDir = _isDir(f);
         final isApp = isDir && _entryIsApp(name, f);
         final displayName = _entryDisplayName(name, f);
-        return Card(
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
+        final relativePath = _relativePath(name);
+        Widget tile = InkWell(
             onTap: isDir
                 ? (isApp
                     ? () => _openEntryApp(name)
                     : () => _enterFolder(name))
-                : () => widget.onFileTap(_relativePath(name)),
-            onSecondaryTap: isDir ? null : () => _shareFile(context, name),
+                : () => widget.onFileTap(relativePath),
+            onSecondaryTapDown: _canWriteEntries
+                ? (details) {
+                    EntryContextActions.showEntryDesktopMenu(
+                      context,
+                      details.globalPosition,
+                      entryName: displayName,
+                      folderId: widget.folder.id,
+                      relativePath: relativePath,
+                      isDir: isDir,
+                      onSuccess: _loadFiles,
+                    );
+                  }
+                : null,
             child: Stack(
               children: [
                 SizedBox.expand(
@@ -932,7 +960,10 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                   ),
               ],
             ),
-          ),
+          );
+        return Card(
+          clipBehavior: Clip.antiAlias,
+          child: tile,
         );
       },
     );
