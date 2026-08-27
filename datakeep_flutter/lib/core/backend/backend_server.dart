@@ -16,6 +16,7 @@ import '../../shared/utils/preview_limits.dart';
 import '../../shared/utils/sync_folder_paths.dart';
 import '../../shared/utils/app_manifest.dart';
 import '../services/thumbnail_service.dart';
+import '../services/syncthing_lifecycle.dart';
 
 class BackendServer {
   final SyncthingApi _api = SyncthingApi();
@@ -172,6 +173,7 @@ class BackendServer {
 
     // Syncthing 运行中若 config 仍是 localhost，通过 API 写入手机型号（仅尝试一次，避免 ConfigSaved 循环）
     if (!_deviceNameEnsureAttempted &&
+        !SyncthingLifecycle.instance.isRestarting &&
         localId != null &&
         _defaultLocalDeviceName != null &&
         _defaultLocalDeviceName!.isNotEmpty) {
@@ -224,21 +226,7 @@ class BackendServer {
     return _json({'code': 0, 'data': devices});
   }
 
-  List<Map<String, dynamic>> _configDevices() {
-    try {
-      final xml = File(_api.configPath).readAsStringSync();
-      final reg = RegExp(r'<device\s+id="(.*?)"\s+name="(.*?)"');
-      return reg.allMatches(xml).map<Map<String, dynamic>>((m) => <String, dynamic>{
-        'deviceID': m.group(1) ?? '',
-        'name': m.group(2) ?? m.group(1) ?? '',
-        'addresses': <String>[],
-        'connected': false,
-        'isLocalNetwork': false,
-      }).toList();
-    } catch (_) {
-      return [];
-    }
-  }
+  List<Map<String, dynamic>> _configDevices() => _api.parseDevicesFromConfig();
 
   Future<Response> _handleDeviceFolders(Request request, String deviceId) async {
     final isLocal = await _isLocalDeviceId(deviceId);
@@ -2000,13 +1988,17 @@ class BackendServer {
     if (deviceId.isEmpty) {
       return _json({'code': 1001, 'data': '缺少 deviceID'}, status: 400);
     }
+    if (SyncthingLifecycle.instance.isRestarting) {
+      return _json({'code': 1006, 'data': 'Syncthing 重启中，请稍后重试'}, status: 503);
+    }
     final result = await _api.addDeviceToConfig(deviceId, name);
     if (result.containsKey('error')) {
       final err = result['error'].toString();
-      if (err.contains('Syncthing 未运行') ||
+      if (err.contains('Syncthing 重启中') ||
+          err.contains('Syncthing 未运行') ||
           err.contains('连接被拒绝') ||
           err.contains('Connection refused')) {
-        return _json({'code': 1006, 'data': 'Syncthing 未运行，请重启应用'}, status: 503);
+        return _json({'code': 1006, 'data': err.contains('重启') ? err : 'Syncthing 未运行，请重启应用'}, status: 503);
       }
       return _json({'code': 1003, 'data': '添加设备失败: $err'}, status: 500);
     }

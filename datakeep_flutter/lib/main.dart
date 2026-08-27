@@ -7,6 +7,7 @@ import 'app.dart';
 import 'core/backend/backend_server.dart';
 import 'core/backend/syncthing_api.dart';
 import 'core/services/native_service.dart';
+import 'core/services/syncthing_lifecycle.dart';
 
 /// 保持引用，避免被 GC 后退出钩子失效
 // ignore: unused_element
@@ -147,6 +148,7 @@ Future<void> _startIosServices() async {
       debugPrint('$st');
     }
   }
+  SyncthingLifecycle.instance.markReady();
 }
 
 Future<void> _startAndroidServices() async {
@@ -226,6 +228,8 @@ Future<void> _startAndroidServices() async {
   } else {
     debugPrint('[startup] 无设备名，跳过 Syncthing API 写入');
   }
+
+  SyncthingLifecycle.instance.markReady();
 }
 
 Future<void> _startDesktopServices() async {
@@ -238,4 +242,5 @@ Future<void> _startDesktopServices() async {
   if (syncthingOk) {
     await SyncthingApi().ensureOverwriteRemoteDeviceNamesOnConnect();
   }
+  SyncthingLifecycle.instance.markReady();
 }

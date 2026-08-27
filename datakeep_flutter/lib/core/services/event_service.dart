@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'api_service.dart';
+import 'syncthing_lifecycle.dart';
 
 class SyncthingEvent {
   final int id;
@@ -39,6 +40,8 @@ class EventService {
   int _emptyCount = 0;
   int _unavailableBackoff = 10; // Syncthing 不可用时的退避秒数
   bool _loggedUnavailable = false;
+  bool _pausedForRestart = false;
+  StreamSubscription<SyncthingLifecycleState>? _lifecycleSub;
 
   final _eventController = StreamController<SyncthingEvent>.broadcast();
   Stream<SyncthingEvent> get events => _eventController.stream;
@@ -47,6 +50,19 @@ class EventService {
     if (_isRunning) return;
     _isRunning = true;
     _cursorSynced = false;
+    _lifecycleSub ??= SyncthingLifecycle.instance.stateChanges.listen((state) {
+      if (state == SyncthingLifecycleState.restarting) {
+        _pausedForRestart = true;
+      } else if (state == SyncthingLifecycleState.ready) {
+        if (_pausedForRestart) {
+          _pausedForRestart = false;
+          _cursorSynced = false;
+          _emptyCount = 0;
+          _loggedUnavailable = false;
+          _unavailableBackoff = 10;
+        }
+      }
+    });
     _poll();
   }
 
@@ -76,6 +92,10 @@ class EventService {
       _cursorSynced = true;
     }
     while (_isRunning) {
+      if (_pausedForRestart || SyncthingLifecycle.instance.isRestarting) {
+        await Future.delayed(const Duration(seconds: 2));
+        continue;
+      }
       try {
         final events = await ApiService.getSyncthingEvents(
           since: _lastEventId,
@@ -115,6 +135,8 @@ class EventService {
 
   void dispose() {
     stop();
+    _lifecycleSub?.cancel();
+    _lifecycleSub = null;
     _eventController.close();
   }
 }

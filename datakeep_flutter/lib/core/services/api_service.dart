@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../models/folder.dart';
 import '../models/device.dart';
 import 'native_service.dart';
+import 'syncthing_lifecycle.dart';
 import 'android_storage_service.dart';
 import '../../shared/utils/sync_folder_paths.dart';
 import '../../shared/utils/preview_limits.dart';
@@ -554,16 +555,31 @@ class ApiService {
     required String deviceID,
     required String name,
   }) async {
-    try {
-      await _ensureSyncthingReady();
-      await _post('/syncthing/config/devices', {
-        'deviceID': deviceID,
-        'name': name,
-      });
-    } catch (e) {
-      debugPrint('添加设备失败: $e');
-      throw Exception('添加设备失败: $e');
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (SyncthingLifecycle.instance.isRestarting) {
+          await SyncthingLifecycle.instance.waitUntilReady();
+        }
+        await _ensureSyncthingReady();
+        await _post('/syncthing/config/devices', {
+          'deviceID': deviceID,
+          'name': name,
+        });
+        return;
+      } catch (e) {
+        lastError = e;
+        final msg = e.toString();
+        if ((msg.contains('重启') || msg.contains('未运行')) && attempt < 2) {
+          debugPrint('添加设备重试 (${attempt + 1}/3): $msg');
+          await Future.delayed(const Duration(seconds: 3));
+          continue;
+        }
+        debugPrint('添加设备失败: $e');
+        throw Exception('添加设备失败: $e');
+      }
     }
+    throw Exception('添加设备失败: $lastError');
   }
 
   /// 获取待确认的设备（未知设备尝试连接时出现在对端）

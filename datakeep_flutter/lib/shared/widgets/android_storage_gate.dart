@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../core/services/android_storage_service.dart';
-import '../../core/services/native_service.dart';
+import '../../core/services/syncthing_lifecycle.dart';
 
 /// Android 启动时引导授予 All files access（与 Syncthing Android onboarding 一致）
 class AndroidStorageGate extends StatefulWidget {
@@ -16,6 +16,7 @@ class AndroidStorageGate extends StatefulWidget {
 class _AndroidStorageGateState extends State<AndroidStorageGate> with WidgetsBindingObserver {
   bool _checking = true;
   bool _granted = false;
+  bool _restartingSyncthing = false;
 
   @override
   void initState() {
@@ -53,16 +54,32 @@ class _AndroidStorageGateState extends State<AndroidStorageGate> with WidgetsBin
       _granted = ok;
     });
     if (ok && !wasGranted) {
-      await NativeService.restartSyncthingService();
+      setState(() => _restartingSyncthing = true);
+      await SyncthingLifecycle.instance.requestRestart();
+      if (mounted) setState(() => _restartingSyncthing = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (!Platform.isAndroid) return widget.child;
-    if (_checking) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+    if (_checking || _restartingSyncthing) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              if (_restartingSyncthing) ...[
+                const SizedBox(height: 16),
+                Text(
+                  '同步引擎重启中…',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ],
+          ),
+        ),
       );
     }
     if (_granted) return widget.child;

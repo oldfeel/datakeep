@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../../shared/utils/local_http_client.dart';
+import '../services/syncthing_lifecycle.dart';
 
 class SyncthingApi {
   static final SyncthingApi _instance = SyncthingApi._();
@@ -367,6 +368,11 @@ class SyncthingApi {
 
     final running = await isRunning();
     if (!running) {
+      // Android gomobile：引擎停止/重启窗口内写 config.xml 会与 native 竞态，由 Kotlin 启动前写入
+      if (Platform.isAndroid) {
+        debugPrint('[设备名] Android 引擎未运行，跳过 config.xml 写入');
+        return;
+      }
       _patchLocalDeviceNameInConfigFile(formattedId, trimmed);
       debugPrint('[设备名] Syncthing 未运行，已写入 config.xml');
       return;
@@ -435,6 +441,33 @@ class SyncthingApi {
       if (name != null && name.isNotEmpty) return name;
     } catch (_) {}
     return null;
+  }
+
+  /// 从 config.xml 解析所有设备（属性顺序无关，供 REST 不可用时的回退）
+  List<Map<String, dynamic>> parseDevicesFromConfig() {
+    try {
+      if (_configPath.isEmpty || !File(_configPath).existsSync()) return [];
+      final xml = File(_configPath).readAsStringSync();
+      final tagRegex = RegExp(r'<device\s+([^>/]+)/?>', caseSensitive: false);
+      final devices = <Map<String, dynamic>>[];
+      for (final m in tagRegex.allMatches(xml)) {
+        final attrs = m.group(1) ?? '';
+        final id = RegExp(r'\bid="([^"]*)"').firstMatch(attrs)?.group(1)?.trim() ?? '';
+        if (id.isEmpty) continue;
+        final name = RegExp(r'\bname="([^"]*)"').firstMatch(attrs)?.group(1)?.trim() ?? id;
+        devices.add({
+          'deviceID': id,
+          'name': name,
+          'addresses': <String>[],
+          'connected': false,
+          'isLocalNetwork': false,
+        });
+      }
+      return devices;
+    } catch (e) {
+      debugPrint('parseDevicesFromConfig 失败: $e');
+      return [];
+    }
   }
 
   static bool isPlaceholderName(String name, String deviceId) => _isPlaceholderName(name, deviceId);
@@ -900,6 +933,9 @@ class SyncthingApi {
 
   /// 添加设备到 Syncthing 配置（先读取默认配置再 POST，与 Syncthing GUI 一致）
   Future<Map<String, dynamic>> addDeviceToConfig(String deviceId, String name) async {
+    if (SyncthingLifecycle.instance.isRestarting) {
+      return {'error': 'Syncthing 重启中，请稍后重试'};
+    }
     if (!await isRunning()) {
       return {'error': 'Syncthing 未运行'};
     }

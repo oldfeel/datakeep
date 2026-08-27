@@ -487,11 +487,14 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   List<Map<String, String>> _discoveredDevices = [];
   bool _isLoadingDiscovery = true;
   bool _manualInput = false;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
     super.initState();
-    _loadDiscoveredDevices();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadDiscoveredDevices();
+    });
   }
 
   @override
@@ -508,7 +511,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     });
     try {
       // 先刷新已配置设备，避免列表未加载时误判「未发现设备」
-      await widget.deviceProvider.fetchDevices();
+      await widget.deviceProvider.fetchDevices(silent: true);
       // Syncthing 局域网通告约 30s 一轮；冷启动需更长等待
       final devices = await ApiService.getDiscoveredDevices(
         retries: 20,
@@ -836,9 +839,10 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
           child: const Text('取消'),
         ),
         ElevatedButton(
-          onPressed: canSubmit
+          onPressed: (canSubmit && !_isSubmitting)
               ? () async {
                   final deviceId = _effectiveDeviceId!;
+                  setState(() => _isSubmitting = true);
                   try {
                     await widget.deviceProvider.addDevice(
                       deviceID: deviceId,
@@ -862,10 +866,18 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                         ),
                       );
                     }
+                  } finally {
+                    if (mounted) setState(() => _isSubmitting = false);
                   }
                 }
               : null,
-          child: const Text('添加'),
+          child: _isSubmitting
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('添加'),
         ),
       ],
     );
