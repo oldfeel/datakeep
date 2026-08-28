@@ -34,11 +34,17 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   bool _isLoading = true;
   String? _error;
   Timer? _waitTimer;
+  int _retryAttempt = 0;
+  /// 有缓存列表时的短暂失败，仅用于安排重试，不覆盖 UI
+  String? _softRetryError;
 
   @override
   void initState() {
     super.initState();
-    _loadFolders();
+    // 避免在 build 阶段同步 notifyListeners（FolderProvider）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadFolders();
+    });
   }
 
   @override
@@ -51,16 +57,24 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   void didUpdateWidget(covariant DeviceDetailPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.device.id != widget.device.id) {
-      _loadFolders();
+      _retryAttempt = 0;
+      _folders = [];
+      _softRetryError = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadFolders();
+      });
     }
   }
 
-  void _scheduleWaitRetry() {
+  void _scheduleWaitRetry([String? errorForKind]) {
     _waitTimer?.cancel();
-    if (!peerFolderErrorShouldAutoRetry(classifyPeerFolderError(_error))) {
+    final raw = errorForKind ?? _error ?? _softRetryError;
+    if (!peerFolderErrorShouldAutoRetry(classifyPeerFolderError(raw))) {
       return;
     }
-    _waitTimer = Timer(const Duration(seconds: 5), () {
+    final delaySec = _retryAttempt < 3 ? 2 : 5;
+    _retryAttempt++;
+    _waitTimer = Timer(Duration(seconds: delaySec), () {
       if (mounted) _loadFolders();
     });
   }
@@ -73,10 +87,13 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+    final hadContent = _folders.isNotEmpty;
+    if (!hadContent) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
     try {
       final folders = await context
           .read<FolderProvider>()
@@ -87,20 +104,31 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
         'ids=${folders.map((f) => f.id).join(",")}',
       );
       _waitTimer?.cancel();
+      _retryAttempt = 0;
+      _softRetryError = null;
       if (mounted) {
         setState(() {
           _folders = folders;
+          _error = null;
           _isLoading = false;
         });
       }
     } catch (e) {
       debugPrint('[device-detail] 加载失败 device=${widget.device.id}: $e');
-      if (mounted) {
+      if (!mounted) return;
+      final kind = classifyPeerFolderError(e);
+      final soft = hadContent && peerFolderErrorShouldAutoRetry(kind);
+      if (soft) {
+        _softRetryError = e.toString();
+        setState(() => _isLoading = false);
+        _scheduleWaitRetry(e.toString());
+      } else {
+        _softRetryError = null;
         setState(() {
           _error = e.toString();
           _isLoading = false;
         });
-        _scheduleWaitRetry();
+        _scheduleWaitRetry(e.toString());
       }
     }
   }

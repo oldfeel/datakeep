@@ -679,14 +679,26 @@ class ApiService {
   }
 
 
-  /// 获取 WiFi 信息
+  /// 获取 WiFi 信息（失败返回空名，不展示「获取失败」）
   static Future<Map<String, dynamic>> getWifiInfo() async {
-    try {
-      return await _get('/wifi-info');
-    } catch (e) {
-      debugPrint('获取WiFi信息失败: $e');
-      return {'wifiName': '获取失败'};
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0) {
+          await Future.delayed(Duration(milliseconds: 400 * attempt));
+        }
+        final resp = await _get('/wifi-info', silent: attempt > 0);
+        final data = resp['data'];
+        if (data is Map) {
+          return {'wifiName': data['wifiName']?.toString() ?? ''};
+        }
+        return {'wifiName': resp['wifiName']?.toString() ?? ''};
+      } catch (e) {
+        lastError = e;
+      }
     }
+    debugPrint('获取WiFi信息失败: $lastError');
+    return {'wifiName': ''};
   }
 
   /// 获取 Syncthing 事件

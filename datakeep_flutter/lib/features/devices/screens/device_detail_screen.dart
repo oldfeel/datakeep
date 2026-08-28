@@ -30,6 +30,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   String? _error;
   String? _wifiName;
   Timer? _waitTimer;
+  int _retryAttempt = 0;
+  String? _softRetryError;
 
   @override
   void initState() {
@@ -43,21 +45,27 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     super.dispose();
   }
 
-  void _scheduleWaitRetry() {
+  void _scheduleWaitRetry([String? errorForKind]) {
     _waitTimer?.cancel();
-    if (!peerFolderErrorShouldAutoRetry(classifyPeerFolderError(_error))) {
+    final raw = errorForKind ?? _error ?? _softRetryError;
+    if (!peerFolderErrorShouldAutoRetry(classifyPeerFolderError(raw))) {
       return;
     }
-    _waitTimer = Timer(const Duration(seconds: 5), () {
+    final delaySec = _retryAttempt < 3 ? 2 : 5;
+    _retryAttempt++;
+    _waitTimer = Timer(Duration(seconds: delaySec), () {
       if (mounted) _loadData();
     });
   }
 
   Future<void> _loadData() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+    final hadContent = _folders.isNotEmpty;
+    if (!hadContent) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
 
     try {
       // 加载设备信息
@@ -87,7 +95,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       }
 
       // 加载文件夹列表
-      _folders = await ApiService.getDeviceFolders(widget.deviceId);
+      final folders = await ApiService.getDeviceFolders(widget.deviceId);
 
       // 加载 WiFi 信息（仅本机设备）
       if (widget.deviceId == 'local') {
@@ -99,15 +107,31 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         }
       }
       _waitTimer?.cancel();
+      _retryAttempt = 0;
+      _softRetryError = null;
+      if (mounted) {
+        setState(() {
+          _folders = folders;
+          _error = null;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _error = e.toString();
-      });
-      _scheduleWaitRetry();
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (!mounted) return;
+      final kind = classifyPeerFolderError(e);
+      final soft = hadContent && peerFolderErrorShouldAutoRetry(kind);
+      if (soft) {
+        _softRetryError = e.toString();
+        setState(() => _isLoading = false);
+        _scheduleWaitRetry(e.toString());
+      } else {
+        _softRetryError = null;
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+        _scheduleWaitRetry(e.toString());
+      }
     }
   }
 
@@ -125,9 +149,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           ),
         ],
       ),
-      body: _isLoading
+      body: _isLoading && _folders.isEmpty
           ? const Center(child: CircularProgressIndicator())
-          : _error != null
+          : _error != null && _folders.isEmpty
               ? PeerFolderStatusView(
                   error: _error,
                   onRetry: _loadData,

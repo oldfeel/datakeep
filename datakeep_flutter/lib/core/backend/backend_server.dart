@@ -1610,14 +1610,58 @@ class BackendServer {
   }
 
   Future<Response> _handleWifiInfo(Request request) async {
+    final name = await _detectWifiSsid();
+    return _json({'code': 0, 'data': {'wifiName': name}});
+  }
+
+  /// 当前已连接 Wi‑Fi SSID；有线/未知则空字符串
+  Future<String> _detectWifiSsid() async {
+    // nmcli：仅取 ACTIVE=yes 的行
     try {
-      final result = await Process.run('nmcli', ['-t', '-f', 'SSID', 'dev', 'wifi']);
-      if (result.exitCode == 0) {
-        final ssid = result.stdout.toString().trim().split('\n').first;
-        return _json({'code': 0, 'data': {'wifiName': ssid}});
+      final r = await Process.run('nmcli', [
+        '-t',
+        '-f',
+        'ACTIVE,SSID',
+        'device',
+        'wifi',
+      ]);
+      if (r.exitCode == 0) {
+        for (final line in r.stdout.toString().split('\n')) {
+          final t = line.trim();
+          if (t.startsWith('yes:')) {
+            final ssid = t.substring(4).trim();
+            if (ssid.isNotEmpty) return ssid;
+          }
+        }
       }
     } catch (_) {}
-    return _json({'code': 0, 'data': {'wifiName': ''}});
+
+    try {
+      final r = await Process.run('iwgetid', ['-r']);
+      if (r.exitCode == 0) {
+        final ssid = r.stdout.toString().trim();
+        if (ssid.isNotEmpty) return ssid;
+      }
+    } catch (_) {}
+
+    // Windows：netsh wlan show interfaces → SSID
+    if (Platform.isWindows) {
+      try {
+        final r = await Process.run('netsh', ['wlan', 'show', 'interfaces']);
+        if (r.exitCode == 0) {
+          for (final line in r.stdout.toString().split('\n')) {
+            final m = RegExp(r'^\s*SSID\s*:\s*(.+)\s*$', caseSensitive: false)
+                .firstMatch(line);
+            if (m != null) {
+              final ssid = m.group(1)?.trim() ?? '';
+              if (ssid.isNotEmpty && ssid.toLowerCase() != 'ssid') return ssid;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    return '';
   }
 
   Future<Response> _handleSharing(Request request, String folderId) async {

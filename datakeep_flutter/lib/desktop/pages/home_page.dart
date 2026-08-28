@@ -491,72 +491,104 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
                     ),
                 ],
               ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
+              PopupMenuButton<String>(
+                tooltip: '设置',
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                icon: const Icon(Icons.qr_code_2, size: 20),
-                tooltip: '本机配对二维码',
-                onPressed: () async {
-                  try {
-                    final id = await ApiService.getLocalDeviceId();
-                    if (!context.mounted) return;
-                    await LocalDeviceQrDialog.show(
-                      context,
-                      deviceId: id,
-                      deviceName: '本机设备',
-                    );
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('获取本机 ID 失败: $e')),
+                icon: const Icon(Icons.settings_outlined, size: 20),
+                onSelected: (value) async {
+                  switch (value) {
+                    case 'qr':
+                      try {
+                        final id = await ApiService.getLocalDeviceId();
+                        if (!context.mounted) return;
+                        await LocalDeviceQrDialog.show(
+                          context,
+                          deviceId: id,
+                          deviceName: '本机设备',
+                        );
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('获取本机 ID 失败: $e')),
+                          );
+                        }
+                      }
+                      break;
+                    case 'feedback':
+                      if (!context.mounted) return;
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const FeedbackScreen(),
+                        ),
                       );
-                    }
+                      break;
+                    case 'market':
+                      if (!context.mounted) return;
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const MarketScreen(),
+                        ),
+                      );
+                      break;
+                    case 'syncthing':
+                      if (!context.mounted) return;
+                      openSyncthingGui(context);
+                      break;
+                    case 'refresh':
+                      if (!context.mounted) return;
+                      context.read<DeviceProvider>().fetchDevices();
+                      _fetchWifiInfo();
+                      break;
                   }
                 },
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                icon: const Icon(Icons.feedback_outlined, size: 20),
-                tooltip: '意见反馈',
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const FeedbackScreen()),
-                  );
-                },
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                icon: const Icon(Icons.storefront_outlined, size: 20),
-                tooltip: '应用市场',
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const MarketScreen()),
-                  );
-                },
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                icon: const Icon(Icons.open_in_browser, size: 20),
-                tooltip: '打开 Syncthing 管理页（高级配置）',
-                onPressed: () => openSyncthingGui(context),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                icon: const Icon(Icons.refresh, size: 20),
-                tooltip: '刷新',
-                onPressed: () {
-                  context.read<DeviceProvider>().fetchDevices();
-                  _fetchWifiInfo();
-                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'qr',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.qr_code_2),
+                      title: Text('本机配对二维码'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'feedback',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.feedback_outlined),
+                      title: Text('意见反馈'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'market',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.storefront_outlined),
+                      title: Text('应用市场'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'syncthing',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.open_in_browser),
+                      title: Text('Syncthing 管理页'),
+                    ),
+                  ),
+                  PopupMenuDivider(),
+                  PopupMenuItem(
+                    value: 'refresh',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.refresh),
+                      title: Text('刷新'),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

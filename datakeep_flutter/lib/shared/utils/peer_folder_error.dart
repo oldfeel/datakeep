@@ -27,7 +27,7 @@ String peerFolderErrorTitle(PeerFolderErrorKind kind) {
     case PeerFolderErrorKind.unpaired:
       return '等待对方同意';
     case PeerFolderErrorKind.offline:
-      return '设备离线';
+      return '正在连接';
     case PeerFolderErrorKind.unreachable:
       return '暂时无法访问';
     case PeerFolderErrorKind.other:
@@ -40,9 +40,9 @@ String peerFolderErrorMessage(PeerFolderErrorKind kind, Object? raw) {
     case PeerFolderErrorKind.unpaired:
       return '已向对方发出配对请求，请在对方设备上同意后再查看文件夹。同意后将自动刷新。';
     case PeerFolderErrorKind.offline:
-      return '对方尚未连上，请确认双方在同一网络，并等待连接建立。';
+      return '对方 Syncthing 尚未连上或刚启动，正在重试…';
     case PeerFolderErrorKind.unreachable:
-      return '已配对但暂时拉不到对方文件夹，请稍后重试。';
+      return '已配对但暂时拉不到对方文件夹（对端服务可能还在启动），请稍候。';
     case PeerFolderErrorKind.other:
       return raw?.toString() ?? '未知错误';
   }
