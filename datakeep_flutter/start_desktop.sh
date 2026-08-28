@@ -32,20 +32,22 @@ bash "$SCRIPT_DIR/scripts/build_desktop_syncthing.sh"
 echo -e "\n${BLUE}📦 flutter pub get${NC}"
 flutter pub get
 
-echo -e "\n${BLUE}🖥️  检测桌面平台${NC}"
-PLATFORM=""
-if flutter devices | grep -q "macos"; then
-  PLATFORM="macos"
-elif flutter devices | grep -q "linux"; then
-  PLATFORM="linux"
-elif flutter devices | grep -q "windows"; then
-  PLATFORM="windows"
+# Linux Debug 默认链 CEF Debug，中文输入法会 DCHECK 闪退；对齐 Windows 用 Release CEF
+if [[ "$(uname -s)" == "Linux" ]]; then
+  bash "$SCRIPT_DIR/scripts/ensure_webview_cef_linux_release.sh"
 fi
 
-if [[ -z "$PLATFORM" ]]; then
-  echo -e "${RED}❌ 未检测到可用的桌面平台${NC}"
-  exit 1
-fi
+echo -e "\n${BLUE}🖥️  检测桌面平台${NC}"
+# 勿用 `flutter devices | grep -q`：grep 提前关管会导致 Broken pipe，误判无设备
+case "$(uname -s)" in
+  Linux*) PLATFORM="linux" ;;
+  Darwin*) PLATFORM="macos" ;;
+  MINGW*|MSYS*|CYGWIN*) PLATFORM="windows" ;;
+  *)
+    echo -e "${RED}❌ 不支持的操作系统: $(uname -s)${NC}"
+    exit 1
+    ;;
+esac
 
 echo -e "${GREEN}✅ 使用平台: $PLATFORM${NC}"
 echo -e "\n${BLUE}🚀 flutter run -d $PLATFORM${NC}"
