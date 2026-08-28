@@ -78,6 +78,21 @@ class MainActivity : FlutterFragmentActivity() {
                         result.success(false)
                     }
                 }
+                "exitApp" -> {
+                    try {
+                        val intent = Intent(this, SyncthingService::class.java).apply {
+                            action = SyncthingService.ACTION_STOP
+                        }
+                        startService(intent)
+                    } catch (e: Exception) {
+                        Log.w(tag, "exitApp 停止服务失败", e)
+                    }
+                    // 稍延后杀进程，给 ACTION_STOP 一点时间
+                    window.decorView.postDelayed({
+                        android.os.Process.killProcess(android.os.Process.myPid())
+                    }, 400)
+                    result.success(true)
+                }
                 "restartSyncthingService" -> {
                     try {
                         val intent = Intent(this, SyncthingService::class.java).apply {

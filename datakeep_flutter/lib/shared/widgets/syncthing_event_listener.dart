@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/services/event_service.dart';
 import '../../core/services/api_service.dart';
+import '../../core/services/app_notification_store.dart';
+import '../../core/models/app_notification.dart';
 import '../../features/devices/providers/device_provider.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import 'accept_pending_folder_dialog.dart';
@@ -59,6 +61,24 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
     super.dispose();
   }
 
+  void _notify(
+    AppNotificationCategory category,
+    String title, {
+    Color? snackColor,
+  }) {
+    if (!mounted) return;
+    context.read<AppNotificationStore>().add(category: category, title: title);
+    if (snackColor != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(title),
+          backgroundColor: snackColor,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
   void _onEvent(SyncthingEvent event) {
     if (!mounted) return;
     switch (event.type) {
@@ -70,6 +90,31 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
         break;
       case 'DeviceConnected':
         context.read<DeviceProvider>().fetchDevices(silent: true);
+        _notify(
+          AppNotificationCategory.device,
+          '设备 ${event.data['id'] ?? ''} 已连接',
+        );
+        break;
+      case 'DeviceDisconnected':
+        context.read<DeviceProvider>().fetchDevices(silent: true);
+        _notify(
+          AppNotificationCategory.device,
+          '设备 ${event.data['id'] ?? ''} 已断开',
+        );
+        break;
+      case 'ItemFinished':
+        context.read<AppNotificationStore>().noteItemFinished();
+        break;
+      case 'FolderErrors':
+        _notify(
+          AppNotificationCategory.sync,
+          '文件夹 ${event.data['folder'] ?? ''} 出现错误',
+          snackColor: Colors.red,
+        );
+        break;
+      case 'ConfigSaved':
+        _notify(AppNotificationCategory.system, '配置已保存');
+        _refreshFoldersAfterSyncthingReady();
         break;
       case 'StartupComplete':
       case 'FolderSummary':
@@ -117,17 +162,6 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
     return deviceId;
   }
 
-  void _showSnack(String message, {Color? color}) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: color,
-        duration: const Duration(seconds: 4),
-      ),
-    );
-  }
-
   Future<Set<String>> _knownDeviceNormIds() async {
     final ids = <String>{};
     try {
@@ -170,7 +204,10 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
         final name = item['name']?.toString() ?? '';
         final address = item['address']?.toString() ?? '';
         final displayName = (name.isNotEmpty && name != deviceId) ? name : '未知设备';
-        _showSnack('收到新设备连接请求: $displayName');
+        _notify(
+          AppNotificationCategory.device,
+          '收到新设备连接请求: $displayName',
+        );
         _showPendingDeviceDialog(deviceId, name, address);
       }
     } else {
@@ -218,7 +255,11 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
         await ApiService.acceptPendingDevice(deviceId: deviceId, name: displayName);
         if (mounted) {
           await context.read<DeviceProvider>().fetchDevices();
-          _showSnack('已接受设备 $displayName', color: Colors.green);
+          _notify(
+            AppNotificationCategory.device,
+            '已接受设备 $displayName',
+            snackColor: Colors.green,
+          );
         }
       } else {
         await ApiService.dismissPendingDevice(
@@ -227,10 +268,21 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
           name: displayName,
           address: address,
         );
-        if (mounted) _showSnack('已忽略设备 $displayName');
+        if (mounted) {
+          _notify(
+            AppNotificationCategory.device,
+            '已忽略设备 $displayName',
+          );
+        }
       }
     } catch (e) {
-      if (mounted) _showSnack('设备操作失败: $e', color: Colors.red);
+      if (mounted) {
+        _notify(
+          AppNotificationCategory.device,
+          '设备操作失败: $e',
+          snackColor: Colors.red,
+        );
+      }
     } finally {
       _shownPendingDevices.remove(deviceId);
     }
@@ -302,7 +354,8 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
         if (folderId.isEmpty || deviceId.isEmpty) continue;
         final label = item['folderLabel']?.toString() ?? folderId;
         final existingPath = await _localFolderPathIfAny(folderId);
-        _showSnack(
+        _notify(
+          AppNotificationCategory.device,
           existingPath != null
               ? '收到共享邀请（本机已有同名文件夹）: $label'
               : '收到共享文件夹邀请: $label',
@@ -354,14 +407,29 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
           final localId = await ApiService.getLocalDeviceId();
           await context.read<FolderProvider>().fetchDeviceFolders(localId, silent: true);
           final msg = acceptResult['message']?.toString() ?? '已接受共享文件夹';
-          _showSnack(msg, color: Colors.green);
+          _notify(
+            AppNotificationCategory.device,
+            msg,
+            snackColor: Colors.green,
+          );
         }
       } else if (result?.accepted == false) {
         await ApiService.dismissPendingFolder(folderId: folderId, deviceId: deviceId);
-        if (mounted) _showSnack('已忽略共享文件夹 $displayLabel');
+        if (mounted) {
+          _notify(
+            AppNotificationCategory.device,
+            '已忽略共享文件夹 $displayLabel',
+          );
+        }
       }
     } catch (e) {
-      if (mounted) _showSnack('共享文件夹操作失败: $e', color: Colors.red);
+      if (mounted) {
+        _notify(
+          AppNotificationCategory.device,
+          '共享文件夹操作失败: $e',
+          snackColor: Colors.red,
+        );
+      }
     } finally {
       _shownPendingFolders.remove(key);
     }

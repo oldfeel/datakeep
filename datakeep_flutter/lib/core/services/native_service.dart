@@ -62,6 +62,25 @@ class NativeService {
     }
   }
 
+  /// 停同步后彻底退出进程（Android 杀前台服务同进程）
+  static Future<void> exitAppCompletely() async {
+    try {
+      await stopSyncthingService();
+    } catch (e) {
+      debugPrint('[exit] 停止 Syncthing 失败: $e');
+    }
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (_isDesktop) {
+      exit(0);
+    }
+    try {
+      await _channel.invokeMethod('exitApp');
+    } catch (e) {
+      debugPrint('[exit] exitApp channel 失败: $e，回退 dart exit');
+      exit(0);
+    }
+  }
+
   /// 重启 Syncthing 服务（授予存储权限后调用）
   static Future<bool> restartSyncthingService() async {
     if (_isDesktop) return false;

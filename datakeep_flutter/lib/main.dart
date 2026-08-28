@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:io';
 import 'dart:ui' show AppExitResponse;
 import 'package:media_kit/media_kit.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'app.dart';
 import 'core/backend/backend_server.dart';
 import 'core/backend/syncthing_api.dart';
@@ -16,6 +17,12 @@ AppLifecycleListener? _desktopLifecycleListener;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+
+  if (!kIsWeb &&
+      (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
 
   if (!kIsWeb &&
       (Platform.isLinux ||

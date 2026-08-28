@@ -8,17 +8,15 @@ import '../../../core/models/folder.dart';
 import '../../../shared/widgets/folder_card.dart';
 import '../../../shared/widgets/folder_edit_dialog.dart';
 import '../../../shared/widgets/device_info_panel.dart';
-import '../../../shared/utils/open_syncthing_gui.dart';
-import '../../../core/services/api_service.dart';
-import '../../folders/screens/folder_detail_screen.dart';
-import '../../sync/screens/sync_screen.dart';
-import '../../apps/open_app.dart';
-import '../../apps/screens/market_screen.dart';
-import '../../feedback/screens/feedback_screen.dart';
 import '../../../shared/widgets/add_item_dialog.dart';
 import '../../../shared/widgets/peer_folder_status_view.dart';
-import '../../../shared/constants/app_info.dart';
+import '../../../shared/widgets/app_menu_actions.dart';
 import '../../../shared/widgets/app_logo.dart';
+import '../../../shared/constants/app_info.dart';
+import '../../../core/services/app_notification_store.dart';
+import '../../apps/open_app.dart';
+import '../../sync/screens/sync_screen.dart';
+import '../../folders/screens/folder_detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -445,102 +443,53 @@ class _HomeScreenState extends State<HomeScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-            ListTile(
-              leading: const Icon(Icons.devices),
-              title: const Text('设备管理'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const DevicesScreen(),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.sync),
-              title: const Text('同步状态'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SyncScreen()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.storefront_outlined),
-              title: const Text('应用市场'),
-              subtitle: const Text('浏览并安装应用'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const MarketScreen()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.open_in_browser),
-              title: const Text('Syncthing 管理页'),
-              subtitle: const Text('高级配置出口'),
-              onTap: () {
-                Navigator.pop(context);
-                openSyncthingGui(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.qr_code_2),
-              title: const Text('本机配对二维码'),
-              onTap: () async {
-                Navigator.pop(context);
-                try {
-                  final id = await ApiService.getLocalDeviceId();
-                  if (!context.mounted) return;
-                  await LocalDeviceQrDialog.show(
-                    context,
-                    deviceId: id,
-                    deviceName: '本机设备',
-                  );
-                } catch (e) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('获取本机 ID 失败: $e')),
+      builder: (sheetContext) => SafeArea(
+        child: Consumer<AppNotificationStore>(
+          builder: (context, store, _) => SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.devices),
+                  title: const Text('设备管理'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const DevicesScreen(),
+                      ),
                     );
-                  }
-                }
-              },
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.sync),
+                  title: const Text('同步状态'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const SyncScreen()),
+                    );
+                  },
+                ),
+                const Divider(),
+                ...buildSharedMobileMenuTiles(
+                  context,
+                  unreadCount: store.unreadCount,
+                  closeSheet: () {
+                    if (Navigator.of(sheetContext).canPop()) {
+                      Navigator.pop(sheetContext);
+                    }
+                  },
+                  onRefresh: () {
+                    if (_selectedDeviceId != null) {
+                      _loadDeviceFolders(_selectedDeviceId!);
+                    }
+                    context.read<DeviceProvider>().fetchDevices();
+                  },
+                ),
+              ],
             ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.feedback_outlined),
-              title: const Text('意见反馈'),
-              subtitle: const Text('提交问题或建议'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const FeedbackScreen()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.info),
-              title: const Text('关于'),
-              onTap: () {
-                Navigator.pop(context);
-                showAboutDialog(
-                  context: context,
-                  applicationName: kAppDisplayName,
-                  applicationVersion: '1.0.0',
-                  applicationIcon: const AppLogo(size: 48),
-                );
-              },
-            ),
-          ],
           ),
         ),
       ),

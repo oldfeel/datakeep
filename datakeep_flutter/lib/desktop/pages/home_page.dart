@@ -3,20 +3,19 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/device.dart';
 import '../../core/models/folder.dart';
+import '../../core/models/app_notification.dart';
 import '../../features/devices/providers/device_provider.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../core/services/api_service.dart';
 import '../../core/services/event_service.dart';
+import '../../core/services/app_notification_store.dart';
 import 'device_detail_page.dart';
 import 'folder_detail_page.dart';
 import 'file_preview_page.dart';
 import '../../shared/widgets/accept_pending_folder_dialog.dart';
-import '../../shared/utils/open_syncthing_gui.dart';
-import '../../shared/widgets/folder_edit_dialog.dart';
 import '../../shared/constants/app_info.dart';
 import '../../shared/widgets/app_logo.dart';
-import '../../features/apps/screens/market_screen.dart';
-import '../../features/feedback/screens/feedback_screen.dart';
+import '../../shared/widgets/app_menu_actions.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({super.key});
@@ -36,14 +35,10 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
   String? _previewFilePath;
   String _searchText = '';
   String _wifiName = '';
-  int _notificationCount = 0;
-  final List<_NotificationItem> _notifications = [];
   final Set<String> _shownPendingDevices = {};
   final Set<String> _shownPendingFolders = {};
 
   StreamSubscription<SyncthingEvent>? _eventSub;
-  int _itemFinishedBurst = 0;
-  Timer? _itemFinishedFlushTimer;
 
   @override
   void initState() {
@@ -57,74 +52,80 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
     });
     _eventSub = EventService().events.listen((event) {
       if (!mounted) return;
-      String message;
-      Color bgColor;
+      final store = context.read<AppNotificationStore>();
       switch (event.type) {
         case 'DeviceConnected':
-          message = '设备 ${event.data['id'] ?? ''} 已连接';
-          bgColor = Colors.green;
           context.read<DeviceProvider>().fetchDevices();
+          _addNotification(
+            '设备 ${event.data['id'] ?? ''} 已连接',
+            category: AppNotificationCategory.device,
+            snackColor: Colors.green,
+          );
           break;
         case 'DeviceDisconnected':
-          message = '设备 ${event.data['id'] ?? ''} 已断开';
-          bgColor = Colors.orange;
           context.read<DeviceProvider>().fetchDevices();
+          _addNotification(
+            '设备 ${event.data['id'] ?? ''} 已断开',
+            category: AppNotificationCategory.device,
+            snackColor: Colors.orange,
+          );
           break;
         case 'PendingDevicesChanged':
           _handlePendingDevicesChanged(event);
-          return;
+          break;
         case 'PendingFoldersChanged':
           _handlePendingFoldersChanged(event);
-          return;
+          break;
         case 'StartupComplete':
         case 'FolderSummary':
         case 'FolderCompletion':
         case 'StateChanged':
           context.read<FolderProvider>().fetchFolders(silent: true);
           context.read<DeviceProvider>().fetchDevices(silent: true);
-          return;
+          break;
         case 'ItemFinished':
-          // 大批量同步时每个文件都会触发，合并提示避免刷屏
-          _itemFinishedBurst++;
-          _itemFinishedFlushTimer?.cancel();
-          _itemFinishedFlushTimer = Timer(const Duration(seconds: 2), () {
-            if (!mounted) return;
-            final n = _itemFinishedBurst;
-            _itemFinishedBurst = 0;
-            if (n <= 0) return;
-            _addNotification(
-              n == 1 ? '文件同步完成' : '已同步 $n 个文件',
-              snackColor: Colors.green,
-            );
-          });
-          return;
+          store.noteItemFinished();
+          break;
         case 'FolderErrors':
-          message = '文件夹 ${event.data['folder'] ?? ''} 出现错误';
-          bgColor = Colors.red;
+          _addNotification(
+            '文件夹 ${event.data['folder'] ?? ''} 出现错误',
+            category: AppNotificationCategory.sync,
+            snackColor: Colors.red,
+          );
           break;
         case 'ConfigSaved':
-          message = '配置已保存';
-          bgColor = Colors.blue;
           context.read<DeviceProvider>().fetchDevices(silent: true);
           context.read<FolderProvider>().fetchFolders(silent: true);
-          return;
+          _addNotification(
+            '配置已保存',
+            category: AppNotificationCategory.system,
+            snackColor: Colors.blue,
+          );
+          break;
         default:
-          return;
+          break;
       }
-      _addNotification(message, snackColor: bgColor);
     });
     EventService().start();
   }
 
-  void _addNotification(String message, {Color? snackColor}) {
+  void _addNotification(
+    String message, {
+    required AppNotificationCategory category,
+    Color? snackColor,
+  }) {
     if (!mounted) return;
-    setState(() {
-      _notificationCount++;
-      _notifications.insert(0, _NotificationItem(message: message, time: DateTime.now()));
-    });
+    context.read<AppNotificationStore>().add(
+          category: category,
+          title: message,
+        );
     if (snackColor != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message), backgroundColor: snackColor, duration: const Duration(seconds: 3)),
+        SnackBar(
+          content: Text(message),
+          backgroundColor: snackColor,
+          duration: const Duration(seconds: 3),
+        ),
       );
     }
   }
@@ -186,7 +187,10 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           final name = item['name']?.toString() ?? '';
           final address = item['address']?.toString() ?? '';
           final displayName = (name.isNotEmpty && name != deviceId) ? name : '未知设备';
-          _addNotification('收到新设备连接请求: $displayName');
+          _addNotification(
+            '收到新设备连接请求: $displayName',
+            category: AppNotificationCategory.device,
+          );
           _showPendingDeviceDialog(deviceId, name, address);
         }
       }
@@ -243,6 +247,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           await context.read<DeviceProvider>().fetchDevices();
           _addNotification(
             '已接受设备 $displayName',
+            category: AppNotificationCategory.device,
             snackColor: Colors.green,
           );
         }
@@ -254,12 +259,19 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           address: address,
         );
         if (mounted) {
-          _addNotification('已忽略设备 $displayName');
+          _addNotification(
+            '已忽略设备 $displayName',
+            category: AppNotificationCategory.device,
+          );
         }
       }
     } catch (e) {
       if (mounted) {
-        _addNotification('设备操作失败: $e', snackColor: Colors.red);
+        _addNotification(
+          '设备操作失败: $e',
+          category: AppNotificationCategory.device,
+          snackColor: Colors.red,
+        );
       }
     } finally {
       _shownPendingDevices.remove(deviceId);
@@ -305,7 +317,10 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
         final deviceId = item['deviceID']?.toString() ?? '';
         if (folderId.isEmpty || deviceId.isEmpty) continue;
         final label = item['folderLabel']?.toString() ?? folderId;
-        _addNotification('收到共享文件夹邀请: $label');
+        _addNotification(
+          '收到共享文件夹邀请: $label',
+          category: AppNotificationCategory.device,
+        );
         _showPendingFolderDialog(folderId: folderId, deviceId: deviceId, label: label);
       }
     } else {
@@ -352,14 +367,29 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
         );
         if (mounted) {
           await context.read<FolderProvider>().fetchFolders();
-          _addNotification('已接受共享文件夹 $displayLabel', snackColor: Colors.green);
+          _addNotification(
+            '已接受共享文件夹 $displayLabel',
+            category: AppNotificationCategory.device,
+            snackColor: Colors.green,
+          );
         }
       } else if (accepted?.accepted == false) {
         await ApiService.dismissPendingFolder(folderId: folderId, deviceId: deviceId);
-        if (mounted) _addNotification('已忽略共享文件夹 $displayLabel');
+        if (mounted) {
+          _addNotification(
+            '已忽略共享文件夹 $displayLabel',
+            category: AppNotificationCategory.device,
+          );
+        }
       }
     } catch (e) {
-      if (mounted) _addNotification('共享文件夹操作失败: $e', snackColor: Colors.red);
+      if (mounted) {
+        _addNotification(
+          '共享文件夹操作失败: $e',
+          category: AppNotificationCategory.device,
+          snackColor: Colors.red,
+        );
+      }
     } finally {
       _shownPendingFolders.remove(key);
     }
@@ -367,7 +397,6 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
 
   @override
   void dispose() {
-    _itemFinishedFlushTimer?.cancel();
     _eventSub?.cancel();
     super.dispose();
   }
@@ -458,137 +487,30 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
                       ),
                 ),
               ),
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    icon: const Icon(Icons.notifications_outlined, size: 20),
-                    tooltip: '通知历史',
-                    onPressed: () => _showNotificationHistory(context),
-                  ),
-                  if (_notificationCount > 0)
-                    Positioned(
-                      right: 2,
-                      top: 2,
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Text(
-                          '$_notificationCount',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 8,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+              Consumer<AppNotificationStore>(
+                builder: (context, notif, _) {
+                  final unread = notif.unreadCount;
+                  return Badge(
+                    isLabelVisible: unread > 0,
+                    label: Text(unread > 99 ? '99+' : '$unread'),
+                    child: PopupMenuButton<String>(
+                      tooltip: '设置',
+                      padding: EdgeInsets.zero,
+                      icon: const Icon(Icons.settings_outlined, size: 20),
+                      onSelected: (value) => handleSharedAppMenuAction(
+                        context,
+                        value,
+                        onRefresh: () {
+                          context.read<DeviceProvider>().fetchDevices();
+                          _fetchWifiInfo();
+                        },
+                      ),
+                      itemBuilder: (context) => buildSharedSettingsMenuItems(
+                        unreadCount: unread,
                       ),
                     ),
-                ],
-              ),
-              PopupMenuButton<String>(
-                tooltip: '设置',
-                padding: EdgeInsets.zero,
-                icon: const Icon(Icons.settings_outlined, size: 20),
-                onSelected: (value) async {
-                  switch (value) {
-                    case 'qr':
-                      try {
-                        final id = await ApiService.getLocalDeviceId();
-                        if (!context.mounted) return;
-                        await LocalDeviceQrDialog.show(
-                          context,
-                          deviceId: id,
-                          deviceName: '本机设备',
-                        );
-                      } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('获取本机 ID 失败: $e')),
-                          );
-                        }
-                      }
-                      break;
-                    case 'feedback':
-                      if (!context.mounted) return;
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const FeedbackScreen(),
-                        ),
-                      );
-                      break;
-                    case 'market':
-                      if (!context.mounted) return;
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const MarketScreen(),
-                        ),
-                      );
-                      break;
-                    case 'syncthing':
-                      if (!context.mounted) return;
-                      openSyncthingGui(context);
-                      break;
-                    case 'refresh':
-                      if (!context.mounted) return;
-                      context.read<DeviceProvider>().fetchDevices();
-                      _fetchWifiInfo();
-                      break;
-                  }
+                  );
                 },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(
-                    value: 'qr',
-                    child: ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.qr_code_2),
-                      title: Text('本机配对二维码'),
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'feedback',
-                    child: ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.feedback_outlined),
-                      title: Text('意见反馈'),
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'market',
-                    child: ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.storefront_outlined),
-                      title: Text('应用市场'),
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'syncthing',
-                    child: ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.open_in_browser),
-                      title: Text('Syncthing 管理页'),
-                    ),
-                  ),
-                  PopupMenuDivider(),
-                  PopupMenuItem(
-                    value: 'refresh',
-                    child: ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.refresh),
-                      title: Text('刷新'),
-                    ),
-                  ),
-                ],
               ),
             ],
           ),
@@ -804,64 +726,12 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
     );
   }
 
-  void _showNotificationHistory(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            const Text('通知历史'),
-            const Spacer(),
-            if (_notifications.isNotEmpty)
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    _notifications.clear();
-                    _notificationCount = 0;
-                  });
-                  Navigator.of(ctx).pop();
-                },
-                child: const Text('清空'),
-              ),
-          ],
-        ),
-        content: SizedBox(
-          width: 500,
-          height: 400,
-          child: _notifications.isEmpty
-              ? const Center(child: Text('暂无通知'))
-              : ListView.builder(
-                  itemCount: _notifications.length,
-                  itemBuilder: (_, i) {
-                    final n = _notifications[i];
-                    return ListTile(
-                      dense: true,
-                      title: Text(n.message, style: const TextStyle(fontSize: 14)),
-                      trailing: Text(
-                        '${n.time.hour}:${n.time.minute.toString().padLeft(2, '0')}',
-                        style: const TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                    );
-                  },
-                ),
-        ),
-        actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('关闭'))],
-      ),
-    );
-  }
-
   void _showAddDeviceDialog(BuildContext context) {
     showDialog(
       context: context,
       builder: (_) => const _AddDeviceDialog(),
     );
   }
-}
-
-class _NotificationItem {
-  final String message;
-  final DateTime time;
-  _NotificationItem({required this.message, required this.time});
 }
 
 class _AddDeviceDialog extends StatefulWidget {

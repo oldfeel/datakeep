@@ -41,7 +41,8 @@ dependencies:
   
   # 本地存储
   shared_preferences: ^2.2.0
-  
+  sqflite: ^2.4.2
+  sqflite_common_ffi: ^2.3.5
   # 文件操作
   path_provider: ^2.1.0
   path: ^1.9.0
@@ -100,6 +101,15 @@ dependencies:
   media_kit_libs_video: ^1.0.7
   cryptography: ^2.9.0
   webview_cef: ^0.6.1
+
+# 桌面 sqflite_common_ffi → sqlite3：默认从 GitHub 拉预编译库，国内易超时。
+# 改用系统 libsqlite3（Linux 需 libsqlite3-0；Windows 用 winsqlite3）。
+hooks:
+  user_defines:
+    sqlite3:
+      source: system
+      name_windows: winsqlite3
+      name: sqlite3
 
 dev_dependencies:
   flutter_test:
