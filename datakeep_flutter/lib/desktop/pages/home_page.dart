@@ -487,30 +487,23 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
                       ),
                 ),
               ),
-              Consumer<AppNotificationStore>(
-                builder: (context, notif, _) {
-                  final unread = notif.unreadCount;
-                  return Badge(
-                    isLabelVisible: unread > 0,
-                    label: Text(unread > 99 ? '99+' : '$unread'),
-                    child: PopupMenuButton<String>(
-                      tooltip: '设置',
-                      padding: EdgeInsets.zero,
-                      icon: const Icon(Icons.settings_outlined, size: 20),
-                      onSelected: (value) => handleSharedAppMenuAction(
-                        context,
-                        value,
-                        onRefresh: () {
-                          context.read<DeviceProvider>().fetchDevices();
-                          _fetchWifiInfo();
-                        },
-                      ),
-                      itemBuilder: (context) => buildSharedSettingsMenuItems(
-                        unreadCount: unread,
-                      ),
-                    ),
-                  );
-                },
+              const AppMessagesButton(
+                iconSize: 20,
+                padding: EdgeInsets.zero,
+              ),
+              PopupMenuButton<String>(
+                tooltip: '设置',
+                padding: EdgeInsets.zero,
+                icon: const Icon(Icons.settings_outlined, size: 20),
+                onSelected: (value) => handleSharedAppMenuAction(
+                  context,
+                  value,
+                  onRefresh: () {
+                    context.read<DeviceProvider>().fetchDevices();
+                    _fetchWifiInfo();
+                  },
+                ),
+                itemBuilder: (context) => buildSharedSettingsMenuItems(),
               ),
             ],
           ),

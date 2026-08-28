@@ -157,6 +157,9 @@ class _NotificationsPageState extends State<NotificationsPage>
         ],
         bottom: TabBar(
           controller: _tabController,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          indicatorColor: Colors.white,
           tabs: [for (final t in _tabs) Tab(text: t.$1)],
         ),
       ),

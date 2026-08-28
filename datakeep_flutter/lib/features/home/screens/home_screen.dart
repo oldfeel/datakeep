@@ -13,7 +13,6 @@ import '../../../shared/widgets/peer_folder_status_view.dart';
 import '../../../shared/widgets/app_menu_actions.dart';
 import '../../../shared/widgets/app_logo.dart';
 import '../../../shared/constants/app_info.dart';
-import '../../../core/services/app_notification_store.dart';
 import '../../apps/open_app.dart';
 import '../../sync/screens/sync_screen.dart';
 import '../../folders/screens/folder_detail_screen.dart';
@@ -40,13 +39,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawer: _buildDrawer(context),
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.menu),
-          onPressed: () {
-            _showMenu(context);
-          },
-        ),
         title: const Row(
           children: [
             AppLogo(size: 28),
@@ -64,6 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
               }
             },
           ),
+          const AppMessagesButton(),
         ],
       ),
       body: Consumer<DeviceProvider>(
@@ -438,59 +433,67 @@ class _HomeScreenState extends State<HomeScreen> {
     await context.read<FolderProvider>().fetchDeviceFolders(deviceId);
   }
 
-  // 显示菜单
-  void _showMenu(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: Consumer<AppNotificationStore>(
-          builder: (context, store, _) => SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.devices),
-                  title: const Text('设备管理'),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const DevicesScreen(),
-                      ),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.sync),
-                  title: const Text('同步状态'),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const SyncScreen()),
-                    );
-                  },
-                ),
-                const Divider(),
-                ...buildSharedMobileMenuTiles(
-                  context,
-                  unreadCount: store.unreadCount,
-                  closeSheet: () {
-                    if (Navigator.of(sheetContext).canPop()) {
-                      Navigator.pop(sheetContext);
-                    }
-                  },
-                  onRefresh: () {
-                    if (_selectedDeviceId != null) {
-                      _loadDeviceFolders(_selectedDeviceId!);
-                    }
-                    context.read<DeviceProvider>().fetchDevices();
-                  },
-                ),
-              ],
+  Widget _buildDrawer(BuildContext context) {
+    return Drawer(
+      child: SafeArea(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: Row(
+                children: [
+                  const AppLogo(size: 36),
+                  const SizedBox(width: 12),
+                  Text(
+                    kAppDisplayName,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                ],
+              ),
             ),
-          ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.devices),
+              title: const Text('设备管理'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const DevicesScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.sync),
+              title: const Text('同步状态'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SyncScreen()),
+                );
+              },
+            ),
+            const Divider(),
+            ...buildSharedMobileMenuTiles(
+              context,
+              closeSheet: () {
+                if (Navigator.of(context).canPop()) {
+                  Navigator.pop(context);
+                }
+              },
+              onRefresh: () {
+                if (_selectedDeviceId != null) {
+                  _loadDeviceFolders(_selectedDeviceId!);
+                }
+                context.read<DeviceProvider>().fetchDevices();
+              },
+            ),
+          ],
         ),
       ),
     );

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../core/services/app_notification_store.dart';
 import '../../core/services/native_service.dart';
 import '../../features/apps/screens/market_screen.dart';
 import '../../features/feedback/screens/feedback_screen.dart';
@@ -9,6 +11,43 @@ import '../constants/app_info.dart';
 import '../utils/open_syncthing_gui.dart';
 import 'app_logo.dart';
 import 'folder_edit_dialog.dart';
+
+/// 独立消息入口（未读角标），不放进设置/底部菜单
+class AppMessagesButton extends StatelessWidget {
+  const AppMessagesButton({
+    super.key,
+    this.iconSize = 24,
+    this.padding,
+  });
+
+  final double iconSize;
+  final EdgeInsetsGeometry? padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AppNotificationStore>(
+      builder: (context, store, _) {
+        final unread = store.unreadCount;
+        return IconButton(
+          tooltip: '消息',
+          padding: padding,
+          constraints: padding != null
+              ? const BoxConstraints(minWidth: 36, minHeight: 36)
+              : null,
+          icon: Badge(
+            isLabelVisible: unread > 0,
+            label: Text(unread > 99 ? '99+' : '$unread'),
+            child: Icon(Icons.notifications_outlined, size: iconSize),
+          ),
+          onPressed: () => handleSharedAppMenuAction(
+            context,
+            AppMenuActions.messages,
+          ),
+        );
+      },
+    );
+  }
+}
 
 /// 桌面设置菜单 / 手机底部菜单的共用项 value
 abstract final class AppMenuActions {
@@ -106,23 +145,8 @@ Future<void> handleSharedAppMenuAction(
   }
 }
 
-List<PopupMenuEntry<String>> buildSharedSettingsMenuItems({
-  required int unreadCount,
-}) {
+List<PopupMenuEntry<String>> buildSharedSettingsMenuItems() {
   return [
-    PopupMenuItem(
-      value: AppMenuActions.messages,
-      child: ListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        leading: Badge(
-          isLabelVisible: unreadCount > 0,
-          label: Text(unreadCount > 99 ? '99+' : '$unreadCount'),
-          child: const Icon(Icons.notifications_outlined),
-        ),
-        title: const Text('消息'),
-      ),
-    ),
     const PopupMenuItem(
       value: AppMenuActions.qr,
       child: ListTile(
@@ -190,11 +214,10 @@ List<PopupMenuEntry<String>> buildSharedSettingsMenuItems({
   ];
 }
 
-/// 手机底部菜单中的共用区块（不含设备管理/同步状态）
+/// 手机底部菜单中的共用区块（不含设备管理/同步状态；消息在 AppBar）
 List<Widget> buildSharedMobileMenuTiles(
   BuildContext context, {
   required VoidCallback closeSheet,
-  required int unreadCount,
   VoidCallback? onRefresh,
 }) {
   Widget tile({
@@ -208,9 +231,6 @@ List<Widget> buildSharedMobileMenuTiles(
       leading: Icon(icon, color: color),
       title: Text(title, style: color != null ? TextStyle(color: color) : null),
       subtitle: subtitle != null ? Text(subtitle) : null,
-      trailing: action == AppMenuActions.messages && unreadCount > 0
-          ? Badge(label: Text(unreadCount > 99 ? '99+' : '$unreadCount'))
-          : null,
       onTap: () async {
         closeSheet();
         await handleSharedAppMenuAction(
@@ -223,11 +243,6 @@ List<Widget> buildSharedMobileMenuTiles(
   }
 
   return [
-    tile(
-      icon: Icons.notifications_outlined,
-      title: '消息',
-      action: AppMenuActions.messages,
-    ),
     tile(
       icon: Icons.qr_code_2,
       title: '本机配对二维码',
