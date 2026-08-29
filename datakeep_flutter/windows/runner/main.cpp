@@ -6,8 +6,14 @@
 #include "utils.h"
 #include "webview_cef/webview_cef_plugin_c_api.h"
 
+// CEF 149：通过导入符号强制 EXE 依赖 chrome_elf.dll（须早于 libcef 加载）
+extern "C" __declspec(dllimport) int GetApplyHookResult();
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // 触达导入，确保链接器保留 chrome_elf 依赖；返回值本身无关键。
+  (void)GetApplyHookResult();
+
   // CEF 多进程：必须最先初始化子进程
   int exit_code = initCEFProcesses(instance);
   if (exit_code >= 0) {

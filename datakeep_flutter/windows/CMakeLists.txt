@@ -36,6 +36,8 @@ add_definitions(-DUNICODE -D_UNICODE)
 add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
 # media_kit_video：MPV API 把字符串字面量当作 void*（MSVC 默认 strictStrings 会 C2440）
 add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/Zc:strictStrings->")
+# 中文系统代码页 936：UTF-8 源文件（含中文注释）否则会 C4819，再被 /WX 升级为 C2220
+add_compile_options(/utf-8 /wd4819)
 
 # Compilation settings that should be applied to most targets.
 #
@@ -60,6 +62,43 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+# CEF 149 Release 版 libcef.dll 在本机 LoadLibrary 返回 193（0xC000007B）；
+# Debug 版可正常加载。须在 include 插件（下载/配置 CEF）之前打开。
+set(WEBVIEW_CEF_USE_DEBUG_CEF ON CACHE BOOL
+  "Use CEF Debug binaries; Release libcef fails to load on some Windows hosts" FORCE)
+
+# CEF 149 设置 NTDDI_VERSION=NTDDI_WIN10_FE。Windows SDK 10.0.19041 没有该宏，
+# 未定义时 NTDDI_VERSION 展开为 0，fileapi.h / wintrust.h 会裁掉 Vista+ 类型，
+# 编译 libcef_dll_wrapper 时报 FILE_INFO_BY_HANDLE_CLASS / WINTRUST_SIGNATURE_SETTINGS。
+# 须在插件（含 CEF wrapper）目标创建之前补定义。
+if(WIN32)
+  set(_dk_sdk_ver "${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+  if(NOT _dk_sdk_ver AND DEFINED ENV{WindowsSDKVersion})
+    string(REGEX REPLACE "[\\]$" "" _dk_sdk_ver "$ENV{WindowsSDKVersion}")
+  endif()
+  set(_dk_sdkddkver "")
+  foreach(_dk_kits
+      "C:/Program Files (x86)/Windows Kits/10/Include"
+      "C:/Program Files/Windows Kits/10/Include")
+    if(_dk_sdk_ver AND EXISTS "${_dk_kits}/${_dk_sdk_ver}/shared/sdkddkver.h")
+      set(_dk_sdkddkver "${_dk_kits}/${_dk_sdk_ver}/shared/sdkddkver.h")
+      break()
+    endif()
+  endforeach()
+  if(NOT _dk_sdkddkver AND EXISTS
+      "C:/Program Files (x86)/Windows Kits/10/Include/10.0.19041.0/shared/sdkddkver.h")
+    set(_dk_sdkddkver
+      "C:/Program Files (x86)/Windows Kits/10/Include/10.0.19041.0/shared/sdkddkver.h")
+    set(_dk_sdk_ver "10.0.19041.0")
+  endif()
+  if(_dk_sdkddkver)
+    file(STRINGS "${_dk_sdkddkver}" _dk_has_fe REGEX "#define[ \t]+NTDDI_WIN10_FE")
+    if(NOT _dk_has_fe)
+      message(STATUS "Windows SDK ${_dk_sdk_ver} 无 NTDDI_WIN10_FE，补定义为 0x0A00000A（CEF 149）")
+      add_compile_definitions(NTDDI_WIN10_FE=0x0A00000A)
+    endif()
+  endif()
+endif()
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
@@ -69,6 +108,20 @@ include(flutter/generated_plugins.cmake)
 target_compile_features(${BINARY_NAME} PUBLIC cxx_std_20)
 if(TARGET webview_cef_plugin)
   target_compile_features(webview_cef_plugin PUBLIC cxx_std_20)
+  # CEF 149：libcef 导入表被加密，须由 chrome_elf 在进程启动早期挂钩后再加载。
+  # 插件硬链 libcef 会在 DLL 依赖解析阶段 0xC000007B，故改为 DELAYLOAD。
+  target_link_options(webview_cef_plugin PRIVATE "/DELAYLOAD:libcef.dll")
+  target_link_libraries(webview_cef_plugin PRIVATE delayimp)
+
+  # EXE 硬依赖 chrome_elf.dll（import lib 由 runner/chrome_elf.def 生成）
+  set(_dk_chrome_elf_lib "${CMAKE_CURRENT_SOURCE_DIR}/runner/chrome_elf.lib")
+  if(EXISTS "${_dk_chrome_elf_lib}")
+    target_link_libraries(${BINARY_NAME} PRIVATE "${_dk_chrome_elf_lib}")
+    target_link_options(${BINARY_NAME} PRIVATE "/INCLUDE:GetApplyHookResult")
+    message(STATUS "Linked chrome_elf.lib for CEF 149 early load")
+  else()
+    message(WARNING "缺少 runner/chrome_elf.lib，CEF 可能无法启动；可用 lib.exe /def:chrome_elf.def 重新生成")
+  endif()
 endif()
 
 
