@@ -215,14 +215,27 @@ class NativeService {
       }
 
       final configPath = _syncthingConfigDir();
+      final args = <String>[
+        '-no-browser',
+        '-no-restart',
+        '-no-upgrade',
+        '-home',
+        configPath,
+      ];
 
-      // detached：主进程退出后默认不会带走子进程，需在退出钩子里显式 stop
-      final process = await Process.start(
-        syncthingPath,
-        ['-no-browser', '-no-restart', '-no-upgrade', '-home', configPath],
-        mode: ProcessStartMode.detached,
-      );
-      debugPrint('已启动 Syncthing pid=${process.pid} path=$syncthingPath');
+      // Windows：detached 会给控制台子系统程序弹出黑窗口；用 Hidden 启动。
+      // 其它平台：detached，主进程退出后不带走子进程（退出钩子里再 stop）。
+      if (Platform.isWindows) {
+        await _startDetachedHiddenWindows(syncthingPath, args);
+        debugPrint('已启动 Syncthing（无窗口）path=$syncthingPath');
+      } else {
+        final process = await Process.start(
+          syncthingPath,
+          args,
+          mode: ProcessStartMode.detached,
+        );
+        debugPrint('已启动 Syncthing pid=${process.pid} path=$syncthingPath');
+      }
 
       // 等待 API 就绪，最多 20 秒
       for (var i = 0; i < 20; i++) {
@@ -259,11 +272,57 @@ class NativeService {
     }
   }
 
+  /// Windows：无控制台窗口地启动独立进程（避免 detached 弹黑窗）。
+  static Future<void> _startDetachedHiddenWindows(
+    String executable,
+    List<String> args,
+  ) async {
+    String psQuote(String s) => "'${s.replaceAll("'", "''")}'";
+    final argList = args.map(psQuote).join(',');
+    final command =
+        'Start-Process -FilePath ${psQuote(executable)} '
+        '-ArgumentList @($argList) -WindowStyle Hidden';
+    final result = await Process.run(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        command,
+      ],
+    );
+    if (result.exitCode != 0) {
+      final err = (result.stderr.toString().trim().isNotEmpty)
+          ? result.stderr.toString().trim()
+          : result.stdout.toString().trim();
+      throw ProcessException(
+        executable,
+        args,
+        err.isEmpty ? 'Start-Process 失败 (exit=${result.exitCode})' : err,
+        result.exitCode,
+      );
+    }
+  }
+
   static String _syncthingConfigDir() {
-    final homeDir = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '.';
-    if (Platform.isWindows) return '$homeDir\\AppData\\Local\\Syncthing';
-    if (Platform.isMacOS) return '$homeDir/Library/Application Support/Syncthing';
-    return '$homeDir/.config/syncthing';
+    if (Platform.isWindows) {
+      // 与 Syncthing 默认 -home、SyncthingApi._findConfigPath 一致
+      final local = Platform.environment['LOCALAPPDATA']?.trim();
+      if (local != null && local.isNotEmpty) return '$local\\Syncthing';
+      final profile = Platform.environment['USERPROFILE']?.trim();
+      if (profile != null && profile.isNotEmpty) {
+        return '$profile\\AppData\\Local\\Syncthing';
+      }
+      return 'Syncthing';
+    }
+    final homeDir = Platform.environment['HOME']?.trim();
+    final home = (homeDir != null && homeDir.isNotEmpty)
+        ? homeDir
+        : (Platform.environment['USERPROFILE']?.trim() ?? '.');
+    if (Platform.isMacOS) return '$home/Library/Application Support/Syncthing';
+    return '$home/.config/syncthing';
   }
 
   /// 8384 API 是否可用（200/403 均表示 Syncthing 在监听）

@@ -32,17 +32,48 @@ class SyncthingApi {
   }
 
   String _findConfigPath() {
-    final home = Platform.environment['HOME'] ?? '';
-    final candidates = [
-      if (Platform.isMacOS)
+    final home = _userHomeDir();
+    final sep = Platform.pathSeparator;
+    final candidates = <String>[
+      if (Platform.isWindows) ...[
+        // Syncthing 官方默认：%LOCALAPPDATA%\Syncthing
+        if (_envNonEmpty('LOCALAPPDATA'))
+          '${Platform.environment['LOCALAPPDATA']!.trim()}${sep}Syncthing${sep}config.xml',
+        if (home.isNotEmpty)
+          '$home${sep}AppData${sep}Local${sep}Syncthing${sep}config.xml',
+      ],
+      if (Platform.isMacOS && home.isNotEmpty)
         '$home/Library/Application Support/Syncthing/config.xml',
-      '$home/.config/syncthing/config.xml',
-      '$home/.local/state/syncthing/config.xml',
+      if (!Platform.isWindows && home.isNotEmpty) ...[
+        '$home/.config/syncthing/config.xml',
+        '$home/.local/state/syncthing/config.xml',
+      ],
     ];
     for (final p in candidates) {
       if (File(p).existsSync()) return p;
     }
-    return candidates.first;
+    return candidates.isNotEmpty ? candidates.first : '';
+  }
+
+  /// Windows 优先 USERPROFILE / LOCALAPPDATA，忽略 Git Bash 等假 HOME（如 "/"）。
+  static String _userHomeDir() {
+    if (Platform.isWindows) {
+      final profile = Platform.environment['USERPROFILE']?.trim();
+      if (profile != null && profile.isNotEmpty) return profile;
+      final home = Platform.environment['HOME']?.trim();
+      if (home != null && RegExp(r'^[A-Za-z]:[\\/]').hasMatch(home)) {
+        return home;
+      }
+      return '';
+    }
+    final home = Platform.environment['HOME']?.trim();
+    if (home != null && home.isNotEmpty) return home;
+    return Platform.environment['USERPROFILE']?.trim() ?? '';
+  }
+
+  static bool _envNonEmpty(String key) {
+    final v = Platform.environment[key]?.trim();
+    return v != null && v.isNotEmpty;
   }
 
   String _loadApiKey() {
