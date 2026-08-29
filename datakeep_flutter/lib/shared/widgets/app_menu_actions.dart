@@ -214,7 +214,7 @@ List<PopupMenuEntry<String>> buildSharedSettingsMenuItems() {
   ];
 }
 
-/// 手机底部菜单中的共用区块（不含设备管理/同步状态；消息在 AppBar）
+/// 手机侧栏与桌面设置菜单对齐的共用项（消息在 AppBar）
 List<Widget> buildSharedMobileMenuTiles(
   BuildContext context, {
   required VoidCallback closeSheet,

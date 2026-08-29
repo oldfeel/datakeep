@@ -12,9 +12,9 @@ import '../../../shared/widgets/add_item_dialog.dart';
 import '../../../shared/widgets/peer_folder_status_view.dart';
 import '../../../shared/widgets/app_menu_actions.dart';
 import '../../../shared/widgets/app_logo.dart';
+import '../../../shared/widgets/discovered_device_prompt.dart';
 import '../../../shared/constants/app_info.dart';
 import '../../apps/open_app.dart';
-import '../../sync/screens/sync_screen.dart';
 import '../../folders/screens/folder_detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -63,7 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Consumer<DeviceProvider>(
         builder: (context, deviceProvider, child) {
-          if (deviceProvider.isLoading) {
+          if (deviceProvider.isLoading && deviceProvider.devices.isEmpty) {
             return const Center(
               child: CircularProgressIndicator(),
             );
@@ -103,10 +103,16 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           }
 
-          // 启动后默认选中本机设备
-          if (_selectedDeviceId == null && deviceProvider.devices.isNotEmpty) {
+          // 启动后默认选中本机；删除当前设备后也回到本机
+          final selectedGone = _selectedDeviceId != null &&
+              deviceProvider.devices.every((d) => d.id != _selectedDeviceId);
+          if (deviceProvider.devices.isNotEmpty &&
+              (_selectedDeviceId == null || selectedGone)) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted || _selectedDeviceId != null) return;
+              if (!mounted) return;
+              final stillMissing = _selectedDeviceId == null ||
+                  deviceProvider.devices.every((d) => d.id != _selectedDeviceId);
+              if (!stillMissing) return;
               final local = deviceProvider.devices.firstWhere(
                 (d) => d.isLocal,
                 orElse: () => deviceProvider.devices.first,
@@ -120,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
           return Column(
             children: [
+              const DiscoveredDevicePromptHost(),
               // 顶部设备列表 Tab
               _buildDeviceTabBar(context, deviceProvider),
               // 文件夹列表
@@ -294,6 +301,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onDeviceDeleted(BuildContext context) {
+    context.read<FolderProvider>().cancelRetries();
     final provider = context.read<DeviceProvider>();
     Device? next;
     if (provider.devices.isNotEmpty) {
@@ -455,30 +463,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.devices),
-              title: const Text('设备管理'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const DevicesScreen(),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.sync),
-              title: const Text('同步状态'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SyncScreen()),
-                );
-              },
-            ),
-            const Divider(),
             ...buildSharedMobileMenuTiles(
               context,
               closeSheet: () {

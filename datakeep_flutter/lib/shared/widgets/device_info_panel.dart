@@ -256,7 +256,9 @@ class _DeviceInfoPanelState extends State<DeviceInfoPanel> {
         title: const Text('确认删除'),
         content: Text(
           '确定要删除设备「${_device.displayName}」吗？\n\n'
-          '删除后将停止同步，并忽略该设备的连接请求（不再反复弹窗）。',
+          '• 仅从本机移除并停止与该设备的同步\n'
+          '• 对端不会自动删除本机，请到对方设备上同步删除\n'
+          '• 对端未删除前，该设备可能再次出现在「已发现」列表，可忽略或重新添加',
         ),
         actions: [
           TextButton(

@@ -73,6 +73,13 @@ class FolderProvider with ChangeNotifier {
     return folders.every((f) => f.status == 'unknown');
   }
 
+  /// 设备已删除或切走时停止对旧 ID 的重试
+  void cancelRetries() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _retryCount = 0;
+  }
+
   void _scheduleRetry(String deviceId) {
     if (_loadedDeviceId != null && _loadedDeviceId != deviceId) return;
 

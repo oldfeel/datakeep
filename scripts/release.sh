@@ -489,33 +489,37 @@ cmd_download() {
     "datakeep-${ver}-macos.zip"
   )
 
-  if command -v gh >/dev/null 2>&1; then
-    log "gh release download（四端安装包）…"
-    gh release download "$tag" --repo "$REPO" --dir "$packages" \
-      -p 'datakeep-*-android.apk' \
-      -p 'datakeep-*-windows-x64.zip' \
-      -p 'datakeep-*-linux-x64.tar.gz' \
-      -p 'datakeep-*-macos.zip'
-  else
-    warn "未安装 gh，改用 curl 直链（支持断点续传 -C -）"
-    local base="https://github.com/${REPO}/releases/download/${tag}"
-    local name url
-    for name in "${names[@]}"; do
-      url="${base}/${name}"
-      log "GET $name"
-      curl -fL --retry 3 -C - -o "$packages/$name" "$url"
-    done
+  # 先清掉目标文件，避免 gh「already exists」或半截文件
+  local name
+  for name in "${names[@]}"; do
+    rm -f "$packages/$name"
+  done
+
+  local base="https://github.com/${REPO}/releases/download/${tag}"
+  log "curl 直链下载四端安装包（覆盖已有）…"
+  local url failed=0
+  for name in "${names[@]}"; do
+    url="${base}/${name}"
+    log "GET $name"
+    if ! curl -fL --connect-timeout 30 --retry 5 --retry-delay 2 \
+      --retry-all-errors -o "$packages/$name" "$url"; then
+      err "下载失败: $name"
+      rm -f "$packages/$name"
+      failed=1
+    fi
+  done
+  if [[ "$failed" -ne 0 ]]; then
+    exit 1
   fi
 
   local missing=""
-  local name
   for name in "${names[@]}"; do
-    if [[ ! -f "$packages/$name" ]]; then
+    if [[ ! -f "$packages/$name" || ! -s "$packages/$name" ]]; then
       missing="${missing} ${name}"
     fi
   done
   if [[ -n "$missing" ]]; then
-    err "缺少文件:${missing}"
+    err "缺少或为空的文件:${missing}"
     exit 1
   fi
 

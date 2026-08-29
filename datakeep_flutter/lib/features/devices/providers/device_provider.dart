@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../../../core/models/device.dart';
 import '../../../core/services/api_service.dart';
+import '../../../core/services/discovered_devices_store.dart';
 
 class DeviceProvider with ChangeNotifier {
   List<Device> _devices = [];
@@ -61,7 +62,8 @@ class DeviceProvider with ChangeNotifier {
         deviceID: deviceID,
         name: name,
       );
-      
+      await DiscoveredDevicesStore.instance.unignore(deviceID);
+
       // 刷新设备列表
       await fetchDevices();
     } catch (e) {
@@ -73,23 +75,15 @@ class DeviceProvider with ChangeNotifier {
     }
   }
 
-  // 删除设备
+  // 删除设备（不走全屏 loading，避免移动端卸掉当前页导致无法跳回本机）
   Future<void> removeDevice(String deviceId) async {
     try {
-      _isLoading = true;
-      _error = null;
-      notifyListeners();
-
       await ApiService.removeDevice(deviceId);
-      
-      // 刷新设备列表
-      await fetchDevices();
+      await fetchDevices(silent: true);
     } catch (e) {
       _error = e.toString();
-      rethrow;
-    } finally {
-      _isLoading = false;
       notifyListeners();
+      rethrow;
     }
   }
 

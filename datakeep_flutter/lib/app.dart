@@ -8,6 +8,7 @@ import 'features/folders/providers/folder_provider.dart';
 import 'features/devices/providers/device_provider.dart';
 import 'core/services/syncthing_service_manager.dart';
 import 'core/services/app_notification_store.dart';
+import 'core/services/discovered_devices_store.dart';
 import 'shared/widgets/main_navigation.dart';
 import 'shared/widgets/android_storage_gate.dart';
 import 'desktop/pages/home_page.dart';
@@ -25,6 +26,7 @@ class DataKeepApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => DeviceProvider()),
         ChangeNotifierProvider(create: (_) => SyncthingServiceManager()),
         ChangeNotifierProvider(create: (_) => AppNotificationStore()),
+        ChangeNotifierProvider.value(value: DiscoveredDevicesStore.instance),
       ],
       child: MaterialApp(
         title: kAppDisplayName,

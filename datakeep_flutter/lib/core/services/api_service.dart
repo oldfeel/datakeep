@@ -582,18 +582,19 @@ class ApiService {
     throw Exception('添加设备失败: $lastError');
   }
 
-  /// 获取待确认的设备（未知设备尝试连接时出现在对端）
-  static Future<Map<String, dynamic>> getPendingDevices() async {
+  /// 获取待确认设备。Syncthing 不可用时返回 null（勿当成「没有 pending」）。
+  static Future<Map<String, dynamic>?> getPendingDevices() async {
     try {
       final response = await _get('/syncthing/cluster/pending/devices', silent: true);
-      if (response['code'] == 1006) return {};
+      if (response['code'] == 1006) return null;
       if (response.containsKey('code') && response['code'] == 0) {
         final data = response['data'];
         if (data is Map<String, dynamic>) return data;
+        return {};
       }
-      return {};
+      return null;
     } catch (e) {
-      return {};
+      return null;
     }
   }
 
@@ -701,36 +702,36 @@ class ApiService {
     return {'wifiName': ''};
   }
 
-  /// 获取 Syncthing 事件
+  /// 获取 Syncthing 事件（失败抛错，便于与「长轮询空结果」区分）
   static Future<List<Map<String, dynamic>>> getSyncthingEvents({
     int since = 0,
     int timeout = 60,
   }) async {
-    try {
-      final response = await _get(
-        '/syncthing/events?since=$since&timeout=$timeout',
-        timeout: Duration(seconds: timeout + 15),
-        silent: true,
-      );
+    final response = await _get(
+      '/syncthing/events?since=$since&timeout=$timeout',
+      timeout: Duration(seconds: timeout + 15),
+      silent: true,
+    );
 
-      if (response['code'] == 1006) return [];
-      
-      // Syncthing 事件 API 直接返回数组
-      if (response is List) {
-        return (response as List).map((e) => e as Map<String, dynamic>).toList().cast<Map<String, dynamic>>();
-      } else if (response is Map<String, dynamic>) {
-        if (response.containsKey('data') && response['data'] is List) {
-          final dataList = response['data'] as List;
-          return dataList.map((e) => e as Map<String, dynamic>).toList().cast<Map<String, dynamic>>();
-        } else if (response.containsKey('code') && response['code'] == 0 && response['data'] is List) {
-          final dataList = response['data'] as List;
-          return dataList.map((e) => e as Map<String, dynamic>).toList().cast<Map<String, dynamic>>();
-        }
-      }
-      return [];
-    } catch (e) {
-      return [];
+    if (response['code'] == 1006) {
+      throw Exception('Syncthing 未运行');
     }
+
+    if (response.containsKey('data') && response['data'] is List) {
+      return (response['data'] as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    if (response.containsKey('code') &&
+        response['code'] == 0 &&
+        response['data'] is List) {
+      return (response['data'] as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    return [];
   }
 
   /// 获取设备发现信息
@@ -810,6 +811,10 @@ class ApiService {
     }
     debugPrint('[discovery] 等待 Syncthing 就绪超时，仍继续扫描');
   }
+
+  /// 单次扫描发现列表（不等待重试）
+  static Future<List<Map<String, String>>> fetchDiscoveredDevicesOnce() =>
+      _fetchDiscoveredDevicesOnce();
 
   static Future<List<Map<String, String>>> _fetchDiscoveredDevicesOnce() async {
     try {

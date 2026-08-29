@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/services/event_service.dart';
 import '../../core/services/api_service.dart';
 import '../../core/services/app_notification_store.dart';
+import '../../core/services/discovered_devices_store.dart';
 import '../../core/models/app_notification.dart';
 import '../../features/devices/providers/device_provider.dart';
 import '../../features/folders/providers/folder_provider.dart';
@@ -23,7 +24,6 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
     with WidgetsBindingObserver {
   StreamSubscription<SyncthingEvent>? _eventSub;
   Timer? _pendingPollTimer;
-  final Set<String> _shownPendingDevices = {};
   final Set<String> _shownPendingFolders = {};
 
   @override
@@ -31,15 +31,15 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkPendingDevices();
+      _refreshDiscovery();
       _checkPendingFolders();
     });
     EventService().start();
     _eventSub = EventService().events.listen(_onEvent);
     debugPrint('[pending] SyncthingEventListener 已启动');
-    // 兜底：避免热重启跳过重放事件、或设备短暂离线时漏通知
-    _pendingPollTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+    _pendingPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted) {
+        _refreshDiscovery();
         _checkPendingFolders();
       }
     });
@@ -48,7 +48,7 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
-      _checkPendingDevices();
+      _refreshDiscovery();
       _checkPendingFolders();
     }
   }
@@ -82,8 +82,9 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
   void _onEvent(SyncthingEvent event) {
     if (!mounted) return;
     switch (event.type) {
+      case 'DeviceDiscovered':
       case 'PendingDevicesChanged':
-        _handlePendingDevicesChanged(event);
+        context.read<DiscoveredDevicesStore>().ingestEvent(event);
         break;
       case 'PendingFoldersChanged':
         _handlePendingFoldersChanged(event);
@@ -97,6 +98,7 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
         break;
       case 'DeviceDisconnected':
         context.read<DeviceProvider>().fetchDevices(silent: true);
+        _refreshDiscovery();
         _notify(
           AppNotificationCategory.device,
           '设备 ${event.data['id'] ?? ''} 已断开',
@@ -115,6 +117,7 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
       case 'ConfigSaved':
         _notify(AppNotificationCategory.system, '配置已保存');
         _refreshFoldersAfterSyncthingReady();
+        _refreshDiscovery();
         break;
       case 'StartupComplete':
       case 'FolderSummary':
@@ -138,9 +141,12 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
     if (!mounted) return;
     final folderProvider = context.read<FolderProvider>();
     final deviceId = folderProvider.loadedDeviceId;
-    if (deviceId != null) {
+    final known = deviceId != null &&
+        context.read<DeviceProvider>().devices.any((d) => d.id == deviceId);
+    if (known) {
       folderProvider.fetchDeviceFolders(deviceId, silent: true);
     } else {
+      folderProvider.cancelRetries();
       folderProvider.fetchFolders(silent: true);
     }
     context.read<DeviceProvider>().fetchDevices(silent: true);
@@ -162,130 +168,9 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
     return deviceId;
   }
 
-  Future<Set<String>> _knownDeviceNormIds() async {
-    final ids = <String>{};
-    try {
-      for (final d in await ApiService.getDevices()) {
-        ids.add(_normDeviceId(d.id));
-      }
-    } catch (_) {}
-    return ids;
-  }
-
-  bool _isKnownDevice(String deviceId, Set<String> knownIds) =>
-      knownIds.contains(_normDeviceId(deviceId));
-
-  Future<void> _checkPendingDevices() async {
-    final pending = await ApiService.getPendingDevices();
-    if (pending.isEmpty || !mounted) return;
-
-    final knownIds = await _knownDeviceNormIds();
-    for (final entry in pending.entries) {
-      final deviceId = entry.key;
-      if (_isKnownDevice(deviceId, knownIds)) continue;
-      final info = entry.value;
-      if (info is! Map) continue;
-      await _showPendingDeviceDialog(
-        deviceId,
-        info['name']?.toString() ?? deviceId,
-        info['address']?.toString() ?? '',
-      );
-    }
-  }
-
-  void _handlePendingDevicesChanged(SyncthingEvent event) async {
-    final added = event.data['added'];
-    if (added is List) {
-      final knownIds = await _knownDeviceNormIds();
-      for (final item in added) {
-        if (item is! Map) continue;
-        final deviceId = item['deviceID']?.toString() ?? '';
-        if (deviceId.isEmpty || _isKnownDevice(deviceId, knownIds)) continue;
-        final name = item['name']?.toString() ?? '';
-        final address = item['address']?.toString() ?? '';
-        final displayName = (name.isNotEmpty && name != deviceId) ? name : '未知设备';
-        _notify(
-          AppNotificationCategory.device,
-          '收到新设备连接请求: $displayName',
-        );
-        _showPendingDeviceDialog(deviceId, name, address);
-      }
-    } else {
-      _checkPendingDevices();
-    }
-  }
-
-  Future<void> _showPendingDeviceDialog(String deviceId, String name, String address) async {
-    if (deviceId.isEmpty || _shownPendingDevices.contains(deviceId)) return;
-    _shownPendingDevices.add(deviceId);
-
+  Future<void> _refreshDiscovery() async {
     if (!mounted) return;
-    final displayName = (name.isNotEmpty && name != deviceId) ? name : '未知设备';
-
-    final accepted = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新设备请求连接'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('设备 "$displayName" 请求与本机建立连接。'),
-            const SizedBox(height: 12),
-            Text('设备 ID', style: Theme.of(ctx).textTheme.labelMedium),
-            SelectableText(deviceId, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-            if (address.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text('地址: $address', style: Theme.of(ctx).textTheme.bodySmall),
-            ],
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('忽略')),
-          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('接受')),
-        ],
-      ),
-    );
-
-    if (!mounted) return;
-
-    try {
-      if (accepted == true) {
-        await ApiService.acceptPendingDevice(deviceId: deviceId, name: displayName);
-        if (mounted) {
-          await context.read<DeviceProvider>().fetchDevices();
-          _notify(
-            AppNotificationCategory.device,
-            '已接受设备 $displayName',
-            snackColor: Colors.green,
-          );
-        }
-      } else {
-        await ApiService.dismissPendingDevice(
-          deviceId,
-          ignore: true,
-          name: displayName,
-          address: address,
-        );
-        if (mounted) {
-          _notify(
-            AppNotificationCategory.device,
-            '已忽略设备 $displayName',
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        _notify(
-          AppNotificationCategory.device,
-          '设备操作失败: $e',
-          snackColor: Colors.red,
-        );
-      }
-    } finally {
-      _shownPendingDevices.remove(deviceId);
-    }
+    await context.read<DiscoveredDevicesStore>().refresh();
   }
 
   /// 本机是否已有该 folderId（仅用于提示文案；不因已存在而跳过邀请）

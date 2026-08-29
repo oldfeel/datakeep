@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../providers/device_provider.dart';
 import '../../../core/models/device.dart';
 import '../../../core/services/api_service.dart';
+import '../../../core/services/discovered_devices_store.dart';
 import 'device_detail_screen.dart';
 import 'qr_scanner_screen.dart';
 
@@ -564,9 +565,10 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
         .where((d) => !d.isLocal)
         .map((d) => d.id.replaceAll(RegExp(r'[\s-]'), ''))
         .toSet();
+    final ignored = context.read<DiscoveredDevicesStore>().ignoredNormIds;
     return _discoveredDevices.where((d) {
       final clean = d['id']!.replaceAll(RegExp(r'[\s-]'), '');
-      return !existing.contains(clean);
+      return !existing.contains(clean) && !ignored.contains(clean);
     }).toList();
   }
 
@@ -852,8 +854,11 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                       Navigator.of(context).pop();
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('已发送连接请求，等待对方确认接受'),
+                          content: Text(
+                            '已添加到本机。请确认对方设备也添加了本机，才能建立连接。',
+                          ),
                           backgroundColor: Colors.green,
+                          duration: Duration(seconds: 5),
                         ),
                       );
                     }

@@ -9,6 +9,7 @@ import '../../features/folders/providers/folder_provider.dart';
 import '../../core/services/api_service.dart';
 import '../../core/services/event_service.dart';
 import '../../core/services/app_notification_store.dart';
+import '../../core/services/discovered_devices_store.dart';
 import 'device_detail_page.dart';
 import 'folder_detail_page.dart';
 import 'file_preview_page.dart';
@@ -16,6 +17,7 @@ import '../../shared/widgets/accept_pending_folder_dialog.dart';
 import '../../shared/constants/app_info.dart';
 import '../../shared/widgets/app_logo.dart';
 import '../../shared/widgets/app_menu_actions.dart';
+import '../../shared/widgets/discovered_device_prompt.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({super.key});
@@ -35,10 +37,10 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
   String? _previewFilePath;
   String _searchText = '';
   String _wifiName = '';
-  final Set<String> _shownPendingDevices = {};
   final Set<String> _shownPendingFolders = {};
 
   StreamSubscription<SyncthingEvent>? _eventSub;
+  Timer? _pendingPollTimer;
 
   @override
   void initState() {
@@ -47,7 +49,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
       context.read<DeviceProvider>().fetchDevices();
       context.read<FolderProvider>().fetchFolders();
       _fetchWifiInfo();
-      _checkPendingDevices();
+      _refreshDiscovery();
       _checkPendingFolders();
     });
     _eventSub = EventService().events.listen((event) {
@@ -64,14 +66,16 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           break;
         case 'DeviceDisconnected':
           context.read<DeviceProvider>().fetchDevices();
+          _refreshDiscovery();
           _addNotification(
             '设备 ${event.data['id'] ?? ''} 已断开',
             category: AppNotificationCategory.device,
             snackColor: Colors.orange,
           );
           break;
+        case 'DeviceDiscovered':
         case 'PendingDevicesChanged':
-          _handlePendingDevicesChanged(event);
+          context.read<DiscoveredDevicesStore>().ingestEvent(event);
           break;
         case 'PendingFoldersChanged':
           _handlePendingFoldersChanged(event);
@@ -96,6 +100,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
         case 'ConfigSaved':
           context.read<DeviceProvider>().fetchDevices(silent: true);
           context.read<FolderProvider>().fetchFolders(silent: true);
+          _refreshDiscovery();
           _addNotification(
             '配置已保存',
             category: AppNotificationCategory.system,
@@ -107,6 +112,9 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
       }
     });
     EventService().start();
+    _pendingPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted) _refreshDiscovery();
+    });
   }
 
   void _addNotification(
@@ -141,142 +149,13 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
     } catch (_) {}
   }
 
-  /// 检查 Syncthing 待确认设备（未知设备尝试连接时）
-  Future<void> _checkPendingDevices() async {
-    final pending = await ApiService.getPendingDevices();
-    if (pending.isEmpty) return;
-
-    final knownIds = await _knownDeviceNormIds();
-    for (final entry in pending.entries) {
-      final deviceId = entry.key;
-      if (_isKnownDevice(deviceId, knownIds)) continue;
-      final info = entry.value;
-      if (info is! Map) continue;
-      await _showPendingDeviceDialog(
-        deviceId,
-        info['name']?.toString() ?? deviceId,
-        info['address']?.toString() ?? '',
-      );
-    }
-  }
-
-  Future<Set<String>> _knownDeviceNormIds() async {
-    final ids = <String>{};
-    try {
-      for (final d in await ApiService.getDevices()) {
-        ids.add(_normDeviceId(d.id));
-      }
-    } catch (_) {}
-    return ids;
+  Future<void> _refreshDiscovery() async {
+    if (!mounted) return;
+    await context.read<DiscoveredDevicesStore>().refresh();
   }
 
   String _normDeviceId(String id) =>
       id.replaceAll(RegExp(r'[\s-]'), '').toUpperCase();
-
-  bool _isKnownDevice(String deviceId, Set<String> knownIds) =>
-      knownIds.contains(_normDeviceId(deviceId));
-
-  void _handlePendingDevicesChanged(SyncthingEvent event) async {
-    final added = event.data['added'];
-    if (added is List) {
-      final knownIds = await _knownDeviceNormIds();
-      for (final item in added) {
-        if (item is Map) {
-          final deviceId = item['deviceID']?.toString() ?? '';
-          if (deviceId.isEmpty || _isKnownDevice(deviceId, knownIds)) continue;
-          final name = item['name']?.toString() ?? '';
-          final address = item['address']?.toString() ?? '';
-          final displayName = (name.isNotEmpty && name != deviceId) ? name : '未知设备';
-          _addNotification(
-            '收到新设备连接请求: $displayName',
-            category: AppNotificationCategory.device,
-          );
-          _showPendingDeviceDialog(deviceId, name, address);
-        }
-      }
-    } else {
-      _checkPendingDevices();
-    }
-  }
-
-  Future<void> _showPendingDeviceDialog(String deviceId, String name, String address) async {
-    if (deviceId.isEmpty || _shownPendingDevices.contains(deviceId)) return;
-    _shownPendingDevices.add(deviceId);
-
-    if (!mounted) return;
-    final displayName = (name.isNotEmpty && name != deviceId) ? name : '未知设备';
-
-    final accepted = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新设备请求连接'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('设备 "$displayName" 请求与本机建立连接。'),
-            const SizedBox(height: 12),
-            Text('设备 ID', style: Theme.of(ctx).textTheme.labelMedium),
-            SelectableText(deviceId, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-            if (address.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text('地址: $address', style: Theme.of(ctx).textTheme.bodySmall),
-            ],
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('忽略'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('接受'),
-          ),
-        ],
-      ),
-    );
-
-    if (!mounted) return;
-
-    try {
-      if (accepted == true) {
-        await ApiService.acceptPendingDevice(deviceId: deviceId, name: displayName);
-        if (mounted) {
-          await context.read<DeviceProvider>().fetchDevices();
-          _addNotification(
-            '已接受设备 $displayName',
-            category: AppNotificationCategory.device,
-            snackColor: Colors.green,
-          );
-        }
-      } else {
-        await ApiService.dismissPendingDevice(
-          deviceId,
-          ignore: true,
-          name: displayName,
-          address: address,
-        );
-        if (mounted) {
-          _addNotification(
-            '已忽略设备 $displayName',
-            category: AppNotificationCategory.device,
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        _addNotification(
-          '设备操作失败: $e',
-          category: AppNotificationCategory.device,
-          snackColor: Colors.red,
-        );
-      }
-    } finally {
-      _shownPendingDevices.remove(deviceId);
-    }
-  }
 
   String _pendingFolderKey(String folderId, String deviceId) =>
       '${_normDeviceId(folderId)}|${_normDeviceId(deviceId)}';
@@ -397,6 +276,7 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
 
   @override
   void dispose() {
+    _pendingPollTimer?.cancel();
     _eventSub?.cancel();
     super.dispose();
   }
@@ -655,46 +535,51 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
   }
 
   Widget _buildContent(BuildContext context) {
-    switch (_currentPage) {
-      case DesktopPage.home:
-        return _buildWelcomePage(context);
-      case DesktopPage.deviceDetail:
-        if (_selectedDevice == null) return _buildWelcomePage(context);
-        return DeviceDetailPage(
-          key: ValueKey(_selectedDevice!.id),
-          device: _selectedDevice!,
-          onFolderTap: _selectFolder,
-          onBack: _navigateHome,
-        );
-      case DesktopPage.folderDetail:
-        if (_selectedDevice == null || _selectedFolder == null) {
-          return _buildWelcomePage(context);
-        }
-        return FolderDetailPage(
-          key: ValueKey('${_selectedDevice!.id}/${_selectedFolder!.id}/$_folderBrowsePath'),
-          device: _selectedDevice!,
-          folder: _selectedFolder!,
-          initialPath: _folderBrowsePath,
-          onFileTap: _previewFile,
-          onPathChanged: (path) {
-            _folderBrowsePath = path;
-          },
-          onBack: () => _selectDevice(_selectedDevice!),
-        );
-      case DesktopPage.filePreview:
-        if (_selectedDevice == null || _selectedFolder == null || _previewFilePath == null) {
-          return _buildWelcomePage(context);
-        }
-        return FilePreviewPage(
-          device: _selectedDevice!,
-          folder: _selectedFolder!,
-          filePath: _previewFilePath!,
-          onBack: () => setState(() {
-            _currentPage = DesktopPage.folderDetail;
-            _previewFilePath = null;
-          }),
-        );
-    }
+    final page = switch (_currentPage) {
+      DesktopPage.home => _buildWelcomePage(context),
+      DesktopPage.deviceDetail => _selectedDevice == null
+          ? _buildWelcomePage(context)
+          : DeviceDetailPage(
+              key: ValueKey(_selectedDevice!.id),
+              device: _selectedDevice!,
+              onFolderTap: _selectFolder,
+              onBack: _navigateHome,
+            ),
+      DesktopPage.folderDetail =>
+        (_selectedDevice == null || _selectedFolder == null)
+            ? _buildWelcomePage(context)
+            : FolderDetailPage(
+                key: ValueKey('${_selectedDevice!.id}/${_selectedFolder!.id}/$_folderBrowsePath'),
+                device: _selectedDevice!,
+                folder: _selectedFolder!,
+                initialPath: _folderBrowsePath,
+                onFileTap: _previewFile,
+                onPathChanged: (path) {
+                  _folderBrowsePath = path;
+                },
+                onBack: () => _selectDevice(_selectedDevice!),
+              ),
+      DesktopPage.filePreview =>
+        (_selectedDevice == null ||
+                _selectedFolder == null ||
+                _previewFilePath == null)
+            ? _buildWelcomePage(context)
+            : FilePreviewPage(
+                device: _selectedDevice!,
+                folder: _selectedFolder!,
+                filePath: _previewFilePath!,
+                onBack: () => setState(() {
+                  _currentPage = DesktopPage.folderDetail;
+                  _previewFilePath = null;
+                }),
+              ),
+    };
+    return Column(
+      children: [
+        const DiscoveredDevicePromptHost(),
+        Expanded(child: page),
+      ],
+    );
   }
 
   Widget _buildWelcomePage(BuildContext context) {
@@ -746,7 +631,9 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   @override
   void initState() {
     super.initState();
-    _loadDiscoveredDevices();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadDiscoveredDevices();
+    });
   }
 
   @override
@@ -807,9 +694,10 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
         .where((d) => !d.isLocal)
         .map((d) => d.id.replaceAll(RegExp(r'[\s-]'), ''))
         .toSet();
+    final ignored = context.read<DiscoveredDevicesStore>().ignoredNormIds;
     return _discoveredDevices.where((d) {
       final clean = d['id']!.replaceAll(RegExp(r'[\s-]'), '');
-      return !existing.contains(clean);
+      return !existing.contains(clean) && !ignored.contains(clean);
     }).toList();
   }
 
@@ -1032,7 +920,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                       Navigator.of(context).pop();
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('已发送连接请求，等待对方确认接受'),
+                          content: Text('已添加到本机。请确认对方设备也添加了本机，才能建立连接。'),
                           backgroundColor: Colors.green,
                           duration: Duration(seconds: 4),
                         ),

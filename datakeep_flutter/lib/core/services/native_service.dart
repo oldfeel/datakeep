@@ -9,6 +9,8 @@ import '../backend/syncthing_api.dart';
 class NativeService {
   static const MethodChannel _channel = MethodChannel('site.datakeep/api');
   static bool _isDesktop = !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
+  static Future<bool>? _startDesktopInFlight;
+  static DateTime? _lastForcedRestart;
 
   /// 启动 Syncthing 服务
   static Future<bool> startSyncthingService() async {
@@ -186,6 +188,20 @@ class NativeService {
   /// 桌面端：启动 Syncthing
   /// 桌面：启动系统 syncthing 二进制（移动端为 gomobile 进程内，见 syncthing_core）
   static Future<bool> _startSyncthingDesktop() async {
+    final inFlight = _startDesktopInFlight;
+    if (inFlight != null) return inFlight;
+    final future = _startSyncthingDesktopImpl();
+    _startDesktopInFlight = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_startDesktopInFlight, future)) {
+        _startDesktopInFlight = null;
+      }
+    }
+  }
+
+  static Future<bool> _startSyncthingDesktopImpl() async {
     try {
       // 以 8384 API 为准判断是否在运行（不用 pgrep -f，会误匹配含 syncthing 字样的 shell 命令）
       if (await _isSyncthingApiReady()) {
@@ -193,16 +209,22 @@ class NativeService {
         return true;
       }
 
-      // 进程存在但 API 不可用：先等待（可能正在启动，Hot Restart 后尤其常见）
+      // 进程存在但 API 不可用：先等待（配置重载 / Hot Restart 后常见，勿过早杀掉）
       if (await _hasSyncthingProcess()) {
-        for (var i = 0; i < 10; i++) {
+        for (var i = 0; i < 25; i++) {
           await Future.delayed(const Duration(seconds: 1));
           if (await _isSyncthingApiReady()) {
             debugPrint('Syncthing 已就绪');
             return true;
           }
         }
+        final last = _lastForcedRestart;
+        if (last != null && DateTime.now().difference(last) < const Duration(seconds: 60)) {
+          debugPrint('Syncthing API 仍不可用，但刚重启过，不再强杀');
+          return false;
+        }
         debugPrint('Syncthing 进程存在但 API 长时间不可用，正在重启…');
+        _lastForcedRestart = DateTime.now();
         await _stopSyncthingDesktop();
         await Future.delayed(const Duration(seconds: 1));
       }
