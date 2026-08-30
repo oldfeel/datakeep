@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/services/api_service.dart';
@@ -22,36 +21,13 @@ class EntryContextActions {
     final oldName = p.basename(relativePath.replaceAll('\\', '/'));
     if (oldName.isEmpty) return;
 
-    final controller = TextEditingController(text: oldName);
     final newName = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(isDir ? '重命名文件夹' : '重命名文件'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: '新名称',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-            child: const Text('确定'),
-          ),
-        ],
+      builder: (ctx) => _RenameDialog(
+        title: isDir ? '重命名文件夹' : '重命名文件',
+        initialName: oldName,
       ),
     );
-    // 等路由卸掉后再 dispose，避免 TextField 仍引用已释放的 controller
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      controller.dispose();
-    });
     if (newName == null || !context.mounted) return;
     if (newName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -378,6 +354,64 @@ class EntryContextActions {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 重命名对话框：自行持有 TextEditingController，避免弹窗关闭后误用已 dispose 的 controller
+class _RenameDialog extends StatefulWidget {
+  const _RenameDialog({
+    required this.title,
+    required this.initialName,
+  });
+
+  final String title;
+  final String initialName;
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: const InputDecoration(
+          labelText: '新名称',
+          border: OutlineInputBorder(),
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('确定'),
+        ),
+      ],
     );
   }
 }
