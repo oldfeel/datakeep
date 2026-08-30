@@ -48,30 +48,24 @@ class DeviceProvider with ChangeNotifier {
     }
   }
 
-  // 添加设备
+  // 添加设备（不走全屏 loading，避免父页重建导致添加弹框关不掉）
   Future<void> addDevice({
     required String deviceID,
     required String name,
   }) async {
     try {
-      _isLoading = true;
-      _error = null;
-      notifyListeners();
-
       await ApiService.addDevice(
         deviceID: deviceID,
         name: name,
       );
       await DiscoveredDevicesStore.instance.unignore(deviceID);
-
-      // 刷新设备列表
-      await fetchDevices();
+      // 后台刷新列表，不阻塞弹框关闭
+      // ignore: unawaited_futures
+      fetchDevices(silent: true);
     } catch (e) {
       _error = e.toString();
-      rethrow;
-    } finally {
-      _isLoading = false;
       notifyListeners();
+      rethrow;
     }
   }
 
@@ -79,6 +73,8 @@ class DeviceProvider with ChangeNotifier {
   Future<void> removeDevice(String deviceId) async {
     try {
       await ApiService.removeDevice(deviceId);
+      // 本机发现列表也藏起来，避免「已发现」再弹一次
+      await DiscoveredDevicesStore.instance.ignore(deviceId);
       await fetchDevices(silent: true);
     } catch (e) {
       _error = e.toString();

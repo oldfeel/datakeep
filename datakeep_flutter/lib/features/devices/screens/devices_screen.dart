@@ -489,6 +489,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   bool _isLoadingDiscovery = true;
   bool _manualInput = false;
   bool _isSubmitting = false;
+  bool _scanCancelled = false;
 
   @override
   void initState() {
@@ -500,12 +501,14 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
 
   @override
   void dispose() {
+    _scanCancelled = true;
     _nameController.dispose();
     _manualIdController.dispose();
     super.dispose();
   }
 
   Future<void> _loadDiscoveredDevices() async {
+    _scanCancelled = false;
     setState(() {
       _isLoadingDiscovery = true;
       _idError = null;
@@ -513,12 +516,15 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     try {
       // 先刷新已配置设备，避免列表未加载时误判「未发现设备」
       await widget.deviceProvider.fetchDevices(silent: true);
+      if (!mounted || _scanCancelled) return;
       // Syncthing 局域网通告约 30s 一轮；冷启动需更长等待
       final devices = await ApiService.getDiscoveredDevices(
         retries: 20,
         interval: const Duration(seconds: 3),
         onUpdate: (partial) {
-          if (!mounted || partial.isEmpty) return;
+          if (!mounted || _scanCancelled || _isSubmitting || partial.isEmpty) {
+            return;
+          }
           setState(() {
             _discoveredDevices = partial;
             if (!_manualInput) {
@@ -532,7 +538,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
           });
         },
       );
-      if (!mounted) return;
+      if (!mounted || _scanCancelled) return;
       setState(() {
         _discoveredDevices = devices;
         _isLoadingDiscovery = false;
@@ -551,7 +557,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       });
     } catch (e) {
       debugPrint('加载发现的设备失败: $e');
-      if (mounted) {
+      if (mounted && !_scanCancelled) {
         setState(() {
           _isLoadingDiscovery = false;
           _manualInput = true;
@@ -560,15 +566,15 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     }
   }
 
+  /// 添加对话框只排除「当前已配置」设备；已删除/忽略的仍要列出，方便重新添加。
+  /// （弹框提示才用 DiscoveredDevicesStore.ignore 隐藏）
   List<Map<String, String>> _availableDevices() {
     final existing = widget.deviceProvider.devices
         .where((d) => !d.isLocal)
-        .map((d) => d.id.replaceAll(RegExp(r'[\s-]'), ''))
+        .map((d) => normDeviceId(d.id))
         .toSet();
-    final ignored = context.read<DiscoveredDevicesStore>().ignoredNormIds;
     return _discoveredDevices.where((d) {
-      final clean = d['id']!.replaceAll(RegExp(r'[\s-]'), '');
-      return !existing.contains(clean) && !ignored.contains(clean);
+      return !existing.contains(normDeviceId(d['id'] ?? ''));
     }).toList();
   }
 
@@ -837,42 +843,42 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
         ElevatedButton(
           onPressed: (canSubmit && !_isSubmitting)
               ? () async {
                   final deviceId = _effectiveDeviceId!;
+                  final navigator = Navigator.of(context);
+                  final messenger = ScaffoldMessenger.of(context);
+                  _scanCancelled = true;
                   setState(() => _isSubmitting = true);
                   try {
                     await widget.deviceProvider.addDevice(
                       deviceID: deviceId,
                       name: _nameController.text,
                     );
-                    if (mounted) {
-                      Navigator.of(context).pop();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            '已添加到本机。请确认对方设备也添加了本机，才能建立连接。',
-                          ),
-                          backgroundColor: Colors.green,
-                          duration: Duration(seconds: 5),
+                    if (!mounted) return;
+                    navigator.pop();
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          '已添加到本机。请确认对方设备也添加了本机，才能建立连接。',
                         ),
-                      );
-                    }
+                        backgroundColor: Colors.green,
+                        duration: Duration(seconds: 5),
+                      ),
+                    );
                   } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('添加设备失败: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                  } finally {
-                    if (mounted) setState(() => _isSubmitting = false);
+                    if (!mounted) return;
+                    setState(() => _isSubmitting = false);
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('添加设备失败: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
                   }
                 }
               : null,

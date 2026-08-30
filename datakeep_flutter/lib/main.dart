@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'dart:async';
 import 'dart:io';
 import 'dart:ui' show AppExitResponse;
 import 'package:media_kit/media_kit.dart';
@@ -10,7 +9,6 @@ import 'core/backend/backend_server.dart';
 import 'core/backend/syncthing_api.dart';
 import 'core/services/native_service.dart';
 import 'core/services/syncthing_lifecycle.dart';
-import 'core/services/device_ignore_migration.dart';
 
 /// 保持引用，避免被 GC 后退出钩子失效
 // ignore: unused_element
@@ -82,8 +80,6 @@ Future<void> _startPlatformServices() async {
     } else {
       await _startDesktopServices();
     }
-    // 不阻塞启动：后台迁移清空旧版「删除即忽略」残留
-    unawaited(DeviceIgnoreMigration.runOnceWhenReady());
   } catch (e, st) {
     debugPrint('[startup] 启动服务异常: $e');
     debugPrint('$st');

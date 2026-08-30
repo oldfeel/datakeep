@@ -627,6 +627,8 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   List<Map<String, String>> _discoveredDevices = [];
   bool _isLoadingDiscovery = true;
   bool _manualInput = false;
+  bool _isSubmitting = false;
+  bool _scanCancelled = false;
 
   @override
   void initState() {
@@ -638,49 +640,62 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
 
   @override
   void dispose() {
+    _scanCancelled = true;
     _nameController.dispose();
     _manualIdController.dispose();
     super.dispose();
   }
 
   Future<void> _loadDiscoveredDevices() async {
+    _scanCancelled = false;
     setState(() {
       _isLoadingDiscovery = true;
       _idError = null;
     });
     try {
       final provider = context.read<DeviceProvider>();
-      await provider.fetchDevices();
+      await provider.fetchDevices(silent: true);
+      if (!mounted || _scanCancelled) return;
       // Syncthing 局域网通告约 30s 一轮；冷启动需更长等待
       final devices = await ApiService.getDiscoveredDevices(
         retries: 20,
         interval: const Duration(seconds: 3),
         onUpdate: (partial) {
-          if (!mounted || partial.isEmpty) return;
+          if (!mounted || _scanCancelled || _isSubmitting || partial.isEmpty) {
+            return;
+          }
           setState(() {
             _discoveredDevices = partial;
-            if (!_manualInput && partial.isNotEmpty) {
-              _selectedDeviceId = partial.first['id'];
-              _applySelectedDevice(partial.first);
-              _validate(_selectedDeviceId!);
+            if (!_manualInput) {
+              final available = _availableDevices(provider);
+              if (available.isNotEmpty) {
+                _selectedDeviceId = available.first['id'];
+                _applySelectedDevice(available.first);
+                _validate(_selectedDeviceId!);
+              }
             }
           });
         },
       );
-      if (!mounted) return;
+      if (!mounted || _scanCancelled) return;
       setState(() {
         _discoveredDevices = devices;
         _isLoadingDiscovery = false;
         if (devices.isEmpty) {
           _manualInput = true;
         } else if (!_manualInput) {
-          _selectedDeviceId = devices.first['id'];
-          _applySelectedDevice(devices.first);
-          _validate(_selectedDeviceId!);
+          final available = _availableDevices(provider);
+          if (available.isNotEmpty) {
+            _selectedDeviceId = available.first['id'];
+            _applySelectedDevice(available.first);
+            _validate(_selectedDeviceId!);
+          } else {
+            _manualInput = true;
+          }
         }
       });
     } catch (_) {
-      if (mounted) {
+      if (mounted && !_scanCancelled) {
         setState(() {
           _isLoadingDiscovery = false;
           _manualInput = true;
@@ -689,15 +704,15 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     }
   }
 
+  /// 添加对话框只排除「当前已配置」设备；已删除/忽略的仍要列出，方便重新添加。
+  /// （弹框提示才用 DiscoveredDevicesStore.ignore 隐藏）
   List<Map<String, String>> _availableDevices(DeviceProvider provider) {
     final existing = provider.devices
         .where((d) => !d.isLocal)
-        .map((d) => d.id.replaceAll(RegExp(r'[\s-]'), ''))
+        .map((d) => normDeviceId(d.id))
         .toSet();
-    final ignored = context.read<DiscoveredDevicesStore>().ignoredNormIds;
     return _discoveredDevices.where((d) {
-      final clean = d['id']!.replaceAll(RegExp(r'[\s-]'), '');
-      return !existing.contains(clean) && !ignored.contains(clean);
+      return !existing.contains(normDeviceId(d['id'] ?? ''));
     }).toList();
   }
 
@@ -906,36 +921,48 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        TextButton(
+          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
         ElevatedButton(
-          onPressed: canSubmit
+          onPressed: (canSubmit && !_isSubmitting)
               ? () async {
                   final deviceId = _effectiveDeviceId!;
+                  final navigator = Navigator.of(context);
+                  final messenger = ScaffoldMessenger.of(context);
+                  _scanCancelled = true;
+                  setState(() => _isSubmitting = true);
                   try {
                     await provider.addDevice(
                       deviceID: deviceId,
                       name: _nameController.text,
                     );
-                    if (mounted) {
-                      Navigator.of(context).pop();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('已添加到本机。请确认对方设备也添加了本机，才能建立连接。'),
-                          backgroundColor: Colors.green,
-                          duration: Duration(seconds: 4),
-                        ),
-                      );
-                    }
+                    if (!mounted) return;
+                    navigator.pop();
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('已添加到本机。请确认对方设备也添加了本机，才能建立连接。'),
+                        backgroundColor: Colors.green,
+                        duration: Duration(seconds: 4),
+                      ),
+                    );
                   } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('添加失败: $e'), backgroundColor: Colors.red),
-                      );
-                    }
+                    if (!mounted) return;
+                    setState(() => _isSubmitting = false);
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('添加失败: $e'), backgroundColor: Colors.red),
+                    );
                   }
                 }
               : null,
-          child: const Text('添加'),
+          child: _isSubmitting
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('添加'),
         ),
       ],
     );

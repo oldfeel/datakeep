@@ -1065,11 +1065,20 @@ class SyncthingApi {
     return proxyPut('/rest/config', cfg);
   }
 
-  /// 从配置删除设备（对齐 Syncthing Remove：不写入 remoteIgnoredDevices）。
-  /// 用单设备 / 单文件夹接口，避免 PUT 整份 config 把 8384 打挂。
+  /// 从配置删除设备，并写入 remoteIgnoredDevices（防止对端仍连接时反复 pending 弹窗）。
+  /// 用单设备 / 单文件夹接口删共享与设备，再 ignore；避免整份 config PUT 打挂 8384。
   Future<Map<String, dynamic>> removeAndIgnoreDevice(String deviceId) async {
     if (!await isRunning()) return {'error': 'Syncthing 未运行'};
     final formattedId = formatDeviceId(deviceId);
+
+    var name = '';
+    final getDev = await proxyGet('/rest/config/devices/$formattedId', silent: true);
+    if (!_isProxyError(getDev)) {
+      final data = getDev['data'];
+      if (data is Map) {
+        name = data['name']?.toString() ?? '';
+      }
+    }
 
     final foldersRes = await proxyGet('/rest/config/folders');
     if (!_isProxyError(foldersRes)) {
@@ -1106,19 +1115,17 @@ class SyncthingApi {
     final del = await proxyDelete('/rest/config/devices/$formattedId');
     if (_isProxyError(del)) return del;
 
-    await unignoreRemoteDevice(formattedId);
-    return del;
-  }
+    final ignore = await ignoreRemoteDevice(formattedId, name: name);
+    if (ignore.containsKey('error')) {
+      debugPrint('[devices] 删除后写入忽略失败: ${ignore['error']}');
+    }
 
-  /// 清空 remoteIgnoredDevices（升级迁移：修复旧版「删除即忽略」导致无法再配对）
-  Future<Map<String, dynamic>> clearAllRemoteIgnoredDevices() async {
-    if (!await isRunning()) return {'error': 'Syncthing 未运行'};
-    final cfg = await _getFullConfig();
-    if (cfg.containsKey('error')) return cfg;
-    final list = cfg['remoteIgnoredDevices'] as List? ?? const [];
-    if (list.isEmpty) return {};
-    cfg['remoteIgnoredDevices'] = <Map<String, dynamic>>[];
-    return proxyPut('/rest/config', cfg);
+    // 顺带清掉 pending，避免残留再弹
+    await proxyDelete(
+      '/rest/cluster/pending/devices',
+      queryParams: {'device': formattedId},
+    );
+    return del;
   }
 
   /// 合并连接状态到设备列表

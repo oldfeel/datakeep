@@ -258,7 +258,7 @@ class _DeviceInfoPanelState extends State<DeviceInfoPanel> {
           '确定要删除设备「${_device.displayName}」吗？\n\n'
           '• 仅从本机移除并停止与该设备的同步\n'
           '• 对端不会自动删除本机，请到对方设备上同步删除\n'
-          '• 对端未删除前，该设备可能再次出现在「已发现」列表，可忽略或重新添加',
+          '• 删除后会忽略该设备，不再反复弹出配对提示；需要时可手动重新添加',
         ),
         actions: [
           TextButton(
