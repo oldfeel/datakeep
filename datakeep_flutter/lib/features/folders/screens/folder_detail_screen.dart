@@ -194,6 +194,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       scope: AddItemScope.insideFolder,
       parentPath: _absoluteCurrentPath,
       parentFolderId: widget.folderId,
+      relativeDirPath: _currentPath.join('/'),
       onDone: _loadFiles,
     );
   }
@@ -562,7 +563,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                                     FilledButton.icon(
                                       onPressed: _showAddDialog,
                                       icon: const Icon(Icons.add),
-                                      label: const Text('添加文件夹或应用'),
+                                      label: const Text('添加文件夹、文件或应用'),
                                     ),
                                   ],
                                 ],
@@ -780,6 +781,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                 entryName: displayName,
                 folderId: widget.folderId,
                 relativePath: relativePath,
+                folderRootPath: _folderInfo?.path ?? '',
                 isDir: isDir,
                 onSuccess: _loadFiles,
               );

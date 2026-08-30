@@ -27,10 +27,23 @@ class BackendServer {
   String? _defaultLocalDeviceName;
   bool _deviceNameEnsureAttempted = false;
 
+  /// 热重启后实例字段会丢，但 OS 端口仍被占用；用 static 尽量关掉上一轮服务
+  static HttpServer? _activeServer;
+
   bool get isRunning => _server != null;
 
   Future<void> start({int port = 8443, String? syncthingConfigPath, String? defaultLocalDeviceName}) async {
     if (_server != null) return;
+    // 热重启：关掉上一轮未释放的监听，避免 8443 绑失败导致「加载文件夹失败」
+    if (_activeServer != null) {
+      try {
+        await _activeServer!.close(force: true);
+      } catch (e) {
+        debugPrint('[backend] 关闭旧服务失败: $e');
+      }
+      _activeServer = null;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
     _defaultLocalDeviceName = defaultLocalDeviceName;
     _api.init(configPath: syncthingConfigPath, defaultLocalDeviceName: defaultLocalDeviceName);
 
@@ -48,6 +61,7 @@ class BackendServer {
       ..get('/api/device/<deviceId>/folder/<folderId>/thumbnail', _handleDeviceFolderThumbnail)
       ..put('/api/device/<deviceId>/folder/<folderId>/file', _handleDeviceFolderPutFile)
       ..delete('/api/device/<deviceId>/folder/<folderId>/file', _handleDeviceFolderDeleteFile)
+      ..post('/api/device/<deviceId>/folder/<folderId>/rename', _handleDeviceFolderRename)
       ..post('/api/device/local/folders', _handleCreateFolder)
       ..delete('/api/device/<deviceId>/folders/<folderId>', _handleDeleteFolder)
       ..delete('/api/device/<deviceId>', _handleRemoveDevice)
@@ -93,9 +107,27 @@ class BackendServer {
         .addHandler(router);
 
     final ctx = _certMgr.createSecurityContext();
-    _server = await shelf_io.serve(handler, InternetAddress.anyIPv4, port,
-        securityContext: ctx);
+    try {
+      _server = await shelf_io.serve(
+        handler,
+        InternetAddress.anyIPv4,
+        port,
+        securityContext: ctx,
+      );
+    } on SocketException catch (e) {
+      // 热重启后端口常被旧 socket 占用；shared 可绑上，但旧实例可能抢请求
+      debugPrint('[backend] 独占绑定失败，改用 shared: $e');
+      _server = await shelf_io.serve(
+        handler,
+        InternetAddress.anyIPv4,
+        port,
+        securityContext: ctx,
+        shared: true,
+      );
+      debugPrint('[backend] 已 shared 绑定。若接口异常请完全退出后重新 flutter run');
+    }
     _server!.autoCompress = true;
+    _activeServer = _server;
     debugPrint('Backend HTTPS 服务器已启动: https://0.0.0.0:$port');
   }
 
@@ -118,6 +150,9 @@ class BackendServer {
 
   Future<void> stop() async {
     await _server?.close(force: true);
+    if (identical(_activeServer, _server)) {
+      _activeServer = null;
+    }
     _server = null;
   }
 
@@ -527,6 +562,27 @@ class BackendServer {
       return _deleteLocalFolderFile(folderId, path);
     }
     return _proxyPeerFolderDeleteFile(deviceId, folderId, path);
+  }
+
+  Future<Response> _handleDeviceFolderRename(
+    Request request,
+    String deviceId,
+    String folderId,
+  ) async {
+    final isLocal = await _isLocalDeviceId(deviceId);
+    if (!isLocal) {
+      return Response(403, body: '仅支持本机重命名');
+    }
+    final body = utf8.decode(await request.read().expand((e) => e).toList());
+    Map<String, dynamic> data;
+    try {
+      data = json.decode(body) as Map<String, dynamic>;
+    } catch (_) {
+      return Response(400, body: '无效 JSON');
+    }
+    final path = data['path']?.toString() ?? '';
+    final newName = data['newName']?.toString().trim() ?? '';
+    return _renameLocalFolderFile(folderId, path, newName);
   }
 
   Future<Response> _proxyPeerFolderFiles(
@@ -1372,6 +1428,60 @@ class BackendServer {
       );
     } catch (e) {
       return Response(500, body: '删除失败: $e');
+    }
+  }
+
+  /// 本机重命名：path 为相对同步根路径，newName 为同目录下新文件名（不含路径）
+  Future<Response> _renameLocalFolderFile(
+    String folderId,
+    String filePath,
+    String newName,
+  ) async {
+    if (filePath.isEmpty) return Response(400, body: '缺少 path 参数');
+    if (newName.isEmpty) return Response(400, body: '新名称不能为空');
+    if (newName.contains('/') ||
+        newName.contains('\\') ||
+        newName == '.' ||
+        newName == '..') {
+      return Response(400, body: '名称不能包含路径分隔符');
+    }
+
+    final folderPath = await _resolveFolderRootPath(folderId);
+    if (folderPath == null) return Response(404, body: '文件夹未找到');
+    final safe = _resolveWritePath(folderPath, filePath);
+    if (safe == null) return Response(403, body: '非法路径');
+
+    final normalized = filePath.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+    final slash = normalized.lastIndexOf('/');
+    final parentRel = slash >= 0 ? normalized.substring(0, slash) : '';
+    final destRel = parentRel.isEmpty ? newName : '$parentRel/$newName';
+    final destSafe = _resolveWritePath(folderPath, destRel);
+    if (destSafe == null) return Response(403, body: '非法目标路径');
+
+    try {
+      final entityType = FileSystemEntity.typeSync(safe);
+      if (entityType == FileSystemEntityType.notFound) {
+        return Response.notFound('不存在: $safe');
+      }
+      if (FileSystemEntity.typeSync(destSafe) != FileSystemEntityType.notFound) {
+        return Response(409, body: '已存在同名文件或文件夹');
+      }
+      if (entityType == FileSystemEntityType.directory) {
+        await Directory(safe).rename(destSafe);
+      } else if (entityType == FileSystemEntityType.file) {
+        await File(safe).rename(destSafe);
+      } else {
+        return Response(400, body: '不支持的文件类型');
+      }
+      unawaited(_api.triggerFolderScan(folderId));
+      debugPrint('[rename] $safe → $destSafe');
+      return Response.ok(
+        '{"ok":true}',
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      );
+    } catch (e) {
+      debugPrint('[rename] 失败: $e (from=$safe)');
+      return Response(500, body: '重命名失败: $e');
     }
   }
 

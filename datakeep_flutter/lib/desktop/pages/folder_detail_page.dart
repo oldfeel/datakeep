@@ -375,6 +375,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
       scope: AddItemScope.insideFolder,
       parentPath: _absoluteCurrentPath,
       parentFolderId: widget.folder.id,
+      relativeDirPath: _currentPath.join('/'),
       onDone: _loadFiles,
     );
   }
@@ -553,7 +554,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
               FilledButton.icon(
                 onPressed: _showAddDialog,
                 icon: const Icon(Icons.add),
-                label: const Text('添加文件夹或应用'),
+                label: const Text('添加文件夹、文件或应用'),
               ),
             ],
           ],
@@ -686,6 +687,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                                   entryName: displayName,
                                   folderId: widget.folder.id,
                                   relativePath: relativePath,
+                                  folderRootPath: widget.folder.path,
                                   isDir: isDir,
                                   onSuccess: _loadFiles,
                                 );
@@ -893,6 +895,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
                       entryName: displayName,
                       folderId: widget.folder.id,
                       relativePath: relativePath,
+                      folderRootPath: widget.folder.path,
                       isDir: isDir,
                       onSuccess: _loadFiles,
                     );

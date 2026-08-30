@@ -19,15 +19,18 @@ enum AddItemScope {
 }
 
 /// 添加：本地同步文件夹，或从应用市场安装到当前目录；
-/// 在文件夹内还可新建子文件夹。
+/// 在文件夹内还可新建子文件夹、上传文件。
 class AddItemDialog extends StatefulWidget {
   final AddItemScope scope;
 
-  /// 当前目录（市场应用安装到其下的 `<appKey>/`；目录内新建子文件夹也基于此）
+  /// 当前目录（市场应用安装到其下的 `<appKey>/`；目录内新建子文件夹 / 上传也基于此）
   final String? initialParentPath;
 
-  /// 所在同步文件夹 ID（目录内新建后触发扫描）
+  /// 所在同步文件夹 ID（目录内新建/上传后触发扫描）
   final String? parentFolderId;
+
+  /// 相对同步根的当前路径（上传时拼到 PUT path；空表示根）
+  final String? relativeDirPath;
   final VoidCallback? onDone;
 
   const AddItemDialog({
@@ -35,6 +38,7 @@ class AddItemDialog extends StatefulWidget {
     this.scope = AddItemScope.syncRoot,
     this.initialParentPath,
     this.parentFolderId,
+    this.relativeDirPath,
     this.onDone,
   });
 
@@ -43,6 +47,7 @@ class AddItemDialog extends StatefulWidget {
     AddItemScope scope = AddItemScope.syncRoot,
     String? parentPath,
     String? parentFolderId,
+    String? relativeDirPath,
     VoidCallback? onDone,
   }) {
     return showDialog(
@@ -51,6 +56,7 @@ class AddItemDialog extends StatefulWidget {
         scope: scope,
         initialParentPath: parentPath,
         parentFolderId: parentFolderId,
+        relativeDirPath: relativeDirPath,
         onDone: onDone,
       ),
     );
@@ -60,7 +66,7 @@ class AddItemDialog extends StatefulWidget {
   State<AddItemDialog> createState() => _AddItemDialogState();
 }
 
-enum _AddKind { folder, market }
+enum _AddKind { folder, upload, market }
 
 class _AddItemDialogState extends State<AddItemDialog> {
   _AddKind _kind = _AddKind.folder;
@@ -241,6 +247,111 @@ class _AddItemDialogState extends State<AddItemDialog> {
     }
   }
 
+  Future<void> _submitUpload() async {
+    final parent = _parentCtrl.text.trim();
+    final folderId = widget.parentFolderId;
+    if (parent.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前目录无效')),
+      );
+      return;
+    }
+    if (folderId == null || folderId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('缺少同步文件夹 ID')),
+      );
+      return;
+    }
+
+    FilePickerResult? picked;
+    try {
+      picked = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        withData: false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('选择文件失败: $e'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    if (picked == null || picked.files.isEmpty) return;
+
+    setState(() {
+      _submitting = true;
+      _status = '正在上传…';
+    });
+    final relDir = (widget.relativeDirPath ?? '')
+        .replaceAll('\\', '/')
+        .replaceAll(RegExp(r'^/+|/+$'), '');
+    var ok = 0;
+    Object? lastError;
+    try {
+      for (final f in picked.files) {
+        final name = f.name.trim();
+        if (name.isEmpty ||
+            name.contains('/') ||
+            name.contains('\\') ||
+            name == '.' ||
+            name == '..') {
+          lastError = '非法文件名: ${f.name}';
+          continue;
+        }
+        if (mounted) {
+          setState(() => _status = '正在上传 $name…');
+        }
+        final relPath = relDir.isEmpty ? name : '$relDir/$name';
+        try {
+          final srcPath = f.path;
+          if (srcPath != null && srcPath.isNotEmpty) {
+            final dest = File(p.join(parent, name));
+            if (await dest.exists()) {
+              throw Exception('已存在同名文件: $name');
+            }
+            await File(srcPath).copy(dest.path);
+          } else if (f.bytes != null) {
+            await ApiService.putFolderFile(folderId, relPath, f.bytes!);
+          } else {
+            throw Exception('无法读取文件: $name');
+          }
+          ok++;
+        } catch (e) {
+          lastError = e;
+          debugPrint('[upload] $name 失败: $e');
+        }
+      }
+      if (ok > 0) {
+        try {
+          await ApiService.scanFolder(folderId);
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      if (ok > 0) {
+        Navigator.of(context).pop();
+        widget.onDone?.call();
+        final msg = lastError == null
+            ? '已上传 $ok 个文件'
+            : '已上传 $ok 个文件（部分失败: $lastError）';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('上传失败: $lastError'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _status = null;
+        });
+      }
+    }
+  }
+
   Future<void> _installApp(MarketAppInfo app) async {
     final parent = _parentCtrl.text.trim();
     if (parent.isEmpty) {
@@ -310,6 +421,12 @@ class _AddItemDialogState extends State<AddItemDialog> {
                     label: Text(folderLabel),
                     icon: const Icon(Icons.create_new_folder_outlined, size: 18),
                   ),
+                  if (_inside)
+                    const ButtonSegment(
+                      value: _AddKind.upload,
+                      label: Text('上传文件'),
+                      icon: Icon(Icons.upload_file_outlined, size: 18),
+                    ),
                   const ButtonSegment(
                     value: _AddKind.market,
                     label: Text('应用市场'),
@@ -327,6 +444,8 @@ class _AddItemDialogState extends State<AddItemDialog> {
               const SizedBox(height: 16),
               if (_kind == _AddKind.folder)
                 ...(_inside ? _subDirFields() : _syncFolderFields())
+              else if (_kind == _AddKind.upload)
+                ..._uploadFields()
               else
                 ..._marketFields(),
             ],
@@ -335,7 +454,7 @@ class _AddItemDialogState extends State<AddItemDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _submitting ? null : () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
         if (_kind == _AddKind.folder)
@@ -344,6 +463,11 @@ class _AddItemDialogState extends State<AddItemDialog> {
                 ? null
                 : (_inside ? _submitSubDir : _submitSyncFolder),
             child: Text(_inside ? '创建' : '添加'),
+          )
+        else if (_kind == _AddKind.upload)
+          FilledButton(
+            onPressed: _submitting ? null : _submitUpload,
+            child: Text(_submitting ? '上传中…' : '选择并上传'),
           ),
       ],
     );
@@ -412,6 +536,31 @@ class _AddItemDialogState extends State<AddItemDialog> {
           if (!_submitting) _submitSubDir();
         },
       ),
+    ];
+  }
+
+  List<Widget> _uploadFields() {
+    return [
+      Text(
+        '从本机选择文件，复制到当前同步目录（可多选）',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      const SizedBox(height: 8),
+      TextField(
+        controller: _parentCtrl,
+        readOnly: true,
+        decoration: const InputDecoration(
+          labelText: '当前目录',
+        ),
+      ),
+      if (_status != null) ...[
+        const SizedBox(height: 12),
+        Text(_status!, style: Theme.of(context).textTheme.bodySmall),
+        if (_submitting) ...[
+          const SizedBox(height: 8),
+          const LinearProgressIndicator(),
+        ],
+      ],
     ];
   }
 

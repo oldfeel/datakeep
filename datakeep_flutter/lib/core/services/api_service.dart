@@ -1014,6 +1014,32 @@ class ApiService {
     }
   }
 
+  /// 本机重命名文件/子文件夹（newName 不含路径）
+  static Future<void> renameFolderFile(
+    String folderId,
+    String filePath,
+    String newName,
+  ) async {
+    await initialize();
+    final localId = await getLocalDeviceId();
+    final uri = Uri.parse(
+      '$_baseUrl/device/${Uri.encodeComponent(localId)}/folder/${Uri.encodeComponent(folderId)}/rename',
+    );
+    debugPrint('API POST rename: $uri path=$filePath → $newName');
+    final resp = await _httpClient
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json; charset=utf-8'},
+          body: jsonEncode({'path': filePath, 'newName': newName}),
+        )
+        .timeout(const Duration(seconds: 30));
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw Exception(
+        resp.body.isNotEmpty ? resp.body : '重命名失败 HTTP ${resp.statusCode}',
+      );
+    }
+  }
+
   /// 探测文件是否存在（200 视为存在）
   static Future<bool> folderFileExists(
     String folderId,
