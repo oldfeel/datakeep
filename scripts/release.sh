@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # DataKeep 发版：更新版本 → 打 tag → 推送 → 触发 GitHub Actions 多平台编译
-# 编完后可选：通知官网从 GitHub Release 同步下载链；本机 download 可上传 APK 到蒲公英
+# 编完后可选：通知官网从 GitHub Release 同步下载链（服务端可顺带上传蒲公英）
 #
 # 用法:
 #   ./scripts/release.sh              # 默认 patch：末位 +1，逢 10 进位（0.0.9 → 0.1.0，不会出现 0.0.10）
@@ -20,7 +20,7 @@
 #   ./scripts/release.sh download v0.0.4  # 指定 tag
 #   ./scripts/release.sh --proxy           # 等待 CI / gh 走本机代理（同 download）
 #   DATAKEEP_USE_PROXY=1 ./scripts/release.sh download v0.0.4  # 走本机代理（默认 127.0.0.1:7897）
-#   ./scripts/release.sh download v0.0.6 --skip-pgyer         # 跳过上传 APK 到蒲公英
+#   ./scripts/release.sh download v0.0.6 --upload-pgyer       # 可选：本机再传一次蒲公英（一般不必）
 #
 # 官网同步（编完后默认尝试）:
 #   优先读环境变量 DATAKEEP_MARKET_TOKEN / USER / PASSWORD
@@ -28,10 +28,8 @@
 #   DATAKEEP_MARKET_URL 默认 https://admin.datakeep.site
 #   DATAKEEP_MARKET_ENV  可指定 .env 路径
 #
-# 蒲公英（download 完成后自动上传 Android APK）:
-#   PGYER_API_KEY  或旁路 ../datakeep-market/market_server/.env 的 PGYER_API_KEY
-#   也可 ~/.config/pgyer/config.json 的 apiKey（pgyer-cli 格式）
-#   DATAKEEP_SKIP_PGYER=1 或 --skip-pgyer 跳过
+# 蒲公英：由官网 market_server 在 sync-github 时上传（配置服务器 .env 的 PGYER_API_KEY）。
+#   本机 download 默认不再上传；仅调试可用 --upload-pgyer / DATAKEEP_UPLOAD_PGYER=1
 #
 # 远程发版依赖公开仓 workflow「Build packages」（push tags: v*）。
 
@@ -60,7 +58,11 @@ MODE="patch" # 默认末位 +1（十进制进位）；可被 patch|minor|major|x
 ACTION="release" # release | market | links | download
 RELEASE_TAG=""
 USE_PROXY=0
-SKIP_PGYER="${DATAKEEP_SKIP_PGYER:-0}"
+# 蒲公英改由官网 sync-github 上传；本机 download 默认跳过（可用 --upload-pgyer 强制）
+SKIP_PGYER="${DATAKEEP_SKIP_PGYER:-1}"
+if [[ "${DATAKEEP_UPLOAD_PGYER:-0}" == "1" ]]; then
+  SKIP_PGYER=0
+fi
 
 MARKET_URL="${DATAKEEP_MARKET_URL:-https://admin.datakeep.site}"
 MARKET_URL="${MARKET_URL%/}"
@@ -68,7 +70,8 @@ MARKET_URL="${MARKET_URL%/}"
 usage() {
   cat <<'EOF'
 DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions 多平台编译
-编完后默认调用官网接口：服务器从 GitHub Release 同步各平台下载直链。
+编完后默认调用官网接口：服务器从 GitHub Release 同步各平台下载直链；
+若服务端配置了 PGYER_API_KEY，sync 时会自动上传 Android APK 到蒲公英。
 
 用法:
   ./scripts/release.sh              # 默认末位 +1（0.0.8 → 0.0.9 → 0.1.0，无 0.0.10）
@@ -88,12 +91,12 @@ DataKeep 发版：版本 +0.0.1 → 打 tag → 推送 → 触发 GitHub Actions
   ./scripts/release.sh download v0.0.4     # 指定 tag
   DATAKEEP_USE_PROXY=1 ./scripts/release.sh download v0.0.4
     # 或先 export https_proxy=http://127.0.0.1:7897 http_proxy=... all_proxy=...
-  ./scripts/release.sh download v0.0.6 --skip-pgyer        # 不上传蒲公英
+  ./scripts/release.sh download v0.0.6 --upload-pgyer     # 可选：本机再传蒲公英（一般不必）
 
 官网同步：默认用旁路 datakeep-market/market_server/.env 的 ADMIN_*；
 也可设 DATAKEEP_MARKET_TOKEN，或 DATAKEEP_MARKET_USER + DATAKEEP_MARKET_PASSWORD。
 
-蒲公英：download 完成后自动上传 APK；设 PGYER_API_KEY（或 .env / ~/.config/pgyer/config.json）。
+蒲公英：优先由服务器 sync-github 上传（market_server/.env 的 PGYER_API_KEY）。
 EOF
   exit 0
 }
@@ -108,6 +111,7 @@ for arg in "$@"; do
     --proxy) USE_PROXY=1 ;;
     --no-proxy) USE_PROXY=0 ;;
     --skip-pgyer) SKIP_PGYER=1 ;;
+    --upload-pgyer|--with-pgyer) SKIP_PGYER=0 ;;
     qiniu|sync|market)
       ACTION="market"
       ;;

@@ -17,7 +17,7 @@ cd scripts   # 或在仓库根目录用 ./scripts/release.sh
 # 2. 同步官网：服务器从 GitHub Release 写入各平台下载直链
 ./release.sh market
 
-# 3. 本机（可选）：下载四端包到 dist-release/，并上传 Android APK 到蒲公英
+# 3. 本机（可选）：下载四端包到 dist-release/
 ./release.sh download
 ```
 
@@ -26,15 +26,15 @@ cd scripts   # 或在仓库根目录用 ./scripts/release.sh
 | 步骤 | 做什么 | 前置条件 |
 |------|--------|----------|
 | `release` | 触发 CI「Build packages」，产物挂到 [GitHub Release](https://github.com/oldfeel/datakeep/releases) | 工作区干净；需 `git`、`gh`（跟踪 CI 时） |
-| `market` | 调用官网 `sync-github`：GitHub → R2（已配置）+ 写入下载元数据 | **上一步 CI 已成功**；需市场管理员账号；服务端需配置 R2 |
-| `download` | 从 GitHub 拉四端包；可选上传 APK 到蒲公英 | Release 已有资产 |
+| `market` | 调用官网 `sync-github`：GitHub → 下载元数据 + BT；**服务端可自动传蒲公英** | **上一步 CI 已成功**；需市场管理员账号；服务端需配置 R2；蒲公英需服务器 `.env` 的 `PGYER_API_KEY` |
+| `download` | 从 GitHub 拉四端包到本机（可选 `--upload-pgyer`） | Release 已有资产 |
 
 说明：
 
 - 第 1 步结束后，若本机已配置市场账号，脚本会**自动尝试**官网同步；失败或未配置时，再单独跑第 2 步 `./release.sh market`。
 - 不想等 CI 时可：`./release.sh --no-wait`，到 Actions 页确认编完后再执行 `market`。
 - 指定版本示例：`./release.sh market v0.1.1`、`./release.sh download v0.1.1`。
-- 官网下载页：各平台 **CDN（R2 预签名）主链** + **GitHub 备用**；Android 另提供 **蒲公英扫码**（由 `download` 上传或手动维护）。
+- 官网下载页：各平台 **CDN（R2 预签名）主链** + **GitHub 备用**；Android **蒲公英扫码**由 `market` 同步时上传（写入 `storeUrl`）。
 
 ---
 
@@ -70,12 +70,14 @@ cd scripts   # 或在仓库根目录用 ./scripts/release.sh
 
 可选：`DATAKEEP_MARKET_URL`（默认 `https://admin.datakeep.site`）。
 
-### 本机下载与蒲公英
+**蒲公英：** 在 **服务器** `market_server/.env` 配置 `PGYER_API_KEY`（可选 `PGYER_UPLOAD=true`）。`./release.sh market` 同步 Android 包时会自动上传；失败不阻断官网同步。
+
+### 本机下载
 
 ```bash
 ./release.sh download              # 默认最新 tag → dist-release/
 ./release.sh download v0.1.1
-./release.sh download v0.1.1 --skip-pgyer      # 不上传 APK 到蒲公英
+./release.sh download v0.1.1 --upload-pgyer   # 可选：本机再传一次蒲公英（一般不必）
 ```
 
 **download 产物布局：**
@@ -84,8 +86,6 @@ cd scripts   # 或在仓库根目录用 ./scripts/release.sh
 dist-release/v0.1.1/
 └── packages/          # 四端安装包
 ```
-
-**蒲公英（可选）：** `download` 完成后可自动上传 Android APK；配置 `PGYER_API_KEY` 或旁路 `.env`，或 `--skip-pgyer` 跳过。
 
 ---
 
