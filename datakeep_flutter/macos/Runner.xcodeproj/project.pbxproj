@@ -242,7 +242,7 @@
 				3399D490228B24CF009A79C7 /* ShellScript */,
 				EF9E1CB9B1B270FF5FC7A987 /* [CP] Embed Pods Frameworks */,
 				A1B2C3D4E5F60718293A4B5C /* Bundle Syncthing */,
-				D34956A96949105231F0EF34 /* Embed CEF Helpers */,
+				B99A58956D6FE61E25A83497 /* Embed CEF Helpers */,
 			);
 			buildRules = (
 			);
@@ -384,7 +384,7 @@
 			shellPath = /bin/bash;
 			shellScript = "bash \"${SRCROOT}/Runner/bundle_syncthing.sh\"\n";
 		};
-		D34956A96949105231F0EF34 /* Embed CEF Helpers */ = {
+		B99A58956D6FE61E25A83497 /* Embed CEF Helpers */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
