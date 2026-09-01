@@ -62,10 +62,11 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
-# CEF 149 Release 版 libcef.dll 在本机 LoadLibrary 返回 193（0xC000007B）；
-# Debug 版可正常加载。须在 include 插件（下载/配置 CEF）之前打开。
+# 部分本机（旧 SDK/工具链）上 CEF 149 的 Release libcef 无法 LoadLibrary(193)；
+# Debug 构建改用 Debug CEF 以便 `flutter run`。GitHub windows-latest 的 Release 包正常，
+# 发版以 CI / release.sh 产物为准，勿把 Debug CEF 打进 Release 安装包。
 set(WEBVIEW_CEF_USE_DEBUG_CEF ON CACHE BOOL
-  "Use CEF Debug binaries; Release libcef fails to load on some Windows hosts" FORCE)
+  "Use CEF Debug binaries for Debug builds (local hosts where Release libcef fails)" FORCE)
 
 # CEF 149 设置 NTDDI_VERSION=NTDDI_WIN10_FE。Windows SDK 10.0.19041 没有该宏，
 # 未定义时 NTDDI_VERSION 展开为 0，fileapi.h / wintrust.h 会裁掉 Vista+ 类型，

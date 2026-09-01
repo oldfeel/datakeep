@@ -141,8 +141,10 @@ flutter_launcher_icons:
   macos:
     generate: true
     image_path: assets/icons/app_icon.png
+  # Windows：flutter_launcher_icons 的 encodeIco 会丢掉 alpha（圆角变黑）。
+  # 请改用：python scripts/build_windows_app_icon.py
   windows:
-    generate: true
+    generate: false
     image_path: assets/icons/app_icon.png
     icon_size: 256
   web:

@@ -248,6 +248,8 @@ class NativeService {
       // Windows：detached 会给控制台子系统程序弹出黑窗口；用 Hidden 启动。
       // 其它平台：detached，主进程退出后不带走子进程（退出钩子里再 stop）。
       if (Platform.isWindows) {
+        // 从网上下载的 zip 会带 Mark-of-the-Web，启动 syncthing.exe 会弹「无法验证发布者」
+        await _unblockWindowsMarkOfTheWeb(syncthingPath);
         await _startDetachedHiddenWindows(syncthingPath, args);
         debugPrint('已启动 Syncthing（无窗口）path=$syncthingPath');
       } else {
@@ -291,6 +293,26 @@ class NativeService {
     } catch (e) {
       debugPrint('停止 Syncthing 失败: $e');
       return false;
+    }
+  }
+
+  /// 清除下载文件的 Zone.Identifier，避免启动时弹出「无法验证发布者」。
+  static Future<void> _unblockWindowsMarkOfTheWeb(String path) async {
+    try {
+      final quoted = "'${path.replaceAll("'", "''")}'";
+      await Process.run(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-WindowStyle',
+          'Hidden',
+          '-Command',
+          'Unblock-File -LiteralPath $quoted -ErrorAction SilentlyContinue',
+        ],
+      );
+    } catch (e) {
+      debugPrint('Unblock-File 失败（可忽略）: $e');
     }
   }
 
