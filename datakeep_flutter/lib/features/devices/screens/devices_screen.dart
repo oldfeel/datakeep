@@ -8,6 +8,7 @@ import '../../../core/services/api_service.dart';
 import '../../../core/services/discovered_devices_store.dart';
 import 'device_detail_screen.dart';
 import 'qr_scanner_screen.dart';
+import '../../../shared/constants/app_info.dart';
 
 class DevicesScreen extends StatelessWidget {
   const DevicesScreen({super.key});
@@ -606,7 +607,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     }
     if (_discoveredDevices.isEmpty) {
       return '未发现设备：请确认对方已启动且同一 WiFi；'
-          'Windows 需在防火墙中允许 syncthing.exe（专用+公用网络）';
+          'Windows 需在防火墙中允许「$kAppDisplayName」（专用+公用网络）';
     }
     return '扫描到的设备均已添加；如需添加其他设备请手动输入 ID';
   }

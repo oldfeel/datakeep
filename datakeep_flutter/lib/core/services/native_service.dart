@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../../shared/utils/local_http_client.dart';
 import '../backend/syncthing_api.dart';
+import 'windows_process_util.dart';
 
 /// Platform Channel 服务，用于与原生代码通信
 /// 桌面端使用系统命令，移动端使用 Platform Channel
@@ -282,17 +283,44 @@ class NativeService {
   /// 桌面端：停止 Syncthing
   static Future<bool> _stopSyncthingDesktop() async {
     try {
+      // 优先 API 关机，避免 Windows 上 taskkill 闪控制台
+      if (await _shutdownSyncthingViaApi()) {
+        for (var i = 0; i < 10; i++) {
+          await Future.delayed(const Duration(milliseconds: 300));
+          if (!await _hasSyncthingProcess()) return true;
+        }
+      }
       if (Platform.isLinux || Platform.isMacOS) {
         // 精确匹配进程名，避免 pkill -f 误杀
         final result = await Process.run('pkill', ['-x', 'syncthing']);
         return result.exitCode == 0;
       } else if (Platform.isWindows) {
-        final result = await Process.run('taskkill', ['/F', '/IM', 'syncthing.exe']);
-        return result.exitCode == 0;
+        return WindowsProcessUtil.killByImageName('syncthing.exe');
       }
       return false;
     } catch (e) {
       debugPrint('停止 Syncthing 失败: $e');
+      return false;
+    }
+  }
+
+  /// 通过 REST 请求优雅关机（无控制台窗口）。
+  static Future<bool> _shutdownSyncthingViaApi() async {
+    try {
+      final apiKey = _getApiKeyFromConfig();
+      if (apiKey.isEmpty) return false;
+      final client = HttpClient();
+      configureLocalHttpClient(client);
+      client.connectionTimeout = const Duration(seconds: 2);
+      final request = await client.postUrl(
+        Uri.parse('http://127.0.0.1:8384/rest/system/shutdown'),
+      );
+      request.headers.set('X-API-Key', apiKey);
+      final response = await request.close().timeout(const Duration(seconds: 3));
+      await response.drain();
+      client.close(force: true);
+      return response.statusCode == 200;
+    } catch (_) {
       return false;
     }
   }
@@ -311,15 +339,22 @@ class NativeService {
   }
 
   /// Syncthing v2+ 启动参数（subcommand `serve`，见 syncthing serve --help）
-  static List<String> _syncthingServeArgs(String homePath) => [
-        'serve',
-        '-H',
-        homePath,
-        '--no-browser',
-        '--no-restart',
-        '--no-upgrade',
-        '--log-file=default',
-      ];
+  static List<String> _syncthingServeArgs(String homePath) {
+    final args = <String>[
+      'serve',
+      '-H',
+      homePath,
+      '--no-browser',
+      '--no-restart',
+      '--no-upgrade',
+      '--log-file=default',
+    ];
+    // Windows：即便未编成 windowsgui，也尽量隐藏控制台
+    if (Platform.isWindows) {
+      args.add('--no-console');
+    }
+    return args;
+  }
 
   static String _syncthingConfigDir() {
     if (Platform.isWindows) {
@@ -367,8 +402,7 @@ class NativeService {
       return result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty;
     }
     if (Platform.isWindows) {
-      final result = await Process.run('tasklist', ['/FI', 'IMAGENAME eq syncthing.exe']);
-      return result.stdout.toString().contains('syncthing.exe');
+      return WindowsProcessUtil.hasImageName('syncthing.exe');
     }
     return false;
   }
@@ -550,7 +584,7 @@ class NativeService {
       }
 
       // 启动 Backend 进程（后台运行）
-      final process = await Process.start(
+      await Process.start(
         backendPath,
         [],
         mode: ProcessStartMode.detached,

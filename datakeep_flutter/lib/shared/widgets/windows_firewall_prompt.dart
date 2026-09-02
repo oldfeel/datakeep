@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/services/native_service.dart';
 import '../../core/services/windows_firewall_service.dart';
+import '../../shared/constants/app_info.dart';
 
 /// 本会话是否已弹过（避免反复打扰）
 bool _firewallPromptShownThisSession = false;
@@ -34,9 +35,9 @@ Future<void> maybeShowWindowsFirewallPrompt(BuildContext context) async {
     barrierDismissible: true,
     builder: (ctx) => AlertDialog(
       title: const Text('需要允许局域网权限'),
-      content: const Text(
-        'Windows 防火墙正在阻止 Syncthing，局域网将无法发现其他设备。\n\n'
-        '请在「允许应用通过防火墙」中找到 syncthing.exe，'
+      content: Text(
+        'Windows 防火墙正在阻止「$kAppDisplayName」，局域网将无法发现其他设备。\n\n'
+        '请在「允许应用通过防火墙」中找到「$kAppDisplayName」（或 syncthing.exe），'
         '勾选「专用」和「公用」，然后完全退出并重新打开本应用。',
       ),
       actions: [

@@ -47,6 +47,9 @@ dependencies:
   path_provider: ^2.1.0
   path: ^1.9.0
   file_picker: ^10.3.2
+  # Windows：无控制台枚举/结束进程
+  ffi: ^2.1.0
+  win32: ^5.5.0
   
   # 状态管理
   provider: ^6.1.1
