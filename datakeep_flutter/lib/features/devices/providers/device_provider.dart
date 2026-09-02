@@ -58,10 +58,8 @@ class DeviceProvider with ChangeNotifier {
         deviceID: deviceID,
         name: name,
       );
-      await DiscoveredDevicesStore.instance.unignore(deviceID);
-      // 后台刷新列表，不阻塞弹框关闭
-      // ignore: unawaited_futures
-      fetchDevices(silent: true);
+      // 先刷新已配置列表，再依赖 configured 过滤发现弹窗（勿 unignore，否则会短暂再次弹出）
+      await fetchDevices(silent: true);
     } catch (e) {
       _error = e.toString();
       notifyListeners();
@@ -73,7 +71,7 @@ class DeviceProvider with ChangeNotifier {
   Future<void> removeDevice(String deviceId) async {
     try {
       await ApiService.removeDevice(deviceId);
-      // 本机发现列表也藏起来，避免「已发现」再弹一次
+      // 本机标记忽略，避免删除后仍当作「待添加发现项」处理
       await DiscoveredDevicesStore.instance.ignore(deviceId);
       await fetchDevices(silent: true);
     } catch (e) {

@@ -12,7 +12,6 @@ import '../../../shared/widgets/add_item_dialog.dart';
 import '../../../shared/widgets/peer_folder_status_view.dart';
 import '../../../shared/widgets/app_menu_actions.dart';
 import '../../../shared/widgets/app_logo.dart';
-import '../../../shared/widgets/discovered_device_prompt.dart';
 import '../../../shared/constants/app_info.dart';
 import '../../apps/open_app.dart';
 import '../../folders/screens/folder_detail_screen.dart';
@@ -126,7 +125,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
           return Column(
             children: [
-              const DiscoveredDevicePromptHost(),
               // 顶部设备列表 Tab
               _buildDeviceTabBar(context, deviceProvider),
               // 文件夹列表

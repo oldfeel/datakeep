@@ -17,7 +17,6 @@ import '../../shared/widgets/accept_pending_folder_dialog.dart';
 import '../../shared/constants/app_info.dart';
 import '../../shared/widgets/app_logo.dart';
 import '../../shared/widgets/app_menu_actions.dart';
-import '../../shared/widgets/discovered_device_prompt.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({super.key});
@@ -576,7 +575,6 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
     };
     return Column(
       children: [
-        const DiscoveredDevicePromptHost(),
         Expanded(child: page),
       ],
     );
@@ -704,8 +702,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     }
   }
 
-  /// 添加对话框只排除「当前已配置」设备；已删除/忽略的仍要列出，方便重新添加。
-  /// （弹框提示才用 DiscoveredDevicesStore.ignore 隐藏）
+  /// 添加对话框只排除「当前已配置」；已删除的仍可在下拉里选（本机 ignore 仅防重复打扰）。
   List<Map<String, String>> _availableDevices(DeviceProvider provider) {
     final existing = provider.devices
         .where((d) => !d.isLocal)
