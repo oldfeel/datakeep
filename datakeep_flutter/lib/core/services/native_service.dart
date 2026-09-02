@@ -241,9 +241,11 @@ class NativeService {
         '-no-browser',
         '-no-restart',
         '-no-upgrade',
+        '--logfile=default',
         '-home',
         configPath,
       ];
+      final logPath = '$configPath${Platform.pathSeparator}syncthing.log';
 
       // Windows：detached 会给控制台子系统程序弹出黑窗口；用 Hidden 启动。
       // 其它平台：detached，主进程退出后不带走子进程（退出钩子里再 stop）。
@@ -251,14 +253,14 @@ class NativeService {
         // 从网上下载的 zip 会带 Mark-of-the-Web，启动 syncthing.exe 会弹「无法验证发布者」
         await _unblockWindowsMarkOfTheWeb(syncthingPath);
         await _startDetachedHiddenWindows(syncthingPath, args);
-        debugPrint('已启动 Syncthing（无窗口）path=$syncthingPath');
+        debugPrint('已启动 Syncthing（无窗口）path=$syncthingPath log=$logPath');
       } else {
         final process = await Process.start(
           syncthingPath,
           args,
           mode: ProcessStartMode.detached,
         );
-        debugPrint('已启动 Syncthing pid=${process.pid} path=$syncthingPath');
+        debugPrint('已启动 Syncthing pid=${process.pid} path=$syncthingPath log=$logPath');
       }
 
       // 等待 API 就绪，最多 20 秒
