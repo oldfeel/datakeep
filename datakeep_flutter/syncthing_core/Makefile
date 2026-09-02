@@ -48,6 +48,7 @@ $(OUT_AAR): *.go go.mod Makefile
 		  tail -n +2 "$$GUI_FILES" | sed '1{/^$$/d}'; } > "$$tmp" && mv "$$tmp" "$$GUI_FILES"; \
 	fi
 	@mkdir -p $(dir $(OUT_AAR))
+	cd $(CURDIR) && go mod tidy
 	ANDROID_NDK_HOME="$(ANDROID_NDK_HOME)" ANDROID_HOME="$(ANDROID_HOME)" \
 	gomobile bind \
 		-target android \

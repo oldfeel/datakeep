@@ -14,7 +14,6 @@ import (
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/locations"
-	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/svcutil"
 	"github.com/syncthing/syncthing/lib/syncthing"
@@ -23,16 +22,16 @@ import (
 
 // Client 是移动端持有的进程内 Syncthing 节点。
 type Client struct {
-	homePath  string
-	filesPath string
+	homePath   string
+	filesPath  string
 	deviceName string
 
-	mu      sync.Mutex
-	app     *syncthing.App
-	cancel  context.CancelFunc
-	cfg     config.Wrapper
-	running bool
-	lastErr string
+	mu       sync.Mutex
+	app      *syncthing.App
+	cancel   context.CancelFunc
+	cfg      config.Wrapper
+	running  bool
+	lastErr  string
 	deviceID string
 }
 
@@ -40,7 +39,7 @@ type Client struct {
 // homePath: 配置/证书/数据库目录（Android filesDir；iOS Application Support/syncthing）
 // filesPath: 默认同步数据根（可为 ""）
 func NewClient(homePath, filesPath string) *Client {
-	build.Version = "v1.28.1-datakeep"
+	build.Version = "v2.1.3-datakeep"
 	build.User = "datakeep"
 	build.Host = "datakeep-" + runtime.GOOS
 
@@ -99,20 +98,19 @@ func (c *Client) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
 
-	early := suture.New("early", svcutil.SpecWithDebugLogger(logger.DefaultLogger))
+	early := suture.New("early", svcutil.SpecWithDebugLogger())
 	early.ServeBackground(ctx)
 
 	evLogger := events.NewLogger()
 	early.Add(evLogger)
 
-	// 移动端不创建 default 文件夹；端口探测在沙盒里不可靠，跳过
+	// 端口探测在沙盒里不可靠，跳过；不预置 default 文件夹（由 DataKeep 管理）
 	cfgWrapper, err := syncthing.LoadConfigAtStartup(
 		locations.Get(locations.ConfigFile),
 		cert,
 		evLogger,
-		true,  // allowNewerConfig
-		true,  // noDefaultFolder
-		true,  // skipPortProbing
+		true, // allowNewerConfig
+		true, // skipPortProbing
 	)
 	if err != nil {
 		cancel()
@@ -121,9 +119,6 @@ func (c *Client) Start() error {
 	}
 	early.Add(cfgWrapper)
 
-	// 固定 GUI 到本机 8384，供 Dart shelf 代理。
-	// 移动端禁用 QUIC：Go 1.25.6+/1.26 与旧版 quic-go 会 panic
-	//（crypto/tls bug: where's my session ticket?）。
 	cfgWrapper.Modify(func(cfg *config.Configuration) {
 		cfg.GUI.RawAddress = "127.0.0.1:8384"
 		cfg.GUI.Enabled = true
@@ -131,24 +126,38 @@ func (c *Client) Start() error {
 			"tcp://0.0.0.0:22000",
 			"dynamic+https://relays.syncthing.net/endpoint",
 		}
+		// 移动端不保留 Syncthing 自带的 default 文件夹
+		filtered := cfg.Folders[:0]
+		for _, f := range cfg.Folders {
+			if f.ID != "default" {
+				filtered = append(filtered, f)
+			}
+		}
+		cfg.Folders = filtered
 		if c.deviceName != "" {
+			myID := protocol.NewDeviceID(cert.Certificate[0])
 			for i := range cfg.Devices {
-				if cfg.Devices[i].DeviceID == protocol.NewDeviceID(cert.Certificate[0]) {
+				if cfg.Devices[i].DeviceID == myID {
 					cfg.Devices[i].Name = c.deviceName
 				}
 			}
 		}
 	})
 
-	dbFile := locations.Get(locations.Database)
-	ldb, err := syncthing.OpenDBBackend(dbFile, cfgWrapper.Options().DatabaseTuning)
+	if err := syncthing.TryMigrateDatabase(ctx, 0); err != nil {
+		cancel()
+		c.lastErr = err.Error()
+		return fmt.Errorf("数据库迁移: %w", err)
+	}
+
+	sdb, err := syncthing.OpenDatabase(locations.Get(locations.Database), 0)
 	if err != nil {
 		cancel()
 		c.lastErr = err.Error()
 		return fmt.Errorf("数据库: %w", err)
 	}
 
-	app, err := syncthing.New(cfgWrapper, ldb, evLogger, cert, syncthing.Options{
+	app, err := syncthing.New(cfgWrapper, sdb, evLogger, cert, syncthing.Options{
 		NoUpgrade: true,
 	})
 	if err != nil {
