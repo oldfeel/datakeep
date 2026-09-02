@@ -59,6 +59,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - uses: actions/setup-java@v5
         with:
@@ -129,6 +131,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - name: Install Linux desktop deps
         run: |
@@ -152,7 +156,7 @@ jobs:
       - name: Build Syncthing for Linux bundle
         working-directory: syncthing
         run: |
-          go run build.go -version v2.1.0 install syncthing
+          go run build.go -version v2.1.3 install syncthing
           mkdir -p ../datakeep_flutter/bin
           install -m 755 bin/syncthing ../datakeep_flutter/bin/syncthing
           ls -lh ../datakeep_flutter/bin/syncthing
@@ -199,6 +203,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - uses: subosito/flutter-action@v2
         with:
@@ -289,6 +295,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - name: Install CEF build tools
         run: brew install cmake ninja || true

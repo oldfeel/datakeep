@@ -61,7 +61,7 @@ git remote set-url --add --push origin git@gitee.com:yuncommunity/datakeep.git
 | `datakeep_flutter/backend/` | Go 后端旧版（已停维，参考用） |
 | `docs/app-package-spec.md` | 应用包规范（开放协议） |
 | `examples/hello-app/` | 示例应用 |
-| `syncthing/` | Syncthing 源码（供 syncthing_core replace） |
+| `syncthing/` | Syncthing 引擎 **git submodule**（官方仓，当前 pin **v2.1.3**；供 `syncthing_core` replace） |
 | `scripts/start_avd.sh` | Android 模拟器启动脚本 |
 
 应用市场 **服务端 / 管理后台** 在私有仓库 [oldfeel/datakeep-market](https://github.com/oldfeel/datakeep-market)（`market_server`、`market_admin`）。本仓 Flutter 仅保留可配置 API 基址的市场客户端。
@@ -69,6 +69,11 @@ git remote set-url --add --push origin git@gitee.com:yuncommunity/datakeep.git
 ## 开发命令
 
 ```bash
+# 克隆（含 Syncthing 子模块）
+git clone --recurse-submodules https://github.com/oldfeel/datakeep.git
+# 已克隆但未拉子模块：
+git submodule update --init --recursive
+
 # Flutter 桌面调试（backend 进程内 shelf；Syncthing 需先编译到 bin/syncthing）
 cd datakeep_flutter && ./start_desktop.sh
 # macOS 专用：./start_macos.sh
@@ -84,7 +89,7 @@ cd datakeep_flutter && ./start_ios.sh
 cd datakeep_flutter && flutter pub get
 
 # Syncthing 源码树（desktop 或其它工具若需独立二进制）
-cd syncthing && /snap/go/current/bin/go run build.go -version v2.1.0
+cd syncthing && /snap/go/current/bin/go run build.go -version v2.1.3
 
 # Android 模拟器
 scripts/start_avd.sh <AVD名称>
@@ -110,7 +115,7 @@ scripts/start_avd.sh <AVD名称>
 ## 注意点
 
 - **后端已改为纯 Dart**（shelf），不再需要 Go 编译工具链和 air（移动端 Syncthing 引擎仍需 Go + gomobile）
-- **Syncthing 编译坑**：`syncthing/` 不是独立 git 仓库，`go run build.go` 会取 datakeep 的 git hash 作为版本号导致启动失败。必须传 `-version v2.1.0`
+- **Syncthing 编译**：`syncthing/` 为官方 submodule；`build.go` 仍建议传 `-version v2.1.3` 以固定对外版本号（与 pin 的 tag 一致）
 - 移动端引擎：`make -C datakeep_flutter/syncthing_core android|ios`（共用 Go；勿再依赖 jniLibs `libsyncthing.so`）
 - `parse_email/` 独立于主项目，读取 `mail.eml` → 输出 `chat.md`
 - **Go snap 权限问题**：系统 `go` 命令来自 snap 且权限受限，使用 `/snap/go/current/bin/go` 直接调用二进制

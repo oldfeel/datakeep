@@ -129,7 +129,7 @@ build_linux() {
   else
     warn "未找到 syncthing，将尝试编译…"
     if command -v go >/dev/null 2>&1; then
-      (cd "$ROOT/syncthing" && go run build.go -version v2.1.0 install syncthing)
+      (cd "$ROOT/syncthing" && go run build.go -version v2.1.3 install syncthing)
       mkdir -p "$APP_DIR/bin"
       cp -f "$ROOT/syncthing/bin/syncthing" "$APP_DIR/bin/syncthing"
       ok "已编译并复制 syncthing"
