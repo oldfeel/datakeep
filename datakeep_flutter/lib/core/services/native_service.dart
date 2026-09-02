@@ -237,14 +237,7 @@ class NativeService {
       }
 
       final configPath = _syncthingConfigDir();
-      final args = <String>[
-        '-no-browser',
-        '-no-restart',
-        '-no-upgrade',
-        '--logfile=default',
-        '-home',
-        configPath,
-      ];
+      final args = _syncthingServeArgs(configPath);
       final logPath = '$configPath${Platform.pathSeparator}syncthing.log';
 
       // Windows：detached 会给控制台子系统程序弹出黑窗口；用 Hidden 启动。
@@ -352,9 +345,20 @@ class NativeService {
     }
   }
 
+  /// Syncthing v2+ 启动参数（subcommand `serve`，见 syncthing serve --help）
+  static List<String> _syncthingServeArgs(String homePath) => [
+        'serve',
+        '-H',
+        homePath,
+        '--no-browser',
+        '--no-restart',
+        '--no-upgrade',
+        '--log-file=default',
+      ];
+
   static String _syncthingConfigDir() {
     if (Platform.isWindows) {
-      // 与 Syncthing 默认 -home、SyncthingApi._findConfigPath 一致
+      // 与 Syncthing 默认 -H/--home、SyncthingApi._findConfigPath 一致
       final local = Platform.environment['LOCALAPPDATA']?.trim();
       if (local != null && local.isNotEmpty) return '$local\\Syncthing';
       final profile = Platform.environment['USERPROFILE']?.trim();
