@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 
@@ -104,7 +105,7 @@ func (c *Client) Start() error {
 	evLogger := events.NewLogger()
 	early.Add(evLogger)
 
-	// 端口探测在沙盒里不可靠，跳过；不预置 default 文件夹（由 DataKeep 管理）
+	// 端口探测在沙盒里不可靠，跳过
 	cfgWrapper, err := syncthing.LoadConfigAtStartup(
 		locations.Get(locations.ConfigFile),
 		cert,
@@ -119,6 +120,14 @@ func (c *Client) Start() error {
 	}
 	early.Add(cfgWrapper)
 
+	myID := protocol.NewDeviceID(cert.Certificate[0])
+	defaultPath := filepath.Join(c.filesPath, "default")
+	if c.filesPath == "" {
+		defaultPath = filepath.Join(c.homePath, "Sync", "default")
+	}
+	_ = os.MkdirAll(defaultPath, 0o755)
+	_ = os.MkdirAll(filepath.Join(defaultPath, ".stfolder"), 0o755)
+
 	cfgWrapper.Modify(func(cfg *config.Configuration) {
 		cfg.GUI.RawAddress = "127.0.0.1:8384"
 		cfg.GUI.Enabled = true
@@ -126,16 +135,41 @@ func (c *Client) Start() error {
 			"tcp://0.0.0.0:22000",
 			"dynamic+https://relays.syncthing.net/endpoint",
 		}
-		// 移动端不保留 Syncthing 自带的 default 文件夹
-		filtered := cfg.Folders[:0]
-		for _, f := range cfg.Folders {
-			if f.ID != "default" {
-				filtered = append(filtered, f)
+		// 保留/创建 default 文件夹，路径改到可写的 filesPath（勿再删除）
+		foundDefault := false
+		for i := range cfg.Folders {
+			if cfg.Folders[i].ID != "default" {
+				continue
 			}
+			cfg.Folders[i].Path = defaultPath
+			cfg.Folders[i].IgnorePerms = true
+			if cfg.Folders[i].Label == "" {
+				cfg.Folders[i].Label = "Default Folder"
+			}
+			hasLocal := false
+			for _, d := range cfg.Folders[i].Devices {
+				if d.DeviceID == myID {
+					hasLocal = true
+					break
+				}
+			}
+			if !hasLocal {
+				cfg.Folders[i].Devices = append(cfg.Folders[i].Devices, config.FolderDeviceConfiguration{
+					DeviceID: myID,
+				})
+			}
+			foundDefault = true
 		}
-		cfg.Folders = filtered
+		if !foundDefault && len(cfg.Folders) == 0 {
+			f := cfg.Defaults.Folder
+			f.ID = "default"
+			f.Label = "Default Folder"
+			f.Path = defaultPath
+			f.IgnorePerms = true
+			f.Devices = []config.FolderDeviceConfiguration{{DeviceID: myID}}
+			cfg.Folders = append(cfg.Folders, f)
+		}
 		if c.deviceName != "" {
-			myID := protocol.NewDeviceID(cert.Certificate[0])
 			for i := range cfg.Devices {
 				if cfg.Devices[i].DeviceID == myID {
 					cfg.Devices[i].Name = c.deviceName

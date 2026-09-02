@@ -74,6 +74,11 @@ cd "$SYNCTHING_DIR"
 # 清理同目录残留，避免 mv 冲突
 rm -f syncthing syncthing.exe
 
+# Windows：GUI 子系统，避免 DataKeep 启动/退出时闪控制台窗口
+if [[ "$GOOS_TARGET" == "windows" ]]; then
+  export EXTRA_LDFLAGS="${EXTRA_LDFLAGS:+$EXTRA_LDFLAGS }-H windowsgui"
+fi
+
 go run build.go -version "$VERSION" -no-upgrade -goos "$GOOS_TARGET" -goarch "$GOARCH_TARGET" build syncthing
 
 if [[ -f "syncthing.exe" ]]; then

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -240,13 +241,18 @@ class NativeService {
       final args = _syncthingServeArgs(configPath);
       final logPath = '$configPath${Platform.pathSeparator}syncthing.log';
 
-      // Windows：detached 会给控制台子系统程序弹出黑窗口；用 Hidden 启动。
+      // Windows：不要用 PowerShell（会闪控制台）；Process.start 默认重定向 stdio，
+      // 走 CREATE_NO_WINDOW。退出钩子里会 taskkill。
       // 其它平台：detached，主进程退出后不带走子进程（退出钩子里再 stop）。
       if (Platform.isWindows) {
-        // 从网上下载的 zip 会带 Mark-of-the-Web，启动 syncthing.exe 会弹「无法验证发布者」
         await _unblockWindowsMarkOfTheWeb(syncthingPath);
-        await _startDetachedHiddenWindows(syncthingPath, args);
-        debugPrint('已启动 Syncthing（无窗口）path=$syncthingPath log=$logPath');
+        final process = await Process.start(syncthingPath, args);
+        // 丢弃输出，避免管道堵塞；不 await exit
+        unawaited(process.stdout.drain<void>());
+        unawaited(process.stderr.drain<void>());
+        debugPrint(
+          '已启动 Syncthing（无窗口）pid=${process.pid} path=$syncthingPath log=$logPath',
+        );
       } else {
         final process = await Process.start(
           syncthingPath,
@@ -292,56 +298,15 @@ class NativeService {
   }
 
   /// 清除下载文件的 Zone.Identifier，避免启动时弹出「无法验证发布者」。
+  /// 不用 PowerShell，以免闪控制台窗口。
   static Future<void> _unblockWindowsMarkOfTheWeb(String path) async {
     try {
-      final quoted = "'${path.replaceAll("'", "''")}'";
-      await Process.run(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-WindowStyle',
-          'Hidden',
-          '-Command',
-          'Unblock-File -LiteralPath $quoted -ErrorAction SilentlyContinue',
-        ],
-      );
+      final zone = File('$path:Zone.Identifier');
+      if (await zone.exists()) {
+        await zone.delete();
+      }
     } catch (e) {
-      debugPrint('Unblock-File 失败（可忽略）: $e');
-    }
-  }
-
-  /// Windows：无控制台窗口地启动独立进程（避免 detached 弹黑窗）。
-  static Future<void> _startDetachedHiddenWindows(
-    String executable,
-    List<String> args,
-  ) async {
-    String psQuote(String s) => "'${s.replaceAll("'", "''")}'";
-    final argList = args.map(psQuote).join(',');
-    final command =
-        'Start-Process -FilePath ${psQuote(executable)} '
-        '-ArgumentList @($argList) -WindowStyle Hidden';
-    final result = await Process.run(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-WindowStyle',
-        'Hidden',
-        '-Command',
-        command,
-      ],
-    );
-    if (result.exitCode != 0) {
-      final err = (result.stderr.toString().trim().isNotEmpty)
-          ? result.stderr.toString().trim()
-          : result.stdout.toString().trim();
-      throw ProcessException(
-        executable,
-        args,
-        err.isEmpty ? 'Start-Process 失败 (exit=${result.exitCode})' : err,
-        result.exitCode,
-      );
+      debugPrint('清除 Zone.Identifier 失败（可忽略）: $e');
     }
   }
 
@@ -421,6 +386,10 @@ class NativeService {
   }
 
   /// 查找 Syncthing 可执行文件
+  /// 供防火墙检测等使用：解析本机将启动/已捆绑的 syncthing 路径。
+  static Future<String?> findSyncthingExecutablePath() =>
+      _findSyncthingExecutable();
+
   static Future<String?> _findSyncthingExecutable() async {
     final possiblePaths = <String>[];
     final name = Platform.isWindows ? 'syncthing.exe' : 'syncthing';

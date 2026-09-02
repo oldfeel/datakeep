@@ -155,6 +155,12 @@ Future<void> _startIosServices() async {
       debugPrint('$st');
     }
   }
+  try {
+    await SyncthingApi().ensureAndroidFoldersReady();
+  } catch (e, st) {
+    debugPrint('[startup] iOS 确保默认文件夹失败: $e');
+    debugPrint('$st');
+  }
   SyncthingLifecycle.instance.markReady();
 }
 
@@ -227,13 +233,19 @@ Future<void> _startAndroidServices() async {
   if (deviceName.isNotEmpty) {
     try {
       await SyncthingApi().ensureLocalDeviceName(deviceName);
-      await SyncthingApi().ensureAndroidFoldersReady();
     } catch (e, st) {
       debugPrint('[startup] 写入本机设备名失败: $e');
       debugPrint('$st');
     }
   } else {
-    debugPrint('[startup] 无设备名，跳过 Syncthing API 写入');
+    debugPrint('[startup] 无设备名，跳过 Syncthing API 写入设备名');
+  }
+
+  try {
+    await SyncthingApi().ensureAndroidFoldersReady();
+  } catch (e, st) {
+    debugPrint('[startup] 确保默认文件夹失败: $e');
+    debugPrint('$st');
   }
 
   SyncthingLifecycle.instance.markReady();

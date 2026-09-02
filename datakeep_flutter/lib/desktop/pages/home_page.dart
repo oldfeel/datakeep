@@ -18,6 +18,7 @@ import '../../shared/widgets/accept_pending_device_dialog.dart';
 import '../../shared/constants/app_info.dart';
 import '../../shared/widgets/app_logo.dart';
 import '../../shared/widgets/app_menu_actions.dart';
+import '../../shared/widgets/windows_firewall_prompt.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({super.key});
@@ -53,6 +54,10 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
       _refreshDiscovery();
       _checkPendingFolders();
       _checkPendingDevices();
+      // Syncthing 启动后稍晚再查防火墙，避免抢在首次弹窗之前
+      Future<void>.delayed(const Duration(seconds: 3), () {
+        if (mounted) maybeShowWindowsFirewallPrompt(context);
+      });
     });
     _eventSub = EventService().events.listen((event) {
       if (!mounted) return;
@@ -865,7 +870,8 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       return '已发现 ${available.length} 个可添加设备';
     }
     if (_discoveredDevices.isEmpty) {
-      return '未发现设备：请确认对方已启动数据管理且在同一 WiFi';
+      return '未发现设备：请确认对方已启动且同一 WiFi；'
+          'Windows 需在防火墙中允许 syncthing.exe（专用+公用网络）';
     }
     return '扫描到的设备均已添加；如需添加其他设备请手动输入 ID';
   }

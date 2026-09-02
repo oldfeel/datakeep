@@ -1853,11 +1853,35 @@ class BackendServer {
     }
     var data = result.containsKey('data') ? result['data'] : result;
     if (request.url.queryParameters['online'] == '1' && data is Map) {
-      data = await _filterOnlineLocalDiscovery(
-        Map<String, dynamic>.from(data),
-      );
+      final raw = Map<String, dynamic>.from(data);
+      final online = await _filterOnlineLocalDiscovery(raw);
+      // TCP 探测失败时仍保留带局域网地址的通告，避免列表被掏空
+      data = online.isNotEmpty ? online : _filterLocalDiscoveryAddresses(raw);
     }
     return _json({'code': 0, 'data': data});
+  }
+
+  /// 仅保留含私网 tcp/quic 地址的 discovery 项（不做连通性探测）。
+  Map<String, dynamic> _filterLocalDiscoveryAddresses(Map<String, dynamic> raw) {
+    const skipKeys = {'code', 'success', 'error', 'data', 'message'};
+    final out = <String, dynamic>{};
+    for (final e in raw.entries) {
+      final id = e.key;
+      if (skipKeys.contains(id) ||
+          id.length < 20 ||
+          _normDeviceId(id).length != 56) {
+        continue;
+      }
+      final entry = e.value;
+      if (entry is! Map) continue;
+      final addrs = entry['addresses'];
+      if (addrs is! List || addrs.isEmpty) continue;
+      final hasLan = addrs.any(
+        (a) => a is String && _localEndpointKey(a) != null,
+      );
+      if (hasLan) out[id] = entry;
+    }
+    return out;
   }
 
   /// Syncthing discovery 缓存会保留已离线设备；添加设备时只保留局域网地址可达的项。

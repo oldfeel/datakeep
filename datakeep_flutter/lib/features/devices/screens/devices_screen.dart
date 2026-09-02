@@ -605,7 +605,8 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       return '已发现 ${available.length} 个可添加设备';
     }
     if (_discoveredDevices.isEmpty) {
-      return '未发现设备：请确认对方已启动数据管理且在同一 WiFi';
+      return '未发现设备：请确认对方已启动且同一 WiFi；'
+          'Windows 需在防火墙中允许 syncthing.exe（专用+公用网络）';
     }
     return '扫描到的设备均已添加；如需添加其他设备请手动输入 ID';
   }

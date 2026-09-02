@@ -10,6 +10,7 @@ import '../../features/devices/providers/device_provider.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import 'accept_pending_folder_dialog.dart';
 import 'accept_pending_device_dialog.dart';
+import 'windows_firewall_prompt.dart';
 
 /// 监听 Syncthing 事件，处理待确认设备与待接受共享文件夹（移动端使用）
 class SyncthingEventListener extends StatefulWidget {
@@ -36,6 +37,9 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
       _refreshDiscovery();
       _checkPendingFolders();
       _checkPendingDevices();
+      Future<void>.delayed(const Duration(seconds: 3), () {
+        if (mounted) maybeShowWindowsFirewallPrompt(context);
+      });
     });
     EventService().start();
     _eventSub = EventService().events.listen(_onEvent);

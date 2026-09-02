@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import mdst.Client
 import mdst.Mdst
+import site.datakeep.util.StoragePathUtils
+import java.io.File
 
 /**
  * 进程内 Syncthing（gomobile AAR：mdst.Client），与 iOS 共用 syncthing_core。
@@ -34,7 +36,9 @@ object SyncthingEngine {
 
         val app = context.applicationContext
         val home = app.filesDir.absolutePath
-        val files = app.getExternalFilesDir(null)?.absolutePath ?: home
+        // 与 Flutter defaultSyncFolderPath 一致：Android/media/<pkg>/sync
+        val files = File(StoragePathUtils.getDefaultSyncFolderPath(app, "default")).parentFile?.absolutePath
+            ?: (app.getExternalFilesDir(null)?.absolutePath ?: home)
 
         Log.i(TAG, "启动 gomobile Syncthing home=$home files=$files")
         val c = Mdst.newClient(home, files)
