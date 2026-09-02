@@ -86,7 +86,7 @@ if [[ "$need_rebuild" -eq 0 ]]; then
   exit 0
 fi
 
-echo -e "${YELLOW}编译 Syncthing → $OUT (version=$VERSION goos=$GOOS_TARGET goarch=$GOARCH_TARGET)${NC}"
+echo -e "${YELLOW}编译 Syncthing -> $OUT (version=$VERSION goos=$GOOS_TARGET goarch=$GOARCH_TARGET)${NC}"
 cd "$SYNCTHING_DIR"
 # 清理同目录残留，避免 mv 冲突
 rm -f syncthing syncthing.exe
@@ -111,6 +111,9 @@ if [[ "$GOOS_TARGET" == "windows" ]]; then
   fi
   BUILD_GO_BACKUP="$(mktemp)"
   cp "$SYNCTHING_DIR/build.go" "$BUILD_GO_BACKUP"
+  # Windows runner 默认 cp1252，避免 print 中文/箭头时 UnicodeEncodeError
+  export PYTHONUTF8=1
+  export PYTHONIOENCODING=utf-8
   python3 - "$SYNCTHING_DIR/build.go" "$WINDOWS_PRODUCT_NAME" "$WINDOWS_FILE_DESC" "$WINDOWS_COMPANY" <<'PY'
 import sys
 from pathlib import Path
@@ -132,7 +135,7 @@ for old, new in repls.items():
         sys.exit(1)
     text = text.replace(old, new, 1)
 Path(path).write_text(text, encoding="utf-8")
-print(f"patched versioninfo → ProductName={product}")
+print("patched versioninfo OK")
 PY
 fi
 
