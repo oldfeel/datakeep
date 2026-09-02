@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
+import '../../core/services/android_storage_service.dart';
 import '../../core/services/api_service.dart';
 import '../../core/services/market_service.dart';
 import '../../features/folders/providers/folder_provider.dart';
@@ -83,6 +84,8 @@ class _AddItemDialogState extends State<AddItemDialog> {
   final _busy = <String>{};
   String? _status;
   bool _submitting = false;
+  bool _pickingPath = false;
+  bool? _pathWritable;
 
   bool get _inside => widget.scope == AddItemScope.insideFolder;
 
@@ -133,34 +136,62 @@ class _AddItemDialogState extends State<AddItemDialog> {
     }
   }
 
-  Future<void> _pickDirectoryPath({required TextEditingController controller}) async {
-    if (!Platform.isLinux && !Platform.isWindows && !Platform.isMacOS) return;
+  Future<String?> _pickDirectoryPath() async {
+    if (_pickingPath) return null;
+    setState(() => _pickingPath = true);
     try {
-      final initial = await syncFolderPickerInitialDirectory(controller.text);
-      final result = await FilePicker.platform.getDirectoryPath(
+      if (Platform.isAndroid) {
+        final picked = await AndroidStorageService.pickSyncFolder();
+        if (picked == null || picked.path.isEmpty) return null;
+        if (mounted) setState(() => _pathWritable = picked.writable);
+        if (!picked.writable && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                '该目录可能无法写入。建议选 Android/media 下目录，或授予「所有文件访问」。',
+              ),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 5),
+              action: SnackBarAction(
+                label: '授权',
+                onPressed: () => AndroidStorageService.requestAllFilesAccess(),
+              ),
+            ),
+          );
+        }
+        return picked.path;
+      }
+
+      final initial = await syncFolderPickerInitialDirectory(
+        _pathCtrl.text.isNotEmpty ? _pathCtrl.text : _parentCtrl.text,
+      );
+      return await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择目录',
         initialDirectory: initial,
       );
-      if (result != null && mounted) {
-        setState(() => controller.text = result);
-      }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) return null;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('选择目录失败: $e'), backgroundColor: Colors.red),
       );
+      return null;
+    } finally {
+      if (mounted) setState(() => _pickingPath = false);
     }
   }
 
   Future<void> _pickParent() async {
-    await _pickDirectoryPath(controller: _parentCtrl);
+    final result = await _pickDirectoryPath();
+    if (result != null && mounted) {
+      setState(() => _parentCtrl.text = result);
+    }
   }
 
   Future<void> _pickFolderPath() async {
-    await _pickDirectoryPath(controller: _pathCtrl);
-    if (!mounted) return;
-    final result = _pathCtrl.text.trim();
-    if (result.isEmpty) return;
+    final result = await _pickDirectoryPath();
+    if (result == null || !mounted) return;
     setState(() {
+      _pathCtrl.text = result;
       final dirName = p.basename(result);
       if (_idCtrl.text.isEmpty) _idCtrl.text = dirName;
       if (_nameCtrl.text.isEmpty) _nameCtrl.text = dirName;
@@ -176,6 +207,26 @@ class _AddItemDialogState extends State<AddItemDialog> {
         const SnackBar(content: Text('请填写完整信息')),
       );
       return;
+    }
+    if (Platform.isAndroid) {
+      final writable = _pathWritable ?? await isSyncPathWritable(path);
+      if (!writable) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              '该目录 Syncthing 无法写入。请授予「所有文件访问」，或选择 Android/media 下的目录。',
+            ),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: '授权',
+              onPressed: () => AndroidStorageService.requestAllFilesAccess(),
+            ),
+          ),
+        );
+        return;
+      }
     }
     setState(() => _submitting = true);
     try {
@@ -489,24 +540,49 @@ class _AddItemDialogState extends State<AddItemDialog> {
       ),
       const SizedBox(height: 12),
       Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: TextField(
               controller: _pathCtrl,
-              decoration: const InputDecoration(
+              readOnly: Platform.isAndroid || Platform.isIOS,
+              decoration: InputDecoration(
                 labelText: '文件夹路径',
-                hintText: '本机绝对路径',
+                hintText: Platform.isAndroid || Platform.isIOS
+                    ? '点击右侧按钮选择目录'
+                    : '本机绝对路径',
+                suffixIcon: _pathWritable == true
+                    ? const Icon(Icons.check_circle, color: Colors.green, size: 20)
+                    : _pathWritable == false
+                        ? const Icon(Icons.error_outline, color: Colors.red, size: 20)
+                        : null,
               ),
+              minLines: 1,
+              maxLines: 3,
             ),
           ),
-          if (Platform.isLinux || Platform.isWindows || Platform.isMacOS)
-            IconButton(
-              tooltip: '浏览',
-              icon: const Icon(Icons.folder_open),
-              onPressed: _pickFolderPath,
-            ),
+          IconButton(
+            tooltip: '选择目录',
+            icon: _pickingPath
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.folder_open),
+            onPressed: (_submitting || _pickingPath) ? null : _pickFolderPath,
+          ),
         ],
       ),
+      if (Platform.isAndroid) ...[
+        const SizedBox(height: 8),
+        Text(
+          '默认建议选 Android/media 下目录（无需额外权限）。同步到下载、DCIM 等公共目录需授予「所有文件访问」。',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+      ],
     ];
   }
 
@@ -576,19 +652,24 @@ class _AddItemDialogState extends State<AddItemDialog> {
           Expanded(
             child: TextField(
               controller: _parentCtrl,
-              readOnly: _inside,
+              readOnly: _inside || Platform.isAndroid || Platform.isIOS,
               decoration: const InputDecoration(
                 labelText: '当前目录',
                 hintText: '应用会安装到此目录下',
               ),
             ),
           ),
-          if (!_inside &&
-              (Platform.isLinux || Platform.isWindows || Platform.isMacOS))
+          if (!_inside)
             IconButton(
               tooltip: '选择目录',
-              icon: const Icon(Icons.folder_open),
-              onPressed: _pickParent,
+              icon: _pickingPath
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.folder_open),
+              onPressed: (_submitting || _pickingPath) ? null : _pickParent,
             ),
         ],
       ),
