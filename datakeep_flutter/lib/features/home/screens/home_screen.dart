@@ -335,9 +335,17 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         if (folderProvider.loadedDeviceId == deviceId && folderProvider.error != null) {
+          Device? selectedDevice;
+          for (final d in devices) {
+            if (d.id == deviceId) {
+              selectedDevice = d;
+              break;
+            }
+          }
           return PeerFolderStatusView(
             error: folderProvider.error,
             onRetry: () => folderProvider.fetchDeviceFolders(deviceId),
+            pairingPending: selectedDevice?.status == 'pending',
           );
         }
 

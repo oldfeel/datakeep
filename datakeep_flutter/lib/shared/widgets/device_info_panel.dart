@@ -32,7 +32,14 @@ class _DeviceInfoPanelState extends State<DeviceInfoPanel> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isOnline = _device.isLocal || _device.connected;
+    final status = _device.status;
+    final statusColor = _device.isLocal
+        ? Colors.green
+        : switch (status) {
+            'online' => Colors.green,
+            'pending' => Colors.orange,
+            _ => Colors.grey,
+          };
 
     return Card(
       margin: widget.margin,
@@ -88,13 +95,17 @@ class _DeviceInfoPanelState extends State<DeviceInfoPanel> {
                         Row(
                           children: [
                             Icon(
-                              isOnline ? Icons.circle : Icons.circle_outlined,
+                              status == 'online'
+                                  ? Icons.circle
+                                  : (status == 'pending'
+                                      ? Icons.hourglass_top
+                                      : Icons.circle_outlined),
                               size: 10,
-                              color: isOnline ? Colors.green : Colors.grey,
+                              color: statusColor,
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              _device.isLocal ? '本机设备' : (isOnline ? '在线' : '离线'),
+                              _device.connectionLabel,
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant,
                               ),

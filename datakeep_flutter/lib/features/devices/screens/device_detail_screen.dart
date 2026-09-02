@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../core/models/device.dart';
 import '../../../core/models/folder.dart';
 import '../../../core/services/api_service.dart';
+import '../../../core/services/device_pairing_store.dart';
 import '../../folders/screens/folder_detail_screen.dart';
 import '../../../shared/widgets/folder_card.dart';
 import '../../../shared/widgets/device_info_panel.dart';
@@ -82,16 +83,26 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         );
       } else {
         final devices = await ApiService.getDevices();
-        _device = devices.firstWhere(
-          (d) => d.id == widget.deviceId,
-          orElse: () => Device(
-            id: widget.deviceId,
-            name: widget.deviceId,
-            addresses: [],
-            connected: false,
-            isLocalNetwork: false,
-          ),
-        );
+        final store = DevicePairingStore.instance;
+        await store.ensureLoaded();
+        Device? found;
+        for (final d in devices) {
+          if (d.id == widget.deviceId) {
+            if (d.connected) await store.markEverConnected(d.id);
+            final complete = store.hasEverConnected(d.id);
+            found = d.copyWith(pairingComplete: complete);
+            break;
+          }
+        }
+        _device = found ??
+            Device(
+              id: widget.deviceId,
+              name: widget.deviceId,
+              addresses: [],
+              connected: false,
+              isLocalNetwork: false,
+              pairingComplete: false,
+            );
       }
 
       // 加载文件夹列表
@@ -155,6 +166,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
               ? PeerFolderStatusView(
                   error: _error,
                   onRetry: _loadData,
+                  pairingPending: _device?.status == 'pending',
                 )
               : _buildContent(isDesktop),
     );

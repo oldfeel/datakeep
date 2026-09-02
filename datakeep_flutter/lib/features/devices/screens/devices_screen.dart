@@ -402,6 +402,8 @@ class DevicesScreen extends StatelessWidget {
     switch (status) {
       case 'online':
         return Colors.green;
+      case 'pending':
+        return Colors.orange;
       case 'offline':
         return Colors.grey;
       case 'syncing':
@@ -415,6 +417,8 @@ class DevicesScreen extends StatelessWidget {
     switch (status) {
       case 'online':
         return Icons.circle;
+      case 'pending':
+        return Icons.hourglass_top;
       case 'offline':
         return Icons.circle_outlined;
       case 'syncing':
@@ -428,6 +432,8 @@ class DevicesScreen extends StatelessWidget {
     switch (status) {
       case 'online':
         return '在线';
+      case 'pending':
+        return '待确认';
       case 'offline':
         return '离线';
       case 'syncing':
@@ -494,6 +500,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   @override
   void initState() {
     super.initState();
+    widget.deviceProvider.addListener(_onDeviceListChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadDiscoveredDevices();
     });
@@ -501,10 +508,22 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
 
   @override
   void dispose() {
+    widget.deviceProvider.removeListener(_onDeviceListChanged);
     _scanCancelled = true;
     _nameController.dispose();
     _manualIdController.dispose();
     super.dispose();
+  }
+
+  void _onDeviceListChanged() {
+    if (!mounted || _isSubmitting || _isLoadingDiscovery) return;
+    final available = _availableDevices();
+    if (!_manualInput && available.isEmpty && _discoveredDevices.isNotEmpty) {
+      setState(() {
+        _manualInput = true;
+        _selectedDeviceId = null;
+      });
+    }
   }
 
   Future<void> _loadDiscoveredDevices() async {
@@ -533,6 +552,9 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                 _selectedDeviceId = available.first['id'];
                 _applySelectedDevice(available.first);
                 _validate(_selectedDeviceId!);
+              } else {
+                _manualInput = true;
+                _selectedDeviceId = null;
               }
             }
           });
@@ -578,13 +600,27 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   }
 
   String _discoveryStatusText(List<Map<String, String>> available) {
+    if (_isLoadingDiscovery) return '正在扫描局域网…';
+    if (available.isNotEmpty) {
+      return '已发现 ${available.length} 个可添加设备';
+    }
     if (_discoveredDevices.isEmpty) {
       return '未发现设备：请确认对方已启动数据管理且在同一 WiFi';
     }
-    if (available.isEmpty) {
-      return '已发现 ${_discoveredDevices.length} 个设备，均已添加';
-    }
-    return '手动输入模式';
+    return '扫描到的设备均已添加；如需添加其他设备请手动输入 ID';
+  }
+
+  String _deviceDropdownLabel(
+    Map<String, String> device,
+    List<Map<String, String>> all,
+  ) {
+    final base = _deviceLabel(device);
+    final dup =
+        all.where((d) => _deviceLabel(d) == base).length > 1;
+    if (!dup) return base;
+    final id = device['id'] ?? '';
+    final tail = id.length > 11 ? id.substring(id.length - 11) : id;
+    return '$base · $tail';
   }
 
   void _applySelectedDevice(Map<String, String> device) {
@@ -650,6 +686,26 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   }
 
   Widget _buildDeviceIdField() {
+    if (_isSubmitting) {
+      return const InputDecorator(
+        decoration: InputDecoration(
+          labelText: '局域网设备',
+          border: OutlineInputBorder(),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 12),
+            Text('正在添加设备…'),
+          ],
+        ),
+      );
+    }
+
     final available = _availableDevices();
 
     if (_isLoadingDiscovery) {
@@ -694,7 +750,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                   decoration: InputDecoration(
                     labelText: '选择局域网设备',
                     border: const OutlineInputBorder(),
-                    helperText: '已发现 ${available.length} 个设备',
+                    helperText: '已发现 ${available.length} 个可添加设备',
                     errorText: _idError,
                   ),
                   // 选中后只显示设备名称，不显示完整 ID
@@ -702,7 +758,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                     return Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        _deviceLabel(d),
+                        _deviceDropdownLabel(d, available),
                         overflow: TextOverflow.ellipsis,
                       ),
                     );
@@ -716,7 +772,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            _deviceLabel(d),
+                            _deviceDropdownLabel(d, available),
                             style: const TextStyle(fontWeight: FontWeight.w500),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -863,7 +919,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                     messenger.showSnackBar(
                       const SnackBar(
                         content: Text(
-                          '已添加到本机。请确认对方设备也添加了本机，才能建立连接。',
+                          '已添加到本机（待确认）。请让对方也在其设备上添加本机，连接建立后才会显示在线。',
                         ),
                         backgroundColor: Colors.green,
                         duration: Duration(seconds: 5),

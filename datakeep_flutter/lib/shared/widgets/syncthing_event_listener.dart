@@ -9,6 +9,7 @@ import '../../core/models/app_notification.dart';
 import '../../features/devices/providers/device_provider.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import 'accept_pending_folder_dialog.dart';
+import 'accept_pending_device_dialog.dart';
 
 /// 监听 Syncthing 事件，处理待确认设备与待接受共享文件夹（移动端使用）
 class SyncthingEventListener extends StatefulWidget {
@@ -25,6 +26,7 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
   StreamSubscription<SyncthingEvent>? _eventSub;
   Timer? _pendingPollTimer;
   final Set<String> _shownPendingFolders = {};
+  final Set<String> _shownPendingDevices = {};
 
   @override
   void initState() {
@@ -33,6 +35,7 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshDiscovery();
       _checkPendingFolders();
+      _checkPendingDevices();
     });
     EventService().start();
     _eventSub = EventService().events.listen(_onEvent);
@@ -41,6 +44,7 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
       if (mounted) {
         _refreshDiscovery();
         _checkPendingFolders();
+        _checkPendingDevices();
       }
     });
   }
@@ -50,6 +54,7 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
     if (state == AppLifecycleState.resumed && mounted) {
       _refreshDiscovery();
       _checkPendingFolders();
+      _checkPendingDevices();
     }
   }
 
@@ -85,11 +90,15 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
       case 'DeviceDiscovered':
       case 'PendingDevicesChanged':
         context.read<DiscoveredDevicesStore>().ingestEvent(event);
+        _handlePendingDevicesChanged(event);
         break;
       case 'PendingFoldersChanged':
         _handlePendingFoldersChanged(event);
         break;
       case 'DeviceConnected':
+        context.read<DeviceProvider>().noteDeviceConnected(
+              event.data['id']?.toString() ?? '',
+            );
         context.read<DeviceProvider>().fetchDevices(silent: true);
         _notify(
           AppNotificationCategory.device,
@@ -183,6 +192,107 @@ class _SyncthingEventListenerState extends State<SyncthingEventListener>
       }
     } catch (_) {}
     return null;
+  }
+
+  Future<void> _checkPendingDevices() async {
+    final pending = await ApiService.getPendingDevices();
+    if (!mounted || pending == null || pending.isEmpty) return;
+
+    for (final entry in pending.entries) {
+      final deviceId = entry.key;
+      final info = entry.value;
+      var name = deviceId;
+      var address = '';
+      if (info is Map) {
+        name = info['name']?.toString().trim() ?? name;
+        address = info['address']?.toString() ?? '';
+      }
+      await _showPendingDeviceDialog(
+        deviceId: deviceId,
+        name: name,
+        address: address,
+      );
+    }
+  }
+
+  void _handlePendingDevicesChanged(SyncthingEvent event) {
+    final added = event.data['added'];
+    if (added is List) {
+      for (final item in added) {
+        if (item is! Map) continue;
+        final deviceId = item['deviceID']?.toString() ?? '';
+        if (deviceId.isEmpty) continue;
+        final name = item['name']?.toString() ?? deviceId;
+        final address = item['address']?.toString() ?? '';
+        _notify(
+          AppNotificationCategory.device,
+          '收到新设备配对请求: ${name.isNotEmpty ? name : deviceId}',
+        );
+        _showPendingDeviceDialog(
+          deviceId: deviceId,
+          name: name,
+          address: address,
+        );
+      }
+    } else {
+      _checkPendingDevices();
+    }
+  }
+
+  Future<void> _showPendingDeviceDialog({
+    required String deviceId,
+    required String name,
+    required String address,
+  }) async {
+    final key = _normDeviceId(deviceId);
+    if (_shownPendingDevices.contains(key)) return;
+    _shownPendingDevices.add(key);
+
+    if (!mounted) return;
+    final accepted = await showAcceptPendingDeviceDialog(
+      context: context,
+      deviceId: deviceId,
+      name: name,
+      address: address,
+    );
+
+    if (!mounted) return;
+
+    try {
+      if (accepted == true) {
+        await context.read<DeviceProvider>().addDevice(
+              deviceID: deviceId,
+              name: name,
+            );
+        if (mounted) {
+          _notify(
+            AppNotificationCategory.device,
+            '已添加设备。连接建立后将显示在线状态。',
+            snackColor: Colors.green,
+          );
+        }
+      } else if (accepted == false) {
+        await ApiService.dismissPendingDevice(
+          deviceId,
+          ignore: true,
+          name: name,
+          address: address,
+        );
+        if (mounted) {
+          _notify(AppNotificationCategory.device, '已忽略该设备请求');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _notify(
+          AppNotificationCategory.device,
+          '设备配对操作失败: $e',
+          snackColor: Colors.red,
+        );
+      }
+    } finally {
+      _shownPendingDevices.remove(key);
+    }
   }
 
   Future<void> _checkPendingFolders() async {

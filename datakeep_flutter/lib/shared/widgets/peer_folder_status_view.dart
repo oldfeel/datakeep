@@ -6,19 +6,29 @@ import '../utils/peer_folder_error.dart';
 class PeerFolderStatusView extends StatelessWidget {
   final Object? error;
   final VoidCallback? onRetry;
+  /// 本机已添加对方，但尚未完成首次连接（待确认）
+  final bool pairingPending;
 
   const PeerFolderStatusView({
     super.key,
     required this.error,
     this.onRetry,
+    this.pairingPending = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final kind = classifyPeerFolderError(error);
-    final waiting = kind == PeerFolderErrorKind.unpaired ||
+    final waiting = pairingPending ||
+        kind == PeerFolderErrorKind.unpaired ||
         kind == PeerFolderErrorKind.offline;
     final scheme = Theme.of(context).colorScheme;
+    final title = pairingPending
+        ? peerFolderPendingPairingTitle()
+        : peerFolderErrorTitle(kind);
+    final message = pairingPending
+        ? peerFolderPendingPairingMessage()
+        : peerFolderErrorMessage(kind, error);
 
     return Center(
       child: Padding(
@@ -33,13 +43,13 @@ class PeerFolderStatusView extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              peerFolderErrorTitle(kind),
+              title,
               style: Theme.of(context).textTheme.headlineSmall,
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
             Text(
-              peerFolderErrorMessage(kind, error),
+              message,
               style: Theme.of(context).textTheme.bodyMedium,
               textAlign: TextAlign.center,
             ),

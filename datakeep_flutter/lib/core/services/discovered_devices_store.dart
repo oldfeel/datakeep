@@ -1,11 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../shared/utils/device_id.dart';
 import 'api_service.dart';
 import 'event_service.dart';
 
-String normDeviceId(String id) =>
-    id.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+export '../../shared/utils/device_id.dart';
 
 /// 局域网发现的、尚未添加到本机的设备（对齐 Sushitrain）
 class DiscoveredDevice {

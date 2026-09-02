@@ -22,12 +22,17 @@ PeerFolderErrorKind classifyPeerFolderError(Object? error) {
   return PeerFolderErrorKind.other;
 }
 
+String peerFolderPendingPairingTitle() => '配对未完成';
+
+String peerFolderPendingPairingMessage() =>
+    '本机已添加该设备，但对方尚未添加本机。请在对方设备上接受配对请求，或通过「添加设备」手动添加本机；双方均添加后，文件夹列表会自动显示。';
+
 String peerFolderErrorTitle(PeerFolderErrorKind kind) {
   switch (kind) {
     case PeerFolderErrorKind.unpaired:
       return '等待对方同意';
     case PeerFolderErrorKind.offline:
-      return '正在连接';
+      return '设备离线';
     case PeerFolderErrorKind.unreachable:
       return '暂时无法访问';
     case PeerFolderErrorKind.other:
@@ -40,7 +45,7 @@ String peerFolderErrorMessage(PeerFolderErrorKind kind, Object? raw) {
     case PeerFolderErrorKind.unpaired:
       return '已向对方发出配对请求，请在对方设备上同意后再查看文件夹。同意后将自动刷新。';
     case PeerFolderErrorKind.offline:
-      return '对方 Syncthing 尚未连上或刚启动，正在重试…';
+      return '暂时无法连接对方，请确认设备在线且在同一网络，稍后会自动重试。';
     case PeerFolderErrorKind.unreachable:
       return '已配对但暂时拉不到对方文件夹（对端服务可能还在启动），请稍候。';
     case PeerFolderErrorKind.other:

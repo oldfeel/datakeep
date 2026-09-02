@@ -209,6 +209,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
       return PeerFolderStatusView(
         error: error,
         onRetry: _loadFolders,
+        pairingPending: widget.device.status == 'pending',
       );
     }
     if (folders.isEmpty) {

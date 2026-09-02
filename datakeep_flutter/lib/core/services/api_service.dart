@@ -11,6 +11,7 @@ import 'android_storage_service.dart';
 import '../../shared/utils/sync_folder_paths.dart';
 import '../../shared/utils/preview_limits.dart';
 import '../../shared/utils/local_http_client.dart';
+import '../../shared/utils/device_id.dart';
 
 /// 预览流式下载结果
 class PreviewDownloadResult {
@@ -735,9 +736,12 @@ class ApiService {
   }
 
   /// 获取设备发现信息
-  static Future<Map<String, dynamic>> getDiscovery() async {
+  ///
+  /// [onlineOnly] 为 true 时仅返回局域网地址当前可达的设备（过滤 Syncthing 缓存里的离线项）。
+  static Future<Map<String, dynamic>> getDiscovery({bool onlineOnly = false}) async {
     try {
-      final response = await _get('/syncthing/discovery');
+      final path = onlineOnly ? '/syncthing/discovery?online=1' : '/syncthing/discovery';
+      final response = await _get(path);
       
       // 处理不同的响应格式
       // 1. 如果响应包含 code 和 data，提取 data
@@ -818,7 +822,7 @@ class ApiService {
 
   static Future<List<Map<String, String>>> _fetchDiscoveredDevicesOnce() async {
     try {
-      final discovery = await getDiscovery();
+      final discovery = await getDiscovery(onlineOnly: true);
       debugPrint('Discovery 数据: $discovery');
       
       // 获取已配置的设备列表，用于匹配设备名称
@@ -827,7 +831,7 @@ class ApiService {
         final configuredDevices = await getDevices();
         for (var device in configuredDevices) {
           // 移除连字符和空格进行匹配
-          final cleanId = device.id.replaceAll(RegExp(r'[\s-]'), '');
+          final cleanId = normDeviceId(device.id);
           if (device.name.trim().isNotEmpty) {
             deviceNameMap[cleanId] = device.name.trim();
           }
@@ -839,15 +843,13 @@ class ApiService {
       // 获取本机 ID，排除自身
       String localCleanId = '';
       try {
-        localCleanId = (await getLocalDeviceId()).replaceAll(RegExp(r'[\s-]'), '');
+        localCleanId = normDeviceId(await getLocalDeviceId());
       } catch (_) {}
 
-      // discovery 格式应该是: { "deviceID1": {...}, "deviceID2": {...} }
-      // 过滤掉非设备 ID 的 key（如 "code", "success", "error", "data" 等）
-      final discoveredDevices = <Map<String, String>>[];
+      // discovery 格式: { "deviceID1": { "addresses": [...] }, ... }
+      final byNormId = <String, Map<String, String>>{};
       
       for (final deviceId in discovery.keys) {
-        // 排除常见的响应字段
         if (deviceId == 'code' || 
             deviceId == 'success' || 
             deviceId == 'error' || 
@@ -855,17 +857,12 @@ class ApiService {
             deviceId == 'message') {
           continue;
         }
-        // 设备 ID 通常是较长的字符串（至少 20 个字符）
-        if (deviceId.length < 20) {
-          continue;
-        }
+        if (deviceId.length < 20) continue;
 
-        final cleanId = deviceId.replaceAll(RegExp(r'[\s-]'), '');
-        if (localCleanId.isNotEmpty && cleanId == localCleanId) {
-          continue;
-        }
+        final cleanId = normDeviceId(deviceId);
+        if (cleanId.length != 56) continue;
+        if (localCleanId.isNotEmpty && cleanId == localCleanId) continue;
         
-        // 尝试从 discovery 条目或已配置设备中获取名称
         String deviceName = deviceId;
         final entry = discovery[deviceId];
         if (entry is Map) {
@@ -874,20 +871,44 @@ class ApiService {
             deviceName = announceName;
           }
         }
-        final cleanForMap = deviceId.replaceAll(RegExp(r'[\s-]'), '');
-        deviceName = deviceNameMap[cleanForMap] ?? deviceName;
-        if (deviceName.trim().isEmpty) {
-          deviceName = deviceId;
+        // 已配置设备用 config 名称；未发现项只用局域网通告名
+        deviceName = deviceNameMap[cleanId] ?? deviceName;
+        if (deviceName.trim().isEmpty) deviceName = deviceId;
+
+        final canonicalId = formatDeviceId(deviceId);
+        final prev = byNormId[cleanId];
+        if (prev == null) {
+          byNormId[cleanId] = {'id': canonicalId, 'name': deviceName.trim()};
+        } else if (prev['name'] == prev['id'] && deviceName != deviceId) {
+          prev['name'] = deviceName.trim();
         }
-        
-        discoveredDevices.add({
-          'id': deviceId,
-          'name': deviceName,
-        });
       }
       
-      debugPrint('发现的设备列表（带名称）: $discoveredDevices');
-      return discoveredDevices;
+      // 对方已添加本机时会出现在 pending，补进可添加列表
+      try {
+        final pending = await getPendingDevices();
+        if (pending != null) {
+          for (final entry in pending.entries) {
+            final clean = normDeviceId(entry.key);
+            if (clean.length != 56) continue;
+            if (localCleanId.isNotEmpty && clean == localCleanId) continue;
+            if (byNormId.containsKey(clean)) continue;
+            final info = entry.value;
+            var name = info is Map ? info['name']?.toString().trim() ?? '' : '';
+            name = deviceNameMap[clean] ?? name;
+            if (name.isEmpty) name = formatDeviceId(entry.key);
+            byNormId[clean] = {'id': formatDeviceId(entry.key), 'name': name};
+          }
+        }
+      } catch (e) {
+        debugPrint('合并 pending 设备失败: $e');
+      }
+
+      final merged = byNormId.values.toList()
+        ..sort((a, b) => (a['id'] ?? '').compareTo(b['id'] ?? ''));
+      
+      debugPrint('发现的设备列表（带名称）: $merged');
+      return merged;
     } catch (e) {
       debugPrint('获取发现的设备列表失败: $e');
       return [];

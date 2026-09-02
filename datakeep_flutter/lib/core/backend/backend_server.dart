@@ -1851,8 +1851,115 @@ class BackendServer {
     if (result.containsKey('error')) {
       return _json({'code': 1006, 'data': 'Syncthing 未运行'}, status: 503);
     }
-    final data = result.containsKey('data') ? result['data'] : result;
+    var data = result.containsKey('data') ? result['data'] : result;
+    if (request.url.queryParameters['online'] == '1' && data is Map) {
+      data = await _filterOnlineLocalDiscovery(
+        Map<String, dynamic>.from(data),
+      );
+    }
     return _json({'code': 0, 'data': data});
+  }
+
+  /// Syncthing discovery 缓存会保留已离线设备；添加设备时只保留局域网地址可达的项。
+  /// 同一 Syncthing 进程只对应一个设备 ID，按 IP:端口去重，优先 pending / 有效 ID。
+  Future<Map<String, dynamic>> _filterOnlineLocalDiscovery(
+    Map<String, dynamic> raw,
+  ) async {
+    const skipKeys = {'code', 'success', 'error', 'data', 'message'};
+    final pending = await _pendingDeviceNormIds();
+    final endpointOwner = <String, String>{};
+    final out = <String, dynamic>{};
+
+    final entries = raw.entries
+        .where((e) {
+          final id = e.key;
+          return !skipKeys.contains(id) &&
+              id.length >= 20 &&
+              _normDeviceId(id).length == 56;
+        })
+        .toList()
+      ..sort((a, b) {
+        final pa = _discoveryEntryPriority(a.key, pending);
+        final pb = _discoveryEntryPriority(b.key, pending);
+        if (pa != pb) return pa - pb;
+        return a.key.compareTo(b.key);
+      });
+
+    for (final e in entries) {
+      final id = e.key;
+      final entry = e.value;
+      if (entry is! Map) continue;
+      final addrs = entry['addresses'];
+      if (addrs is! List || addrs.isEmpty) continue;
+      for (final rawAddr in addrs) {
+        if (rawAddr is! String) continue;
+        final ep = _localEndpointKey(rawAddr);
+        if (ep == null) continue;
+        if (!await _probeLocalEndpoint(ep)) continue;
+        if (endpointOwner.containsKey(ep)) continue;
+        endpointOwner[ep] = id;
+        out[id] = entry;
+        break;
+      }
+    }
+    return out;
+  }
+
+  int _discoveryEntryPriority(String id, Set<String> pending) {
+    if (pending.contains(_normDeviceId(id))) return 0;
+    return 1;
+  }
+
+  Future<Set<String>> _pendingDeviceNormIds() async {
+    final result =
+        await _api.proxyGet('/rest/cluster/pending/devices', silent: true);
+    if (result.containsKey('error')) return {};
+    final raw = result.containsKey('data') ? result['data'] : result;
+    if (raw is! Map) return {};
+    return raw.keys.map((k) => _normDeviceId(k.toString())).toSet();
+  }
+
+  String? _localEndpointKey(String raw) {
+    final stripped = raw.replaceFirst(RegExp(r'^dynamic\+'), '');
+    final uri = Uri.tryParse(stripped);
+    if (uri == null || uri.host.isEmpty) return null;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'tcp' && scheme != 'quic') return null;
+    if (!_isPrivateOrLinkLocalHost(uri.host)) return null;
+    final port = uri.hasPort ? uri.port : 22000;
+    final host = uri.host.contains(':') ? '[${uri.host}]' : uri.host;
+    return '$scheme://$host:$port';
+  }
+
+  Future<bool> _probeLocalEndpoint(String endpoint) async {
+    final uri = Uri.tryParse(endpoint);
+    if (uri == null || uri.host.isEmpty) return false;
+    final port = uri.hasPort ? uri.port : 22000;
+    try {
+      final socket = await Socket.connect(
+        uri.host,
+        port,
+        timeout: const Duration(milliseconds: 600),
+      );
+      await socket.close();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _isPrivateOrLinkLocalHost(String host) {
+    final addr = InternetAddress.tryParse(host);
+    if (addr == null) return false;
+    if (addr.type == InternetAddressType.IPv4) {
+      final o = addr.rawAddress;
+      if (o[0] == 10) return true;
+      if (o[0] == 172 && o[1] >= 16 && o[1] <= 31) return true;
+      if (o[0] == 192 && o[1] == 168) return true;
+      if (o[0] == 169 && o[1] == 254) return true;
+      return false;
+    }
+    return addr.type == InternetAddressType.IPv6 && addr.isLinkLocal;
   }
 
   Future<Response> _handlePendingDevices(Request request) async {

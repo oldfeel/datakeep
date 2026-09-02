@@ -29,6 +29,9 @@ class Device {
   final DateTime? lastSeen;
   @JsonKey(includeFromJson: false, includeToJson: false)
   final List<String> folders;
+  /// 是否已完成首次配对（曾成功连接）；false 时 UI 显示「待确认」
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  final bool pairingComplete;
 
   Device({
     required this.id,
@@ -46,6 +49,7 @@ class Device {
     this.crypto,
     this.lastSeen,
     this.folders = const [],
+    this.pairingComplete = true,
   });
 
   factory Device.fromJson(Map<String, dynamic> json) {
@@ -87,11 +91,25 @@ class Device {
     }
   }
 
-  // 获取状态
+  // 获取状态：未完成首次配对 → 待确认；之后按连接显示在线/离线
   String get status {
     if (isLocal) return 'online';
+    if (!pairingComplete) return 'pending';
     if (connected) return 'online';
     return 'offline';
+  }
+
+  /// 连接状态文案（本机 / 待确认 / 在线 / 离线）
+  String get connectionLabel {
+    if (isLocal) return '本机设备';
+    switch (status) {
+      case 'pending':
+        return '待确认';
+      case 'online':
+        return '在线';
+      default:
+        return '离线';
+    }
   }
 
   /// 用于 UI 展示的名称（空名/localhost/设备 ID 时做友好化处理）
@@ -126,6 +144,7 @@ class Device {
     String? crypto,
     DateTime? lastSeen,
     List<String>? folders,
+    bool? pairingComplete,
   }) {
     return Device(
       id: id ?? this.id,
@@ -143,6 +162,7 @@ class Device {
       crypto: crypto ?? this.crypto,
       lastSeen: lastSeen ?? this.lastSeen,
       folders: folders ?? this.folders,
+      pairingComplete: pairingComplete ?? this.pairingComplete,
     );
   }
 }

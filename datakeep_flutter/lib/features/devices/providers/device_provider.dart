@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import '../../../core/models/device.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/discovered_devices_store.dart';
+import '../../../core/services/device_pairing_store.dart';
 
 class DeviceProvider with ChangeNotifier {
   List<Device> _devices = [];
@@ -28,6 +29,33 @@ class DeviceProvider with ChangeNotifier {
     ),
   );
 
+  Future<List<Device>> _applyPairingState(
+    List<Device> devices,
+    DevicePairingStore store,
+  ) async {
+    final out = <Device>[];
+    for (final d in devices) {
+      if (d.isLocal) {
+        out.add(d.copyWith(pairingComplete: true));
+        continue;
+      }
+      if (d.connected) {
+        await store.markEverConnected(d.id);
+      }
+      final complete = store.hasEverConnected(d.id);
+      out.add(d.copyWith(pairingComplete: complete));
+    }
+    return out;
+  }
+
+  /// 标记设备已完成首次连接（DeviceConnected 事件后调用）
+  Future<void> noteDeviceConnected(String deviceId) async {
+    if (deviceId.trim().isEmpty) return;
+    await DevicePairingStore.instance.markEverConnected(deviceId);
+    _devices = await _applyPairingState(_devices, DevicePairingStore.instance);
+    notifyListeners();
+  }
+
   // 获取所有设备；silent=true 时不显示全屏 loading（后台刷新用）
   Future<void> fetchDevices({bool silent = false}) async {
     try {
@@ -38,7 +66,12 @@ class DeviceProvider with ChangeNotifier {
       }
 
       final devices = await ApiService.getDevices();
-      _devices = devices;
+      final store = DevicePairingStore.instance;
+      await store.ensureLoaded();
+      await store.migrateExistingConfiguredDevices(
+        devices.where((d) => !d.isLocal).map((d) => d.id),
+      );
+      _devices = await _applyPairingState(devices, store);
       if (silent) _error = null;
     } catch (e) {
       _error = e.toString();
@@ -71,8 +104,8 @@ class DeviceProvider with ChangeNotifier {
   Future<void> removeDevice(String deviceId) async {
     try {
       await ApiService.removeDevice(deviceId);
-      // 本机标记忽略，避免删除后仍当作「待添加发现项」处理
       await DiscoveredDevicesStore.instance.ignore(deviceId);
+      await DevicePairingStore.instance.clearPairing(deviceId);
       await fetchDevices(silent: true);
     } catch (e) {
       _error = e.toString();
