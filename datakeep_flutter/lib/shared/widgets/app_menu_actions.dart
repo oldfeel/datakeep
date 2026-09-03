@@ -7,9 +7,8 @@ import '../../features/apps/screens/market_screen.dart';
 import '../../features/feedback/screens/feedback_screen.dart';
 import '../../features/notifications/screens/notifications_page.dart';
 import '../../core/services/api_service.dart';
-import '../constants/app_info.dart';
 import '../utils/open_syncthing_gui.dart';
-import 'app_logo.dart';
+import 'app_about_dialog.dart';
 import 'folder_edit_dialog.dart';
 
 /// 独立消息入口（未读角标），不放进设置/底部菜单
@@ -131,12 +130,7 @@ Future<void> handleSharedAppMenuAction(
       break;
     case AppMenuActions.about:
       if (!context.mounted) return;
-      showAboutDialog(
-        context: context,
-        applicationName: kAppDisplayName,
-        applicationVersion: '1.0.0',
-        applicationIcon: const AppLogo(size: 48),
-      );
+      await showDataKeepAboutDialog(context);
       break;
     case AppMenuActions.exit:
       if (!context.mounted) return;
