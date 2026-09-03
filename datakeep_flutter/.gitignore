@@ -44,9 +44,10 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Binaries
+# Binaries / 本地 Syncthing 编译产物
 /bin/syncthing
 /bin/syncthing.exe
+/bin/.syncthing-build.stamp
 /syncthing
 /bin/datakeep_backend
 
