@@ -242,17 +242,17 @@ class NativeService {
       final args = _syncthingServeArgs(configPath);
       final logPath = '$configPath${Platform.pathSeparator}syncthing.log';
 
-      // Windows：不要用 PowerShell（会闪控制台）；Process.start 默认重定向 stdio，
-      // 走 CREATE_NO_WINDOW。退出钩子里会 taskkill。
+      // Windows：Win32 CreateProcess(DETACHED|NO_WINDOW)，避免管道/控制台闪窗。
       // 其它平台：detached，主进程退出后不带走子进程（退出钩子里再 stop）。
       if (Platform.isWindows) {
         await _unblockWindowsMarkOfTheWeb(syncthingPath);
-        final process = await Process.start(syncthingPath, args);
-        // 丢弃输出，避免管道堵塞；不 await exit
-        unawaited(process.stdout.drain<void>());
-        unawaited(process.stderr.drain<void>());
+        final pid = WindowsProcessUtil.startDetachedHidden(syncthingPath, args);
+        if (pid == null) {
+          debugPrint('启动 Syncthing 失败（CreateProcess）path=$syncthingPath');
+          return false;
+        }
         debugPrint(
-          '已启动 Syncthing（无窗口）pid=${process.pid} path=$syncthingPath log=$logPath',
+          '已启动 Syncthing（无窗口）pid=$pid path=$syncthingPath log=$logPath',
         );
       } else {
         final process = await Process.start(
@@ -478,22 +478,13 @@ class NativeService {
       }
     }
 
-    // 5. 系统 PATH
+    // 5. 系统 PATH（Windows 不用 where.exe，避免闪控制台）
     try {
       if (Platform.isLinux || Platform.isMacOS) {
         final result = await Process.run('which', ['syncthing']);
         if (result.exitCode == 0) {
           final path = result.stdout.toString().trim();
           if (path.isNotEmpty) {
-            debugPrint('找到 Syncthing 可执行文件: $path');
-            return path;
-          }
-        }
-      } else if (Platform.isWindows) {
-        final result = await Process.run('where', ['syncthing.exe']);
-        if (result.exitCode == 0) {
-          final path = result.stdout.toString().split(RegExp(r'\r?\n')).first.trim();
-          if (path.isNotEmpty && await File(path).exists()) {
             debugPrint('找到 Syncthing 可执行文件: $path');
             return path;
           }
@@ -608,8 +599,7 @@ class NativeService {
         final result = await Process.run('pkill', ['-f', 'datakeep_backend']);
         return result.exitCode == 0;
       } else if (Platform.isWindows) {
-        final result = await Process.run('taskkill', ['/F', '/IM', 'datakeep_backend.exe']);
-        return result.exitCode == 0;
+        return WindowsProcessUtil.killByImageName('datakeep_backend.exe');
       }
       return false;
     } catch (e) {
@@ -645,8 +635,7 @@ class NativeService {
           return 'starting'; // 进程在运行但 API 不可访问
         }
       } else if (Platform.isWindows) {
-        final result = await Process.run('tasklist', ['/FI', 'IMAGENAME eq datakeep_backend.exe']);
-        if (result.stdout.toString().contains('datakeep_backend.exe')) {
+        if (WindowsProcessUtil.hasImageName('datakeep_backend.exe')) {
           return 'starting';
         }
       }

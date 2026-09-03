@@ -12,17 +12,19 @@ class CertManager {
 
   bool get exists => File(certFile).existsSync() && File(keyFile).existsSync();
 
-  /// 确保证书文件存在（桌面端 openssl 生成，移动端从 assets 复制）
+  /// 确保证书文件存在（优先 assets；桌面端 openssl 仅作回退且易闪窗）
   Future<void> ensureReady() async {
     if (exists) return;
     Directory(certDir).createSync(recursive: true);
 
-    if (!Platform.isAndroid && !Platform.isIOS) {
+    await _copyFromAssets();
+    if (exists) return;
+
+    if (!Platform.isAndroid && !Platform.isIOS && !Platform.isWindows) {
       _generateSelfSignedWithOpenssl();
       if (exists) return;
     }
 
-    await _copyFromAssets();
     if (!exists) {
       throw StateError('无法初始化 HTTPS 证书');
     }

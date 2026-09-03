@@ -1,9 +1,41 @@
 #include "flutter_window.h"
 
 #include <optional>
-#include <cstdlib>
+
+#include <windows.h>
+#include <tlhelp32.h>
 
 #include "flutter/generated_plugin_registrant.h"
+
+namespace {
+
+// 结束 syncthing.exe，勿用 system/taskkill（会闪控制台窗口）。
+void TerminateSyncthingProcesses() {
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snap == INVALID_HANDLE_VALUE) {
+    return;
+  }
+
+  PROCESSENTRY32W pe{};
+  pe.dwSize = sizeof(pe);
+  if (Process32FirstW(snap, &pe)) {
+    do {
+      if (_wcsicmp(pe.szExeFile, L"syncthing.exe") != 0) {
+        continue;
+      }
+      HANDLE proc =
+          OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+      if (proc == nullptr) {
+        continue;
+      }
+      TerminateProcess(proc, 1);
+      CloseHandle(proc);
+    } while (Process32NextW(snap, &pe));
+  }
+  CloseHandle(snap);
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -41,8 +73,8 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
-  // 停掉 detached 的 Syncthing（Dart 退出钩子可能来不及跑完）
-  system("taskkill /F /IM syncthing.exe >nul 2>&1");
+  // Dart 退出钩子可能来不及跑完；用 Win32 结束，避免 taskkill 闪窗。
+  TerminateSyncthingProcesses();
 
   if (flutter_controller_) {
     flutter_controller_ = nullptr;

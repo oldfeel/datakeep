@@ -1,8 +1,8 @@
 #!/bin/bash
-# 桌面端 Syncthing 二进制（Linux / macOS / Windows）
-# 输出：
-#   本机：datakeep_flutter/bin/syncthing（Windows 为 syncthing.exe）
-#   交叉：SYNCTHING_GOOS=windows SYNCTHING_GOARCH=amd64 → bin/syncthing.exe
+# 桌面�?Syncthing 二进制（Linux / macOS / Windows�?
+# 输出�?
+#   本机：datakeep_flutter/bin/syncthing（Windows �?syncthing.exe�?
+#   交叉：SYNCTHING_GOOS=windows SYNCTHING_GOARCH=amd64 �?bin/syncthing.exe
 #
 # 用法:
 #   bash scripts/build_desktop_syncthing.sh
@@ -20,12 +20,12 @@ FLUTTER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SYNCTHING_DIR="$(cd "$FLUTTER_DIR/.." && pwd)/syncthing"
 VERSION="${SYNCTHING_BUILD_VERSION:-v2.1.3}"
 
-# Windows 防火墙/属性显示名（与 kAppDisplayName 一致）
+# Windows 防火�?属性显示名（与 kAppDisplayName 一致）
 WINDOWS_PRODUCT_NAME="${SYNCTHING_WINDOWS_PRODUCT_NAME:-数据管理}"
 WINDOWS_FILE_DESC="${SYNCTHING_WINDOWS_FILE_DESC:-数据管理}"
 WINDOWS_COMPANY="${SYNCTHING_WINDOWS_COMPANY:-DataKeep}"
-# 变更此标记会强制重编 Windows 二进制
-WINDOWS_BRAND_STAMP="product=${WINDOWS_PRODUCT_NAME};desc=${WINDOWS_FILE_DESC};gui=1;v2"
+# 变更此标记会强制重编 Windows 二进�?
+WINDOWS_BRAND_STAMP="product=${WINDOWS_PRODUCT_NAME};desc=${WINDOWS_FILE_DESC};gui=1;gateway-iphlpapi=1;v4"
 
 GOOS_TARGET="${SYNCTHING_GOOS:-}"
 GOARCH_TARGET="${SYNCTHING_GOARCH:-}"
@@ -56,7 +56,7 @@ OUT="$FLUTTER_DIR/bin/$OUT_NAME"
 STAMP_FILE="$FLUTTER_DIR/bin/.syncthing-build.stamp"
 
 command -v go >/dev/null || {
-  echo -e "${RED}未找到 go，请先安装 Go${NC}" >&2
+  echo -e "${RED}未找�?go，请先安�?Go${NC}" >&2
   exit 1
 }
 
@@ -66,7 +66,7 @@ if [[ -x /snap/go/current/bin/go ]]; then
 fi
 
 if [[ ! -d "$SYNCTHING_DIR" ]] || [[ ! -f "$SYNCTHING_DIR/build.go" ]]; then
-  echo -e "${RED}Syncthing 源码不存在: $SYNCTHING_DIR${NC}" >&2
+  echo -e "${RED}Syncthing 源码不存�? $SYNCTHING_DIR${NC}" >&2
   exit 1
 fi
 
@@ -76,7 +76,7 @@ need_rebuild=1
 if [[ -f "$OUT" ]] && [[ -f "$STAMP_FILE" ]]; then
   if [[ "$(cat "$STAMP_FILE" 2>/dev/null || true)" == "${GOOS_TARGET}/${GOARCH_TARGET}/${VERSION}/${WINDOWS_BRAND_STAMP}" ]]; then
     if [[ "$OUT" -nt "$SYNCTHING_DIR/build.go" ]] && [[ "$OUT" -nt "$SCRIPT_DIR/build_desktop_syncthing.sh" ]]; then
-      echo -e "${GREEN}✓ Syncthing 已是最新: $OUT${NC}"
+      echo -e "${GREEN}�?Syncthing 已是最�? $OUT${NC}"
       need_rebuild=0
     fi
   fi
@@ -91,30 +91,70 @@ cd "$SYNCTHING_DIR"
 # 清理同目录残留，避免 mv 冲突
 rm -f syncthing syncthing.exe
 
-# Windows：GUI 子系统 + VERSIONINFO 显示名「数据管理」（防火墙弹窗用）
+# Windows：GUI 子系�?+ VERSIONINFO + 无闪�?gateway（route print�?
 BUILD_GO_BACKUP=""
+GO_MOD_BACKUP=""
 restore_build_go() {
   if [[ -n "${BUILD_GO_BACKUP:-}" ]] && [[ -f "$BUILD_GO_BACKUP" ]]; then
     mv -f "$BUILD_GO_BACKUP" "$SYNCTHING_DIR/build.go"
     BUILD_GO_BACKUP=""
+  fi
+  if [[ -n "${GO_MOD_BACKUP:-}" ]] && [[ -f "$GO_MOD_BACKUP" ]]; then
+    mv -f "$GO_MOD_BACKUP" "$SYNCTHING_DIR/go.mod"
+    GO_MOD_BACKUP=""
   fi
 }
 trap restore_build_go EXIT
 
 if [[ "$GOOS_TARGET" == "windows" ]]; then
   export EXTRA_LDFLAGS="${EXTRA_LDFLAGS:+$EXTRA_LDFLAGS }-H windowsgui"
-  # CI / 本机需有 goversioninfo，否则 exe 无 FileDescription，防火墙只显示 syncthing
+  export PYTHONUTF8=1
+  export PYTHONIOENCODING=utf-8
+  # Git Bash �?python3 常是 WindowsApps 商店占位（exit 49），优先�?python
+  PYTHON_BIN=""
+  if command -v python >/dev/null 2>&1 && python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,) else 1)" 2>/dev/null; then
+    PYTHON_BIN=python
+  elif command -v python3 >/dev/null 2>&1 && python3 -c "import sys" 2>/dev/null; then
+    PYTHON_BIN=python3
+  else
+    echo -e "${RED}需�?Python 3 以写�?Windows VERSIONINFO / 补丁${NC}" >&2
+    exit 1
+  fi
+
+  # 用本�?patched gateway：route print �?CREATE_NO_WINDOW，避免启动闪控制�?
+  LOCAL_GW="$FLUTTER_DIR/third_party/gateway"
+  if [[ -d "$LOCAL_GW" ]] && [[ -f "$LOCAL_GW/gateway_windows.go" ]]; then
+    GO_MOD_BACKUP="$(mktemp)"
+    cp "$SYNCTHING_DIR/go.mod" "$GO_MOD_BACKUP"
+    "$PYTHON_BIN" - "$SYNCTHING_DIR/go.mod" "$LOCAL_GW" <<'PY'
+import sys
+from pathlib import Path
+path, local = Path(sys.argv[1]), Path(sys.argv[2]).resolve()
+text = path.read_text(encoding="utf-8")
+lines = []
+replaced = False
+for line in text.splitlines(True):
+    if line.startswith("replace github.com/jackpal/gateway"):
+        lines.append(f"replace github.com/jackpal/gateway => {local.as_posix()}\n")
+        replaced = True
+    else:
+        lines.append(line)
+if not replaced:
+    lines.append(f"\nreplace github.com/jackpal/gateway => {local.as_posix()}\n")
+path.write_text("".join(lines), encoding="utf-8")
+print("go.mod: gateway -> local patched (no route.exe)")
+PY
+  fi
+
+  # CI / 本机需�?goversioninfo，否�?exe �?FileDescription，防火墙只显�?syncthing
   if ! command -v goversioninfo >/dev/null 2>&1; then
-    echo -e "${YELLOW}安装 goversioninfo（写入 Windows 版本信息）…${NC}"
+    echo -e "${YELLOW}安装 goversioninfo（写�?Windows 版本信息）�?{NC}"
     go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.4.0
     export PATH="$(go env GOPATH)/bin:${PATH}"
   fi
   BUILD_GO_BACKUP="$(mktemp)"
   cp "$SYNCTHING_DIR/build.go" "$BUILD_GO_BACKUP"
-  # Windows runner 默认 cp1252，避免 print 中文/箭头时 UnicodeEncodeError
-  export PYTHONUTF8=1
-  export PYTHONIOENCODING=utf-8
-  python3 - "$SYNCTHING_DIR/build.go" "$WINDOWS_PRODUCT_NAME" "$WINDOWS_FILE_DESC" "$WINDOWS_COMPANY" <<'PY'
+  "$PYTHON_BIN" - "$SYNCTHING_DIR/build.go" "$WINDOWS_PRODUCT_NAME" "$WINDOWS_FILE_DESC" "$WINDOWS_COMPANY" <<'PY'
 import sys
 from pathlib import Path
 
@@ -149,10 +189,10 @@ if [[ -f "syncthing.exe" ]]; then
 elif [[ -f "syncthing" ]]; then
   mv -f syncthing "$OUT"
 else
-  echo -e "${RED}编译后未找到 syncthing 可执行文件${NC}" >&2
+  echo -e "${RED}编译后未找到 syncthing 可执行文�?{NC}" >&2
   exit 1
 fi
 
 chmod +x "$OUT" 2>/dev/null || true
 printf '%s' "${GOOS_TARGET}/${GOARCH_TARGET}/${VERSION}/${WINDOWS_BRAND_STAMP}" > "$STAMP_FILE"
-echo -e "${GREEN}✅ Syncthing 编译完成: $OUT${NC}"
+echo -e "${GREEN}�?Syncthing 编译完成: $OUT${NC}"

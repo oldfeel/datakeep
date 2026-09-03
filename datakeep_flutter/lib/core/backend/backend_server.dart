@@ -17,6 +17,7 @@ import '../../shared/utils/sync_folder_paths.dart';
 import '../../shared/utils/app_manifest.dart';
 import '../services/thumbnail_service.dart';
 import '../services/syncthing_lifecycle.dart';
+import '../services/windows_wifi_util.dart';
 
 class BackendServer {
   final SyncthingApi _api = SyncthingApi();
@@ -1726,6 +1727,13 @@ class BackendServer {
 
   /// 当前已连接 Wi‑Fi SSID；有线/未知则空字符串
   Future<String> _detectWifiSsid() async {
+    // Windows：勿先跑 nmcli/iwgetid（Process.run 控制台程序会闪窗）
+    if (Platform.isWindows) {
+      final ssid = WindowsWifiUtil.currentSsid();
+      if (ssid != null && ssid.isNotEmpty) return ssid;
+      return '';
+    }
+
     // nmcli：仅取 ACTIVE=yes 的行
     try {
       final r = await Process.run('nmcli', [
@@ -1753,23 +1761,6 @@ class BackendServer {
         if (ssid.isNotEmpty) return ssid;
       }
     } catch (_) {}
-
-    // Windows：netsh wlan show interfaces → SSID
-    if (Platform.isWindows) {
-      try {
-        final r = await Process.run('netsh', ['wlan', 'show', 'interfaces']);
-        if (r.exitCode == 0) {
-          for (final line in r.stdout.toString().split('\n')) {
-            final m = RegExp(r'^\s*SSID\s*:\s*(.+)\s*$', caseSensitive: false)
-                .firstMatch(line);
-            if (m != null) {
-              final ssid = m.group(1)?.trim() ?? '';
-              if (ssid.isNotEmpty && ssid.toLowerCase() != 'ssid') return ssid;
-            }
-          }
-        }
-      } catch (_) {}
-    }
 
     return '';
   }
