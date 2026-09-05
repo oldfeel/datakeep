@@ -1,6 +1,6 @@
-# DataKeep
+# 数据管理
 
-跨平台文件同步客户端，基于 [Syncthing](https://syncthing.net/) 引擎。桌面与移动端共用同一套 Flutter 代码（`datakeep_flutter/`）。
+跨平台数据管理与文件同步客户端，基于 [Syncthing](https://syncthing.net/) 引擎。桌面与移动端共用同一套 Flutter 代码（`datakeep_flutter/`）。
 
 **定位**：面向日常的「加设备、加文件夹、看文件、管共享」；**不**复刻原版 Syncthing Web GUI 的全部设置。深度配置请用应用内「打开 Syncthing 管理页」（`http://127.0.0.1:8384`）或编辑 `config.xml`。功能取舍见 [AGENTS.md](AGENTS.md)。
 
@@ -78,7 +78,7 @@ bash scripts/build_desktop_syncthing.sh
 
 ## API 约定（摘要）
 
-- DataKeep：`https://localhost:8443`（自签名证书）
+- 本机 API：`https://localhost:8443`（自签名证书）
 - 响应：`{"code": 0, "data": ...}` 成功 / `{"code": 非0, "data": "..."}` 失败
 - Syncthing REST：`http://127.0.0.1:8384`（由 Dart 后端代理，前端不直连）
 
