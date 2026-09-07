@@ -1,0 +1,8 @@
+{
+  "id": "site.datakeep.video",
+  "name": "视频",
+  "version": "1.0.0",
+  "entry": "index.html",
+  "description": "本地视频库：按合集浏览与播放（文件放在 data/ 下）",
+  "icon": "icon.png"
+}

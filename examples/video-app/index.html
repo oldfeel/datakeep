@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>视频</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <h1>视频</h1>
+      <p class="hint">把视频放进 <code>data/</code>，一级子文件夹为合集</p>
+      <p id="status" class="status">加载中…</p>
+    </header>
+
+    <div class="layout">
+      <nav id="nav" class="nav" aria-label="合集"></nav>
+      <section class="main">
+        <div id="toolbar" class="toolbar" hidden>
+          <button type="button" id="btnBack" class="link">← 返回</button>
+          <h2 id="sectionTitle"></h2>
+        </div>
+        <div id="grid" class="grid"></div>
+        <p id="empty" class="empty" hidden></p>
+      </section>
+    </div>
+  </div>
+
+  <div id="player" class="player" hidden>
+    <div class="player-bar">
+      <button type="button" id="btnClosePlayer" class="link">← 返回列表</button>
+      <span id="playerTitle" class="player-title"></span>
+    </div>
+    <video id="videoEl" controls playsinline></video>
+    <p id="playerHint" class="player-hint" hidden></p>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

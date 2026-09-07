@@ -82,4 +82,4 @@ zip 解压后根目录（或唯一顶层目录）须包含：
 
 ## 示例
 
-仓库 `examples/`：`hello-app`（入门示例）、`ledger-app`（简单记账）、`todo-app`（待办清单）。
+仓库 `examples/`：`hello-app`（入门示例）、`ledger-app`（简单记账）、`todo-app`（待办清单）、`video-app`（视频库）。
