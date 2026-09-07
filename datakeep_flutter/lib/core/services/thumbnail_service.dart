@@ -489,6 +489,10 @@ class ThumbnailService {
         .toList();
   }
 
+  /// 探测视频时长（秒）；桌面依赖 ffprobe
+  Future<double?> probeDurationSeconds(String videoPath) =>
+      _probeDurationSeconds(videoPath);
+
   Future<double?> _probeDurationSeconds(String videoPath) async {
     try {
       final r = await Process.run('ffprobe', [

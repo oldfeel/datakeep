@@ -38,6 +38,11 @@ declare global {
       sec: number,
       index: number,
     ) => Promise<{ rel: string; sec: number; luma: number; index?: number }>;
+    __datakeepPlayVideo?: (
+      rel: string,
+      title?: string,
+    ) => Promise<{ ok?: boolean }>;
+    __datakeepProbeDuration?: (rel: string) => Promise<{ duration?: number }>;
     /** CEF 注入：第一个参数会被再 JSON.stringify，应传对象而非已序列化字符串 */
     DataKeepHost?: (msg: object | string, cb: (res: unknown) => void) => void;
   }
@@ -189,4 +194,56 @@ export function hasCoverHost(): boolean {
     typeof window.__datakeepListCoverFrames === 'function' ||
     typeof window.DataKeepHost === 'function'
   );
+}
+
+export function hasPlayVideoHost(): boolean {
+  return (
+    typeof window.__datakeepPlayVideo === 'function' ||
+    typeof window.DataKeepHost === 'function'
+  );
+}
+
+/** 用 DataKeep 内置 media_kit 播放（与文件浏览相同，可播 mkv 等） */
+export async function playVideoFromRel(
+  rel: string,
+  title?: string,
+): Promise<void> {
+  if (typeof window.__datakeepPlayVideo === 'function') {
+    await window.__datakeepPlayVideo(rel, title);
+    return;
+  }
+  await callHost({ method: 'playVideo', rel, title: title || '' });
+}
+
+export function hasProbeDurationHost(): boolean {
+  return (
+    typeof window.__datakeepProbeDuration === 'function' ||
+    typeof window.DataKeepHost === 'function'
+  );
+}
+
+/** 探测视频时长（秒） */
+export async function probeDurationFromRel(rel: string): Promise<number | null> {
+  let m: Record<string, unknown>;
+  if (typeof window.__datakeepProbeDuration === 'function') {
+    m = (await window.__datakeepProbeDuration(rel)) as Record<string, unknown>;
+  } else {
+    m = await callHost({ method: 'probeDuration', rel });
+  }
+  const d = m.duration;
+  if (typeof d === 'number' && Number.isFinite(d) && d > 0) return d;
+  return null;
+}
+
+/** 格式化为 mm:ss 或 h:mm:ss */
+export function formatDuration(sec: number | null | undefined): string {
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return '';
+  const s = Math.round(sec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
+  }
+  return `${m}:${String(r).padStart(2, '0')}`;
 }

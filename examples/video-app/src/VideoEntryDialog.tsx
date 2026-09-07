@@ -29,6 +29,7 @@ import {
   isStagedPick,
   needsHostCover,
   pickFile,
+  probeDurationFromRel,
   type PickedStagedFile,
 } from './host';
 import {
@@ -174,6 +175,44 @@ async function ensureCatKeeps(l1n: string, l2n: string, coln: string) {
   if (coln) {
     await putDataFile(`${l1n}/${l2n}/${coln}/${KEEP_NAME}`, '');
   }
+}
+
+async function resolveDurationSec(
+  videoPick: VideoPick,
+  videoRelInData: string,
+): Promise<number | undefined> {
+  try {
+    if (isStagedPick(videoPick) || videoRelInData) {
+      const rel = isStagedPick(videoPick) ? videoPick.rel : videoRelInData;
+      const d = await probeDurationFromRel(rel);
+      if (d != null) return Math.round(d * 10) / 10;
+    }
+  } catch {
+    /* fall through */
+  }
+  if (!isStagedPick(videoPick) && videoPick instanceof File) {
+    try {
+      const url = URL.createObjectURL(videoPick);
+      const dur = await new Promise<number | null>((resolve) => {
+        const v = document.createElement('video');
+        v.preload = 'metadata';
+        v.onloadedmetadata = () => {
+          const d = v.duration;
+          URL.revokeObjectURL(url);
+          resolve(Number.isFinite(d) && d > 0 ? d : null);
+        };
+        v.onerror = () => {
+          URL.revokeObjectURL(url);
+          resolve(null);
+        };
+        v.src = url;
+      });
+      if (dur != null) return Math.round(dur * 10) / 10;
+    } catch {
+      /* ignore */
+    }
+  }
+  return undefined;
 }
 
 async function resolveAutoCover(videoPick: VideoPick, fileName: string): Promise<Blob | null> {
@@ -439,12 +478,16 @@ export default function VideoEntryDialog({
 
       const description = await saveDescription();
       const now = new Date().toISOString();
+      const durationSec =
+        (await resolveDurationSec(videoPick, `${dir}/${videoName}`)) ??
+        undefined;
       const next: EntryMeta = {
         title: titleN,
         description,
         cover: hasCover ? COVER_NAME : undefined,
         video: videoName,
         playCount: 0,
+        durationSec,
         createdAt: now,
         updatedAt: now,
       };
@@ -537,6 +580,12 @@ export default function VideoEntryDialog({
       }
 
       const description = await saveDescription();
+      let durationSec = meta.durationSec;
+      if (videoChanged || durationSec == null || !(durationSec > 0)) {
+        durationSec =
+          (await resolveDurationSec(videoPick, `${newDir}/${videoName}`)) ??
+          durationSec;
+      }
       const next: EntryMeta = {
         ...meta,
         title: titleN,
@@ -544,6 +593,7 @@ export default function VideoEntryDialog({
         cover: coverName,
         video: videoName,
         playCount: meta.playCount ?? 0,
+        durationSec,
         createdAt: meta.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };

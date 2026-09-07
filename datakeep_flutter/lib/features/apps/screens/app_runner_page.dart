@@ -25,6 +25,7 @@ import '../../../shared/utils/app_dir.dart';
 import '../../../shared/utils/app_manifest.dart';
 import '../../../shared/utils/dev_app_source.dart';
 import '../../../shared/utils/open_url_external.dart';
+import '../../folders/screens/video_preview_screen.dart';
 
 /// 在本地 HTTP 服务上打开应用目录（入口默认 index.html）
 ///
@@ -189,9 +190,118 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
         return 'image/svg+xml';
       case 'webp':
         return 'image/webp';
+      case 'mp4':
+      case 'm4v':
+        return 'video/mp4';
+      case 'webm':
+        return 'video/webm';
+      case 'ogv':
+      case 'ogg':
+        return 'video/ogg';
+      case 'mov':
+        return 'video/quicktime';
+      case 'mkv':
+        return 'video/x-matroska';
+      case 'avi':
+        return 'video/x-msvideo';
+      case 'ts':
+      case 'm2ts':
+        return 'video/mp2t';
       default:
         return 'application/octet-stream';
     }
+  }
+
+  /// 本地文件流式响应；支持 Range，避免大视频整文件进内存导致 CEF `<video>` 失败
+  Future<Response> _serveLocalFile(Request request, File file) async {
+    final length = await file.length();
+    final mime = _guessMime(file.path);
+    final baseHeaders = <String, String>{
+      'Content-Type': mime,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-store',
+    };
+
+    if (request.method == 'HEAD') {
+      return Response.ok(null, headers: {
+        ...baseHeaders,
+        'Content-Length': '$length',
+      });
+    }
+
+    final rangeHeader = request.headers['range'];
+    if (rangeHeader == null || !rangeHeader.startsWith('bytes=')) {
+      return Response.ok(
+        file.openRead(),
+        headers: {
+          ...baseHeaders,
+          'Content-Length': '$length',
+        },
+      );
+    }
+
+    final spec = rangeHeader.substring(6).trim();
+    // 仅处理单段 bytes=start-end / bytes=start- / bytes=-suffix
+    final parts = spec.split(',');
+    if (parts.length != 1) {
+      return Response(
+        416,
+        headers: {'Content-Range': 'bytes */$length'},
+      );
+    }
+    final unit = parts.first.trim();
+    int start;
+    int end;
+    if (unit.startsWith('-')) {
+      final suffix = int.tryParse(unit.substring(1));
+      if (suffix == null || suffix <= 0) {
+        return Response(
+          416,
+          headers: {'Content-Range': 'bytes */$length'},
+        );
+      }
+      start = length - suffix;
+      if (start < 0) start = 0;
+      end = length - 1;
+    } else {
+      final se = unit.split('-');
+      if (se.isEmpty) {
+        return Response(
+          416,
+          headers: {'Content-Range': 'bytes */$length'},
+        );
+      }
+      start = int.tryParse(se[0]) ?? -1;
+      if (start < 0 || start >= length) {
+        return Response(
+          416,
+          headers: {'Content-Range': 'bytes */$length'},
+        );
+      }
+      if (se.length > 1 && se[1].isNotEmpty) {
+        end = int.tryParse(se[1]) ?? (length - 1);
+      } else {
+        end = length - 1;
+      }
+      if (end >= length) end = length - 1;
+      if (end < start) {
+        return Response(
+          416,
+          headers: {'Content-Range': 'bytes */$length'},
+        );
+      }
+    }
+
+    final contentLength = end - start + 1;
+    return Response(
+      206,
+      body: file.openRead(start, end + 1),
+      headers: {
+        ...baseHeaders,
+        'Content-Length': '$contentLength',
+        'Content-Range': 'bytes $start-$end/$length',
+      },
+    );
   }
 
   Future<Response> _peerFetchResponse(String appRelative) async {
@@ -687,23 +797,22 @@ window.__DATAKEEP_READONLY=true;
         if (full == null) {
           return Response.forbidden('非法路径');
         }
-        if (request.method == 'GET') {
+        if (request.method == 'GET' || request.method == 'HEAD') {
           final asDir = Directory(full);
           if (await asDir.exists()) {
+            if (request.method == 'HEAD') {
+              return Response.ok(null, headers: {
+                'Content-Type': 'application/json; charset=utf-8',
+                'Cache-Control': 'no-store',
+              });
+            }
             return _listDataFiles(dataRoot, full);
           }
           final f = File(full);
           if (!await f.exists()) {
             return Response.notFound('不存在');
           }
-          final bytes = await f.readAsBytes();
-          return Response.ok(
-            bytes,
-            headers: {
-              'Content-Type': 'application/octet-stream',
-              'Cache-Control': 'no-store',
-            },
-          );
+          return _serveLocalFile(request, f);
         }
         if (request.method == 'PUT') {
           if (full == dataRoot || await Directory(full).exists()) {
@@ -737,7 +846,7 @@ window.__DATAKEEP_READONLY=true;
           }
           return Response.notFound('不存在');
         }
-        return Response(405, body: '仅支持 GET/PUT/DELETE');
+        return Response(405, body: '仅支持 GET/HEAD/PUT/DELETE');
       }
       return staticHandler(request);
     };
@@ -1190,6 +1299,48 @@ window.__datakeepExtractCoverFrame=function(rel,sec,index){
     }catch(e){reject(e);}
   });
 };
+window.__datakeepPlayVideo=function(rel,title){
+  return new Promise(function(resolve,reject){
+    if(typeof DataKeepHost!=="function"){
+      reject(new Error("NO_HOST"));
+      return;
+    }
+    try{
+      DataKeepHost({method:"playVideo",rel:rel||"",title:title||""},function(res){
+        try{
+          var j=res;
+          if(typeof res==="string"){
+            try{j=JSON.parse(res);}catch(_){}
+          }
+          if(!j){reject(new Error("empty"));return;}
+          if(j.error){reject(new Error(j.error));return;}
+          resolve(j);
+        }catch(e){reject(e);}
+      });
+    }catch(e){reject(e);}
+  });
+};
+window.__datakeepProbeDuration=function(rel){
+  return new Promise(function(resolve,reject){
+    if(typeof DataKeepHost!=="function"){
+      reject(new Error("NO_HOST"));
+      return;
+    }
+    try{
+      DataKeepHost({method:"probeDuration",rel:rel||""},function(res){
+        try{
+          var j=res;
+          if(typeof res==="string"){
+            try{j=JSON.parse(res);}catch(_){}
+          }
+          if(!j){reject(new Error("empty"));return;}
+          if(j.error){reject(new Error(j.error));return;}
+          resolve(j);
+        }catch(e){reject(e);}
+      });
+    }catch(e){reject(e);}
+  });
+};
 ''';
 
   Future<void> _onDataKeepHostMessage(
@@ -1299,6 +1450,59 @@ window.__datakeepExtractCoverFrame=function(rel,sec,index){
           return;
         }
         reply(frame);
+        return;
+      }
+
+      if (method == 'playVideo') {
+        final rel = raw['rel']?.toString() ?? '';
+        final titleRaw = raw['title']?.toString() ?? '';
+        final cleaned =
+            rel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+        if (cleaned.isEmpty || cleaned.contains('..')) {
+          reply({'error': '非法路径'});
+          return;
+        }
+        final file = File(p.join(_installPath, 'data', cleaned));
+        if (!await file.exists()) {
+          reply({'error': '文件不存在'});
+          return;
+        }
+        final title =
+            titleRaw.trim().isNotEmpty ? titleRaw.trim() : p.basename(cleaned);
+        // 先回 OK，再打开与文件浏览相同的 media_kit 全屏页
+        reply({'ok': true, 'path': file.path});
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => VideoPreviewScreen(
+              title: title,
+              filePath: file.path,
+            ),
+          ),
+        );
+        return;
+      }
+
+      if (method == 'probeDuration') {
+        final rel = raw['rel']?.toString() ?? '';
+        final cleaned =
+            rel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+        if (cleaned.isEmpty || cleaned.contains('..')) {
+          reply({'error': '非法路径'});
+          return;
+        }
+        final file = File(p.join(_installPath, 'data', cleaned));
+        if (!await file.exists()) {
+          reply({'error': '文件不存在'});
+          return;
+        }
+        final sec =
+            await ThumbnailService.instance.probeDurationSeconds(file.path);
+        if (sec == null || !sec.isFinite || sec <= 0) {
+          reply({'error': '无法探测时长'});
+          return;
+        }
+        reply({'ok': true, 'duration': sec});
         return;
       }
 

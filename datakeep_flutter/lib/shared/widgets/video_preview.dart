@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
@@ -19,9 +21,13 @@ class _VideoPreviewState extends State<VideoPreview> {
   late final VideoController _controller;
   String? _error;
   bool _opening = true;
+  double _rate = 1.0;
+  StreamSubscription<double>? _rateSub;
 
-  bool get _isDesktop => !kIsWeb &&
-      (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
+  bool get _isDesktop =>
+      !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
+
+  static const _rates = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
   @override
   void initState() {
@@ -34,6 +40,9 @@ class _VideoPreviewState extends State<VideoPreview> {
         hwdec: Platform.isLinux ? 'no' : 'auto',
       ),
     );
+    _rateSub = _player.stream.rate.listen((r) {
+      if (mounted) setState(() => _rate = r);
+    });
 
     if (!File(widget.filePath).existsSync()) {
       _error = '文件不存在';
@@ -60,11 +69,77 @@ class _VideoPreviewState extends State<VideoPreview> {
     }
   }
 
+  Future<void> _setRate(double rate) async {
+    try {
+      await _player.setRate(rate);
+      if (mounted) setState(() => _rate = rate);
+    } catch (e) {
+      debugPrint('[VideoPreview] setRate 失败: $e');
+    }
+  }
+
+  /// 用根 Navigator 弹出菜单，避免控件栏自动隐藏时 dispose 掉 PopupMenuButton 导致 onSelected 不触发
+  Future<void> _pickRate(BuildContext buttonContext) async {
+    final box = buttonContext.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final origin = box.localToGlobal(Offset.zero);
+    final size = box.size;
+    final selected = await showMenu<double>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        origin.dx,
+        origin.dy - 8,
+        origin.dx + size.width,
+        origin.dy,
+      ),
+      items: [
+        for (final r in _rates)
+          PopupMenuItem<double>(
+            value: r,
+            child: Text(
+              _rateLabel(r),
+              style: TextStyle(
+                fontWeight:
+                    (r - _rate).abs() < 0.001 ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ),
+      ],
+    );
+    if (selected != null) await _setRate(selected);
+  }
+
+  static String _rateLabel(double rate) {
+    if (rate == rate.roundToDouble()) {
+      return '${rate.toStringAsFixed(0)}.0x';
+    }
+    return '${rate}x';
+  }
+
   @override
   void dispose() {
+    _rateSub?.cancel();
     _player.dispose();
     super.dispose();
   }
+
+  List<Widget> get _desktopBottomBar => [
+        const MaterialDesktopSkipPreviousButton(),
+        const MaterialDesktopPlayOrPauseButton(),
+        const MaterialDesktopSkipNextButton(),
+        const MaterialDesktopVolumeButton(),
+        const MaterialDesktopPositionIndicator(),
+        const Spacer(),
+        _RateChip(label: _rateLabel(_rate), onPressed: _pickRate),
+        const MaterialDesktopFullscreenButton(),
+      ];
+
+  List<Widget> get _mobileBottomBar => [
+        const MaterialPositionIndicator(),
+        const Spacer(),
+        _RateChip(label: _rateLabel(_rate), onPressed: _pickRate),
+        const MaterialFullscreenButton(),
+      ];
 
   @override
   Widget build(BuildContext context) {
@@ -75,16 +150,30 @@ class _VideoPreviewState extends State<VideoPreview> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline, size: 48, color: Theme.of(context).colorScheme.error),
+              Icon(Icons.error_outline,
+                  size: 48, color: Theme.of(context).colorScheme.error),
               const SizedBox(height: 12),
               Text('播放失败', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
-              Text(_error!, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ],
           ),
         ),
       );
     }
+
+    final desktopTheme = MaterialDesktopVideoControlsThemeData(
+      bottomButtonBar: _desktopBottomBar,
+    );
+    final mobileTheme = MaterialVideoControlsThemeData(
+      bottomButtonBar: _mobileBottomBar,
+      speedUpOnLongPress: true,
+      speedUpFactor: 2.0,
+    );
 
     return SizedBox.expand(
       child: ColoredBox(
@@ -92,11 +181,21 @@ class _VideoPreviewState extends State<VideoPreview> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Video(
-              controller: _controller,
-              controls: _isDesktop ? MaterialDesktopVideoControls : AdaptiveVideoControls,
-              fill: Colors.black,
-              fit: BoxFit.contain,
+            MaterialDesktopVideoControlsTheme(
+              normal: desktopTheme,
+              fullscreen: desktopTheme,
+              child: MaterialVideoControlsTheme(
+                normal: mobileTheme,
+                fullscreen: mobileTheme,
+                child: Video(
+                  controller: _controller,
+                  controls: _isDesktop
+                      ? MaterialDesktopVideoControls
+                      : AdaptiveVideoControls,
+                  fill: Colors.black,
+                  fit: BoxFit.contain,
+                ),
+              ),
             ),
             if (_opening)
               const ColoredBox(
@@ -104,6 +203,32 @@ class _VideoPreviewState extends State<VideoPreview> {
                 child: Center(child: CircularProgressIndicator()),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RateChip extends StatelessWidget {
+  final String label;
+  final Future<void> Function(BuildContext buttonContext) onPressed;
+
+  const _RateChip({required this.label, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '播放倍速',
+      child: TextButton(
+        onPressed: () => onPressed(context),
+        style: TextButton.styleFrom(
+          foregroundColor: Colors.white,
+          minimumSize: const Size(48, 40),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         ),
       ),
     );

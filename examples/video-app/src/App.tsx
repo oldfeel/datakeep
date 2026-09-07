@@ -37,6 +37,13 @@ import MovieIcon from '@mui/icons-material/Movie';
 import { dataUrl, getDataJson, putDataFile, putDataJson, watchData } from './datakeep';
 import VideoEntryDialog from './VideoEntryDialog';
 import {
+  formatDuration,
+  hasPlayVideoHost,
+  hasProbeDurationHost,
+  playVideoFromRel,
+  probeDurationFromRel,
+} from './host';
+import {
   KEEP_NAME,
   META_NAME,
   RESERVED_NAMES,
@@ -154,9 +161,7 @@ export default function App() {
     setPlayError('');
   };
 
-  const openEntry = async (e: VideoEntry) => {
-    setPlayError('');
-    setPlaying(e);
+  const bumpPlayCount = async (e: VideoEntry) => {
     if (e.legacy || !e.dir) return;
     try {
       const metaPath = `${e.dir}/${META_NAME}`;
@@ -169,19 +174,69 @@ export default function App() {
         updatedAt: meta.updatedAt || meta.createdAt || new Date().toISOString(),
       };
       await putDataJson(metaPath, next);
+      setLibrary((lib) => ({
+        ...lib,
+        entries: lib.entries.map((x) =>
+          x.dir === e.dir ? { ...x, playCount: next.playCount ?? 0 } : x,
+        ),
+      }));
       setPlaying((cur) =>
         cur && cur.dir === e.dir ? { ...cur, playCount: next.playCount ?? 0 } : cur,
       );
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const openWithHostPlayer = async (e: VideoEntry) => {
+    try {
+      await playVideoFromRel(e.videoRel, e.title);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setPlaying(e);
+      setPlayError(
+        msg === 'NO_HOST'
+          ? '无法调用 DataKeep 播放器，改用网页播放（部分格式可能不支持）。'
+          : `播放失败：${msg}`,
+      );
+    }
+  };
+
+  const openEntry = async (e: VideoEntry) => {
+    setPlayError('');
+    void bumpPlayCount(e);
+
+    // 有宿主时走与文件浏览相同的 media_kit（可播 mkv 等）
+    if (hasPlayVideoHost()) {
+      await openWithHostPlayer(e);
+      return;
+    }
+
+    setPlaying(e);
+  };
+
+  /** 缺时长时探测并写回 meta（静默） */
+  const ensureEntryDuration = useCallback(async (e: VideoEntry) => {
+    if (e.durationSec != null && e.durationSec > 0) return;
+    if (e.legacy || !e.dir || !hasProbeDurationHost()) return;
+    try {
+      const sec = await probeDurationFromRel(e.videoRel);
+      if (sec == null || !(sec > 0)) return;
+      const durationSec = Math.round(sec * 10) / 10;
+      const metaPath = `${e.dir}/${META_NAME}`;
+      const meta = await getDataJson<EntryMeta>(metaPath);
+      if (!meta) return;
+      await putDataJson(metaPath, { ...meta, durationSec });
       setLibrary((lib) => ({
         ...lib,
-        entries: lib.entries.map((row) =>
-          row.dir === e.dir ? { ...row, playCount: next.playCount ?? 0 } : row,
+        entries: lib.entries.map((x) =>
+          x.dir === e.dir ? { ...x, durationSec } : x,
         ),
       }));
     } catch (err) {
-      console.error('更新播放次数失败', err);
+      console.error('探测时长失败', err);
     }
-  };
+  }, []);
 
   const submitAddL1 = async () => {
     const name = normalizeCatName(l1Input);
@@ -419,6 +474,7 @@ export default function App() {
                       key={e.dir || e.videoRel}
                       entry={e}
                       onOpen={() => void openEntry(e)}
+                      onEnsureDuration={() => void ensureEntryDuration(e)}
                       onEdit={
                         e.legacy
                           ? undefined
@@ -524,11 +580,12 @@ export default function App() {
             playsInline
             autoPlay
             src={dataUrl(playing.videoRel)}
-            onError={() =>
-              setPlayError(
-                '无法在应用内播放此格式。可尝试 mp4/webm，或到 DataKeep 文件浏览中用系统播放器打开。',
-              )
-            }
+            onError={() => {
+              setPlayError('网页播放器无法解码此格式。');
+              if (hasPlayVideoHost()) {
+                void openWithHostPlayer(playing);
+              }
+            }}
             sx={{
               flex: 1,
               width: '100%',
@@ -538,7 +595,7 @@ export default function App() {
             }}
           />
           {playError && (
-            <Alert severity="error" sx={{ borderRadius: 0 }}>
+            <Alert severity="warning" sx={{ borderRadius: 0 }}>
               {playError}
             </Alert>
           )}
@@ -548,16 +605,48 @@ export default function App() {
   );
 }
 
+function CoverDurationBadge({ sec }: { sec: number | null | undefined }) {
+  const text = formatDuration(sec);
+  if (!text) return null;
+  return (
+    <Box
+      sx={{
+        position: 'absolute',
+        right: 6,
+        bottom: 6,
+        px: 0.75,
+        py: 0.15,
+        borderRadius: 0.75,
+        bgcolor: 'rgba(0,0,0,0.72)',
+        color: 'common.white',
+        typography: 'caption',
+        fontWeight: 600,
+        lineHeight: 1.4,
+        letterSpacing: 0.2,
+      }}
+    >
+      {text}
+    </Box>
+  );
+}
+
 function EntryCard({
   entry,
   onOpen,
   onEdit,
+  onEnsureDuration,
 }: {
   entry: VideoEntry;
   onOpen: () => void;
   onEdit?: () => void;
+  onEnsureDuration?: () => void;
 }) {
   const cover = entry.coverRel ? dataUrl(entry.coverRel) : null;
+
+  useEffect(() => {
+    onEnsureDuration?.();
+  }, [entry.dir, entry.videoRel, entry.durationSec, onEnsureDuration]);
+
   return (
     <Card variant="outlined" sx={{ position: 'relative' }}>
       {onEdit && (
@@ -582,38 +671,47 @@ function EntryCard({
         </IconButton>
       )}
       <CardActionArea onClick={onOpen}>
-        {cover ? (
-          <CardMedia
-            component="img"
-            image={cover}
-            alt={entry.title}
-            sx={{ aspectRatio: '16 / 10', objectFit: 'cover' }}
-          />
-        ) : (
-          <Box
-            sx={{
-              aspectRatio: '16 / 10',
-              bgcolor: 'action.hover',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'text.secondary',
-              overflow: 'hidden',
-            }}
-          >
-            {entry.legacy ? (
-              <Box
-                component="video"
-                muted
-                preload="metadata"
-                src={`${dataUrl(entry.videoRel)}#t=0.5`}
-                sx={{ width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }}
-              />
-            ) : (
-              <MovieIcon fontSize="large" />
-            )}
-          </Box>
-        )}
+        <Box sx={{ position: 'relative', aspectRatio: '16 / 10' }}>
+          {cover ? (
+            <CardMedia
+              component="img"
+              image={cover}
+              alt={entry.title}
+              sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          ) : (
+            <Box
+              sx={{
+                width: '100%',
+                height: '100%',
+                bgcolor: 'action.hover',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'text.secondary',
+                overflow: 'hidden',
+              }}
+            >
+              {entry.legacy ? (
+                <Box
+                  component="video"
+                  muted
+                  preload="metadata"
+                  src={`${dataUrl(entry.videoRel)}#t=0.5`}
+                  sx={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    pointerEvents: 'none',
+                  }}
+                />
+              ) : (
+                <MovieIcon fontSize="large" />
+              )}
+            </Box>
+          )}
+          <CoverDurationBadge sec={entry.durationSec} />
+        </Box>
         <CardContent sx={{ py: 1.25, '&:last-child': { pb: 1.25 } }}>
           <Typography
             variant="subtitle2"
@@ -645,27 +743,31 @@ function SeriesCard({ group, onOpen }: { group: SeriesGroup; onOpen: () => void 
   return (
     <Card variant="outlined">
       <CardActionArea onClick={onOpen}>
-        {cover ? (
-          <CardMedia
-            component="img"
-            image={cover}
-            alt={group.name}
-            sx={{ aspectRatio: '16 / 10', objectFit: 'cover' }}
-          />
-        ) : (
-          <Box
-            sx={{
-              aspectRatio: '16 / 10',
-              bgcolor: 'action.hover',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'text.secondary',
-            }}
-          >
-            <FolderIcon fontSize="large" />
-          </Box>
-        )}
+        <Box sx={{ position: 'relative', aspectRatio: '16 / 10' }}>
+          {cover ? (
+            <CardMedia
+              component="img"
+              image={cover}
+              alt={group.name}
+              sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          ) : (
+            <Box
+              sx={{
+                width: '100%',
+                height: '100%',
+                bgcolor: 'action.hover',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'text.secondary',
+              }}
+            >
+              <FolderIcon fontSize="large" />
+            </Box>
+          )}
+          <CoverDurationBadge sec={group.durationSec} />
+        </Box>
         <CardContent sx={{ py: 1.25, '&:last-child': { pb: 1.25 } }}>
           <Typography
             variant="subtitle2"

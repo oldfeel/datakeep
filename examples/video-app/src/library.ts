@@ -30,6 +30,8 @@ export type EntryMeta = {
   video: string;
   /** 播放次数 */
   playCount?: number;
+  /** 视频时长（秒） */
+  durationSec?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -49,6 +51,8 @@ export type VideoEntry = {
   videoRel: string;
   legacy: boolean;
   playCount: number;
+  /** 时长秒；未知为 null */
+  durationSec: number | null;
   /** ISO8601，上传/创建时间；legacy 为空串 */
   createdAt: string;
 };
@@ -213,6 +217,12 @@ export async function scanLibrary(): Promise<Library> {
         videoRel,
         legacy: false,
         playCount: typeof meta.playCount === 'number' ? meta.playCount : 0,
+        durationSec:
+          typeof meta.durationSec === 'number' &&
+          Number.isFinite(meta.durationSec) &&
+          meta.durationSec > 0
+            ? meta.durationSec
+            : null,
         createdAt: meta.createdAt || '',
       });
     } catch (e) {
@@ -265,6 +275,7 @@ export async function scanLibrary(): Promise<Library> {
         videoRel: rel,
         legacy: true,
         playCount: 0,
+        durationSec: null,
         createdAt: '',
       });
       continue;
@@ -285,6 +296,7 @@ export async function scanLibrary(): Promise<Library> {
         videoRel: rel,
         legacy: true,
         playCount: 0,
+        durationSec: null,
         createdAt: '',
       });
     }
@@ -336,6 +348,8 @@ export type SeriesGroup = {
   episodes: VideoEntry[];
   coverRel: string | null;
   playCount: number;
+  /** 代表时长（取分集中有值的最大值） */
+  durationSec: number | null;
   createdAt: string;
 };
 
@@ -383,6 +397,11 @@ export function collapseToLibraryItems(
       episodes: sorted,
       coverRel,
       playCount: sorted.reduce((s, x) => s + x.playCount, 0),
+      durationSec: sorted.reduce<number | null>((max, x) => {
+        if (x.durationSec == null) return max;
+        if (max == null) return x.durationSec;
+        return Math.max(max, x.durationSec);
+      }, null),
       createdAt,
     });
   }
