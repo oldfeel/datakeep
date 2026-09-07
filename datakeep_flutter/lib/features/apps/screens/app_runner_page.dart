@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,8 +20,10 @@ import '../../../core/services/api_service.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../delete_app.dart';
 import '../app_about.dart';
+import '../../../core/services/thumbnail_service.dart';
 import '../../../shared/utils/app_dir.dart';
 import '../../../shared/utils/app_manifest.dart';
+import '../../../shared/utils/dev_app_source.dart';
 import '../../../shared/utils/open_url_external.dart';
 
 /// 在本地 HTTP 服务上打开应用目录（入口默认 index.html）
@@ -27,6 +31,9 @@ import '../../../shared/utils/open_url_external.dart';
 /// `/__datakeep/data/<rel>`：GET/PUT/DELETE；目录 GET 返回文件列表。
 /// `/__datakeep/revision`：`{dataRev,appRev}`（目录内文件最大 mtime，毫秒），供自动刷新。
 /// 启动时按 app.json 的 `syncIgnore` 合并写入 `.stignore`。
+///
+/// Debug（[kDebugMode]）下若仓库 `examples/*/app.json` 存在同 id，静态代码从该源码目录
+/// 提供，`data/` 仍用安装目录（见 [resolveDevAppSource]）。
 ///
 /// 对端模式：传入 [peerDeviceId] + [peerFolderId]，经局域网 peer API 拉/写文件。
 /// [peerWritable]=true（ACL 同步）时可写 data/；只读则注入拦截并禁止 PUT。
@@ -92,6 +99,12 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
   DateTime? _localDataWriteAt;
   bool _reloadingApp = false;
   AppManifest? _manifest;
+
+  /// 安装目录（data/、syncIgnore、删除）
+  String _installPath = '';
+
+  /// 静态代码根（Debug 直连 examples 时与安装目录不同）
+  String _codeRoot = '';
 
   static bool _cefManagerReady = false;
 
@@ -462,8 +475,14 @@ window.__DATAKEEP_READONLY=true;
     if (_preferCef) {
       final ok = await _startCefWebView(url);
       if (!ok) {
-        setState(() => _url = url);
-        await _openBrowser(url);
+        // 不自动打开系统浏览器：Clash 等代理常把 127.0.0.1 代理掉导致空白页；
+        // CEF 多实例冲突时也会失败。留在应用内展示地址，由用户点「浏览器打开」。
+        setState(() {
+          _url = url;
+          _openHint =
+              '内嵌页面启动失败（常见原因：同时开了多个 DataKeep，或本机代理干扰 localhost）。'
+              '可点右上角「浏览器打开」；若仍空白，请关掉多余进程，或给浏览器设置 bypass 127.0.0.1。';
+        });
       }
     } else if (_preferPlatformWebView) {
       await _startPlatformWebView(url);
@@ -512,6 +531,8 @@ window.__DATAKEEP_READONLY=true;
       if (entity is! File) continue;
       final rel = p.relative(entity.path, from: dataRoot).replaceAll('\\', '/');
       if (rel.contains('..')) continue;
+      // 不把宿主暂存目录暴露给应用扫描（直接按路径 GET 仍可用）
+      if (rel == '.staging' || rel.startsWith('.staging/')) continue;
       files.add(rel);
     }
     files.sort();
@@ -524,29 +545,55 @@ window.__DATAKEEP_READONLY=true;
     );
   }
 
-  /// dataRev = data/ 下文件最大 mtime；appRev = 其余应用文件最大 mtime。
-  Future<Map<String, int>> _computeRevision(String appPath) async {
-    final dataRoot = p.normalize(p.join(appPath, 'data'));
+  /// dataRev = 安装目录 data/ 最大 mtime；appRev = 代码根非 data/ 最大 mtime。
+  Future<Map<String, int>> _computeRevision({
+    required String codeRoot,
+    required String installPath,
+  }) async {
     var dataRev = 0;
     var appRev = 0;
-    final root = Directory(appPath);
-    if (!await root.exists()) {
-      return {'dataRev': 0, 'appRev': 0};
+
+    final codeDataRoot = p.normalize(p.join(codeRoot, 'data'));
+    final codeDir = Directory(codeRoot);
+    if (await codeDir.exists()) {
+      await for (final entity
+          in codeDir.list(recursive: true, followLinks: false)) {
+        if (entity is! File) continue;
+        try {
+          final m = (await entity.stat()).modified.millisecondsSinceEpoch;
+          final inData = p.isWithin(codeDataRoot, entity.path) ||
+              p.equals(codeDataRoot, entity.path);
+          if (!inData && m > appRev) appRev = m;
+        } catch (_) {}
+      }
     }
-    await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is! File) continue;
-      try {
-        final m = (await entity.stat()).modified.millisecondsSinceEpoch;
-        final inData = p.isWithin(dataRoot, entity.path) ||
-            p.equals(dataRoot, entity.path);
-        if (inData) {
+
+    final dataRoot = p.normalize(p.join(installPath, 'data'));
+    final dataDir = Directory(dataRoot);
+    if (await dataDir.exists()) {
+      await for (final entity
+          in dataDir.list(recursive: true, followLinks: false)) {
+        if (entity is! File) continue;
+        try {
+          // 暂存与封面画廊临时帧不计入 dataRev，避免选封面时整页刷新
+          if (_ignorePathForDataRev(dataRoot, entity.path)) continue;
+          final m = (await entity.stat()).modified.millisecondsSinceEpoch;
           if (m > dataRev) dataRev = m;
-        } else {
-          if (m > appRev) appRev = m;
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
     }
     return {'dataRev': dataRev, 'appRev': appRev};
+  }
+
+  /// `.staging/`、任意 `covers/` 下的临时截帧不参与同步刷新判定
+  bool _ignorePathForDataRev(String dataRoot, String filePath) {
+    final rel = p
+        .normalize(p.relative(filePath, from: dataRoot))
+        .replaceAll('\\', '/');
+    if (rel == '.staging' || rel.startsWith('.staging/')) return true;
+    if (rel == 'covers' || rel.startsWith('covers/')) return true;
+    if (rel.contains('/covers/')) return true;
+    return false;
   }
 
   Response _revisionResponse(Map<String, int> rev) {
@@ -607,15 +654,19 @@ window.__DATAKEEP_READONLY=true;
     };
   }
 
-  Handler _buildHandler(String appPath, String entryRel) {
+  Handler _buildHandler(
+    String codeRoot,
+    String installPath,
+    String entryRel,
+  ) {
     final staticHandler = _withNoStore(
       createStaticHandler(
-        appPath,
+        codeRoot,
         defaultDocument: entryRel,
         listDirectories: false,
       ),
     );
-    final dataRoot = p.normalize(p.join(appPath, 'data'));
+    final dataRoot = p.normalize(p.join(installPath, 'data'));
 
     return (Request request) async {
       final path = request.requestedUri.path;
@@ -623,13 +674,16 @@ window.__DATAKEEP_READONLY=true;
         if (request.method != 'GET') {
           return Response(405, body: '仅支持 GET');
         }
-        final rev = await _computeRevision(appPath);
+        final rev = await _computeRevision(
+          codeRoot: codeRoot,
+          installPath: installPath,
+        );
         return _revisionResponse(rev);
       }
       if (path.startsWith('/__datakeep/data/') || path == '/__datakeep/data') {
         final normalized =
             path == '/__datakeep/data' ? '/__datakeep/data/' : path;
-        final full = _resolveDataPath(appPath, normalized, allowRoot: true);
+        final full = _resolveDataPath(installPath, normalized, allowRoot: true);
         if (full == null) {
           return Response.forbidden('非法路径');
         }
@@ -696,6 +750,7 @@ window.__DATAKEEP_READONLY=true;
       _cefManagerReady = true;
       return true;
     } catch (e) {
+      _cefManagerReady = false;
       debugPrint('[AppRunner] CEF 初始化失败: $e');
       return false;
     }
@@ -745,8 +800,10 @@ window.__DATAKEEP_READONLY=true;
   }
 
   Future<void> _showAbout() async {
-    final manifest =
-        _manifest ?? AppManifest.tryReadFromDirectory(widget.appPath);
+    final manifest = _manifest ??
+        AppManifest.tryReadFromDirectory(
+          _codeRoot.isNotEmpty ? _codeRoot : widget.appPath,
+        );
     if (manifest == null) {
       _snack('无法读取应用信息（app.json）');
       return;
@@ -768,7 +825,10 @@ window.__DATAKEEP_READONLY=true;
     if (_pulling) return;
     setState(() => _pulling = true);
     try {
-      final before = await _computeRevision(widget.appPath);
+      final before = await _computeRevision(
+        codeRoot: _codeRoot,
+        installPath: _installPath,
+      );
       final folders = await ApiService.getFolders();
       final folder = findEnclosingSyncFolder(folders, widget.appPath);
       if (folder == null) {
@@ -804,7 +864,10 @@ window.__DATAKEEP_READONLY=true;
       }
 
       await Future<void>.delayed(const Duration(milliseconds: 400));
-      final after = await _computeRevision(widget.appPath);
+      final after = await _computeRevision(
+        codeRoot: _codeRoot,
+        installPath: _installPath,
+      );
       final dataRev = after['dataRev'] ?? 0;
       final appRev = after['appRev'] ?? 0;
       final dataChanged = dataRev != (before['dataRev'] ?? 0);
@@ -833,8 +896,12 @@ window.__DATAKEEP_READONLY=true;
   Future<void> _checkRevision() async {
     if (_isPeer) return;
     if (!mounted || _reloadingApp) return;
+    if (_codeRoot.isEmpty || _installPath.isEmpty) return;
     try {
-      final rev = await _computeRevision(widget.appPath);
+      final rev = await _computeRevision(
+        codeRoot: _codeRoot,
+        installPath: _installPath,
+      );
       final appRev = rev['appRev'] ?? 0;
       final dataRev = rev['dataRev'] ?? 0;
       if (_lastAppRev == null) {
@@ -885,16 +952,27 @@ window.__DATAKEEP_READONLY=true;
         return;
       }
 
-      final root = Directory(widget.appPath);
+      final installPath = widget.appPath;
+      final root = Directory(installPath);
       if (!root.existsSync()) {
-        setState(() => _error = '应用目录不存在: ${widget.appPath}');
+        setState(() => _error = '应用目录不存在: $installPath');
         return;
       }
 
-      _manifest = AppManifest.tryReadFromDirectory(widget.appPath);
+      _installPath = installPath;
+      _manifest = AppManifest.tryReadFromDirectory(installPath);
+      final appId = _manifest?.id ?? '';
+      final codeRoot = resolveDevAppSource(appId) ?? installPath;
+      _codeRoot = codeRoot;
+
+      if (codeRoot != installPath) {
+        debugPrint('[AppRunner] 开发源码直连: $codeRoot');
+        // 优先用源码目录的清单（版本/入口）
+        _manifest = AppManifest.tryReadFromDirectory(codeRoot) ?? _manifest;
+      }
 
       var entryRel = widget.entry;
-      final meta = File(p.join(widget.appPath, 'app.json'));
+      final meta = File(p.join(codeRoot, 'app.json'));
       if (meta.existsSync()) {
         try {
           final m = json.decode(await meta.readAsString());
@@ -904,18 +982,20 @@ window.__DATAKEEP_READONLY=true;
         } catch (_) {}
       }
 
-      final entryFile = File(p.join(widget.appPath, entryRel));
+      final entryFile = File(p.join(codeRoot, entryRel));
       if (!entryFile.existsSync()) {
         setState(() => _error = '缺少入口文件: $entryRel');
         return;
       }
 
-      await _ensureSyncIgnore(widget.appPath);
+      await _ensureSyncIgnore(installPath);
+      // data/ 可能尚未创建（新装或未放媒体）；列目录 API 需要目录存在
+      await Directory(p.join(installPath, 'data')).create(recursive: true);
 
       await _serveAndOpen(
-        _buildHandler(widget.appPath, entryRel),
+        _buildHandler(codeRoot, installPath, entryRel),
         entryRel,
-        widget.appPath,
+        installPath,
       );
       _startRevisionWatch();
     } catch (e) {
@@ -951,7 +1031,7 @@ window.__DATAKEEP_READONLY=true;
     });
   }
 
-  /// 内嵌 CEF（Chromium Texture）。失败返回 false，由调用方回退系统浏览器。
+  /// 内嵌 CEF（Chromium Texture）。失败返回 false，由调用方展示地址（不自动外开浏览器）。
   Future<bool> _startCefWebView(String url) async {
     if (!await _ensureCefManager()) return false;
     try {
@@ -962,6 +1042,7 @@ window.__DATAKEEP_READONLY=true;
         onLoadEnd: (_, __) {
           if (!mounted) return;
           if (_webError != null) setState(() => _webError = null);
+          unawaited(_ensureCefHostBridge(c));
         },
       ));
       await c.initialize(url);
@@ -969,18 +1050,459 @@ window.__DATAKEEP_READONLY=true;
         await c.dispose();
         return false;
       }
+      await _ensureCefHostBridge(c);
       setState(() {
         _url = url;
         _cefController = c;
         _useWebView = true;
         _useCef = true;
         _webError = null;
+        _openHint = null;
       });
       return true;
     } catch (e) {
       debugPrint('[AppRunner] CEF WebView 启动失败: $e');
       return false;
     }
+  }
+
+  /// CEF 无系统文件对话框：通过 JS 通道 + Flutter FilePicker 选文件并暂存到 data/.staging
+  Future<void> _ensureCefHostBridge(cef.WebViewController c) async {
+    try {
+      await c.setJavaScriptChannels({
+        cef.JavascriptChannel(
+          name: 'DataKeepHost',
+          onMessageReceived: (msg) {
+            unawaited(_onDataKeepHostMessage(c, msg));
+          },
+        ),
+      });
+      await c.executeJavaScript(_datakeepPickFileHelperJs);
+    } catch (e) {
+      debugPrint('[AppRunner] 注册 DataKeepHost 失败: $e');
+    }
+  }
+
+  static const _datakeepPickFileHelperJs = r'''
+window.__datakeepPickFile=function(accept){
+  return new Promise(function(resolve,reject){
+    if(typeof DataKeepHost!=="function"){
+      reject(new Error("NO_HOST"));
+      return;
+    }
+    try{
+      DataKeepHost({method:"pickFile",accept:accept||""},function(res){
+        try{
+          var j=res;
+          if(typeof res==="string"){
+            try{j=JSON.parse(res);}catch(_){}
+          }
+          if(!j){reject(new Error("empty"));return;}
+          if(j.cancelled){reject(new Error("cancelled"));return;}
+          if(j.error){reject(new Error(j.error));return;}
+          resolve(j);
+        }catch(e){reject(e);}
+      });
+    }catch(e){reject(e);}
+  });
+};
+window.__datakeepGenerateCover=function(rel){
+  return new Promise(function(resolve,reject){
+    if(typeof DataKeepHost!=="function"){
+      reject(new Error("NO_HOST"));
+      return;
+    }
+    try{
+      DataKeepHost({method:"generateCover",rel:rel||""},function(res){
+        try{
+          var j=res;
+          if(typeof res==="string"){
+            try{j=JSON.parse(res);}catch(_){}
+          }
+          if(!j){reject(new Error("empty"));return;}
+          if(j.error){reject(new Error(j.error));return;}
+          resolve(j);
+        }catch(e){reject(e);}
+      });
+    }catch(e){reject(e);}
+  });
+};
+window.__datakeepListCoverFrames=function(rel){
+  return new Promise(function(resolve,reject){
+    if(typeof DataKeepHost!=="function"){
+      reject(new Error("NO_HOST"));
+      return;
+    }
+    try{
+      DataKeepHost({method:"listCoverFrames",rel:rel||""},function(res){
+        try{
+          var j=res;
+          if(typeof res==="string"){
+            try{j=JSON.parse(res);}catch(_){}
+          }
+          if(!j){reject(new Error("empty"));return;}
+          if(j.error){reject(new Error(j.error));return;}
+          resolve(j);
+        }catch(e){reject(e);}
+      });
+    }catch(e){reject(e);}
+  });
+};
+window.__datakeepPrepareCoverFrames=function(rel){
+  return new Promise(function(resolve,reject){
+    if(typeof DataKeepHost!=="function"){
+      reject(new Error("NO_HOST"));
+      return;
+    }
+    try{
+      DataKeepHost({method:"prepareCoverFrames",rel:rel||""},function(res){
+        try{
+          var j=res;
+          if(typeof res==="string"){
+            try{j=JSON.parse(res);}catch(_){}
+          }
+          if(!j){reject(new Error("empty"));return;}
+          if(j.error){reject(new Error(j.error));return;}
+          resolve(j);
+        }catch(e){reject(e);}
+      });
+    }catch(e){reject(e);}
+  });
+};
+window.__datakeepExtractCoverFrame=function(rel,sec,index){
+  return new Promise(function(resolve,reject){
+    if(typeof DataKeepHost!=="function"){
+      reject(new Error("NO_HOST"));
+      return;
+    }
+    try{
+      DataKeepHost({method:"extractCoverFrame",rel:rel||"",sec:sec||0,index:index||0},function(res){
+        try{
+          var j=res;
+          if(typeof res==="string"){
+            try{j=JSON.parse(res);}catch(_){}
+          }
+          if(!j){reject(new Error("empty"));return;}
+          if(j.error){reject(new Error(j.error));return;}
+          resolve(j);
+        }catch(e){reject(e);}
+      });
+    }catch(e){reject(e);}
+  });
+};
+''';
+
+  Future<void> _onDataKeepHostMessage(
+    cef.WebViewController c,
+    cef.JavascriptMessage msg,
+  ) async {
+    void reply(Map<String, dynamic> payload) {
+      unawaited(
+        c.sendJavaScriptChannelCallBack(
+          false,
+          jsonEncode(payload),
+          msg.callbackId,
+          msg.frameId,
+        ),
+      );
+    }
+
+    try {
+      // CEF 通道会对参数再 JSON.stringify：若 JS 已传字符串会双重编码
+      dynamic raw = msg.message;
+      if (raw is String) {
+        raw = json.decode(raw);
+        if (raw is String) {
+          raw = json.decode(raw);
+        }
+      }
+      if (raw is! Map) {
+        debugPrint('[AppRunner] DataKeepHost 无效消息: ${msg.message}');
+        reply({'error': 'invalid message'});
+        return;
+      }
+      final method = raw['method']?.toString() ?? '';
+      if (_isPeer || _installPath.isEmpty) {
+        reply({'error': '当前模式不支持选文件'});
+        return;
+      }
+
+      if (method == 'pickFile') {
+        final accept = raw['accept']?.toString() ?? '';
+        final picked = await _pickFileForAccept(accept);
+        if (picked == null) {
+          reply({'cancelled': true});
+          return;
+        }
+        final staged = await _stagePickedFile(picked);
+        if (staged == null) {
+          reply({'error': '暂存失败'});
+          return;
+        }
+        reply(staged);
+        return;
+      }
+
+      if (method == 'generateCover') {
+        final rel = raw['rel']?.toString() ?? '';
+        final cover = await _generateCoverFromDataRel(rel);
+        if (cover == null) {
+          reply({
+            'error':
+                '无法从该视频截取封面（桌面需 ffmpeg）。请改用「选择封面图」。',
+          });
+          return;
+        }
+        reply(cover);
+        return;
+      }
+
+      if (method == 'listCoverFrames') {
+        final rel = raw['rel']?.toString() ?? '';
+        final gallery = await _listCoverFramesFromDataRel(rel);
+        if (gallery == null) {
+          reply({
+            'error':
+                '无法从该视频提取封面候选（桌面需 ffmpeg）。请改用「选择封面图」。',
+          });
+          return;
+        }
+        reply(gallery);
+        return;
+      }
+
+      if (method == 'prepareCoverFrames') {
+        final rel = raw['rel']?.toString() ?? '';
+        final plan = await _prepareCoverFramesFromDataRel(rel);
+        if (plan == null) {
+          reply({
+            'error':
+                '无法准备封面画廊（桌面需 ffmpeg）。请改用「上传封面」。',
+          });
+          return;
+        }
+        reply(plan);
+        return;
+      }
+
+      if (method == 'extractCoverFrame') {
+        final rel = raw['rel']?.toString() ?? '';
+        final sec = (raw['sec'] is num)
+            ? (raw['sec'] as num).toDouble()
+            : double.tryParse('${raw['sec']}') ?? 0;
+        final index = (raw['index'] is num)
+            ? (raw['index'] as num).toInt()
+            : int.tryParse('${raw['index']}') ?? 0;
+        final frame = await _extractCoverFrameFromDataRel(rel, sec, index);
+        if (frame == null) {
+          reply({'error': '截取该帧失败'});
+          return;
+        }
+        reply(frame);
+        return;
+      }
+
+      reply({'error': 'unknown method'});
+    } catch (e) {
+      debugPrint('[AppRunner] DataKeepHost: $e');
+      reply({'error': '$e'});
+    }
+  }
+
+  /// 从 data/ 下已暂存视频截帧，写出同目录 cover_gen.jpg（CEF 无法播 mkv 等格式）
+  Future<Map<String, dynamic>?> _generateCoverFromDataRel(String rel) async {
+    final cleaned = rel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+    if (cleaned.isEmpty || cleaned.contains('..')) return null;
+    final video = File(p.join(_installPath, 'data', cleaned));
+    if (!await video.exists()) return null;
+
+    final parentRel = p.posix.dirname(cleaned);
+    final outRel =
+        parentRel == '.' ? 'cover_gen.jpg' : '$parentRel/cover_gen.jpg';
+    final out = File(p.join(_installPath, 'data', outRel));
+
+    // 多点取样跳过片头黑场（桌面 ffmpeg；失败再 video_thumbnail）
+    try {
+      final path = await ThumbnailService.instance.extractVideoCover(
+        videoPath: video.path,
+        outputPath: out.path,
+        maxWidth: 640,
+      );
+      if (path != null && await out.exists() && await out.length() > 0) {
+        return {
+          'rel': outRel,
+          'name': 'cover_gen.jpg',
+          'mime': 'image/jpeg',
+          'size': await out.length(),
+        };
+      }
+    } catch (e) {
+      debugPrint('[AppRunner] 封面截帧失败: $e');
+    }
+    return null;
+  }
+
+  /// 封面画廊：均匀抽帧到同目录 covers/，返回相对 data 的路径列表
+  Future<Map<String, dynamic>?> _listCoverFramesFromDataRel(String rel) async {
+    final cleaned = rel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+    if (cleaned.isEmpty || cleaned.contains('..')) return null;
+    final video = File(p.join(_installPath, 'data', cleaned));
+    if (!await video.exists()) return null;
+
+    final parentRel = p.posix.dirname(cleaned);
+    final coversRel =
+        parentRel == '.' ? 'covers' : '$parentRel/covers';
+    final coversDir = p.join(_installPath, 'data', coversRel);
+
+    try {
+      final frames = await ThumbnailService.instance.extractVideoCoverCandidates(
+        videoPath: video.path,
+        outputDir: coversDir,
+        maxWidth: 480,
+        maxFrames: 20,
+      );
+      if (frames.isEmpty) return null;
+      return {
+        'frames': [
+          for (final f in frames)
+            {
+              'rel': '$coversRel/${p.basename(f.path)}',
+              'sec': f.sec,
+              'luma': f.luma,
+              'recommended': f.recommended,
+            },
+        ],
+      };
+    } catch (e) {
+      debugPrint('[AppRunner] 封面画廊失败: $e');
+      return null;
+    }
+  }
+
+  /// 准备画廊目录 + 取样时间点（不截帧，供前端逐帧拉取）
+  Future<Map<String, dynamic>?> _prepareCoverFramesFromDataRel(String rel) async {
+    final cleaned = rel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+    if (cleaned.isEmpty || cleaned.contains('..')) return null;
+    final video = File(p.join(_installPath, 'data', cleaned));
+    if (!await video.exists()) return null;
+
+    final parentRel = p.posix.dirname(cleaned);
+    final coversRel = parentRel == '.' ? 'covers' : '$parentRel/covers';
+    final coversDir = p.join(_installPath, 'data', coversRel);
+
+    try {
+      final prepared = await ThumbnailService.instance.prepareCoverGallery(
+        videoPath: video.path,
+        outputDir: coversDir,
+        maxFrames: 20,
+      );
+      return {
+        'coversRel': coversRel,
+        'duration': prepared.duration,
+        'seeks': prepared.seeks,
+      };
+    } catch (e) {
+      debugPrint('[AppRunner] 准备封面画廊失败: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _extractCoverFrameFromDataRel(
+    String rel,
+    double sec,
+    int index,
+  ) async {
+    final cleaned = rel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+    if (cleaned.isEmpty || cleaned.contains('..')) return null;
+    final video = File(p.join(_installPath, 'data', cleaned));
+    if (!await video.exists()) return null;
+
+    final parentRel = p.posix.dirname(cleaned);
+    final coversRel = parentRel == '.' ? 'covers' : '$parentRel/covers';
+    final name = 'f_${index.toString().padLeft(3, '0')}.jpg';
+    final outRel = '$coversRel/$name';
+    final outPath = p.join(_installPath, 'data', outRel);
+
+    try {
+      final frame = await ThumbnailService.instance.extractSingleCoverFrame(
+        videoPath: video.path,
+        outputPath: outPath,
+        sec: sec,
+        maxWidth: 480,
+      );
+      if (frame == null) return null;
+      return {
+        'rel': outRel,
+        'sec': frame.sec,
+        'luma': frame.luma,
+        'index': index,
+      };
+    } catch (e) {
+      debugPrint('[AppRunner] 单帧封面失败: $e');
+      return null;
+    }
+  }
+
+  Future<PlatformFile?> _pickFileForAccept(String accept) async {
+    final a = accept.toLowerCase();
+    FileType type = FileType.any;
+    List<String>? exts;
+    if (a.contains('video')) {
+      type = FileType.custom;
+      exts = const ['mp4', 'webm', 'mkv', 'mov', 'm4v', 'avi', 'ogv', 'mpeg', 'mpg'];
+    } else if (a.contains('image')) {
+      type = FileType.custom;
+      exts = const ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
+    }
+    final result = await FilePicker.platform.pickFiles(
+      type: type,
+      allowedExtensions: exts,
+      withData: false,
+    );
+    if (result == null || result.files.isEmpty) return null;
+    return result.files.first;
+  }
+
+  /// 复制到 installPath/data/.staging/<id>/<name>，返回相对 data 的路径信息
+  Future<Map<String, dynamic>?> _stagePickedFile(PlatformFile picked) async {
+    final srcPath = picked.path;
+    if (srcPath == null || srcPath.isEmpty) return null;
+    final src = File(srcPath);
+    if (!await src.exists()) return null;
+
+    var name = picked.name.trim();
+    if (name.isEmpty) name = p.basename(srcPath);
+    name = name.replaceAll(RegExp(r'[/\\]'), '_');
+    if (name.isEmpty || name == '.' || name == '..') {
+      name = 'file';
+    }
+
+    final id =
+        '${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
+    final relDir = '.staging/$id';
+    final rel = '$relDir/$name';
+    final dest = File(p.join(_installPath, 'data', relDir, name));
+    await dest.parent.create(recursive: true);
+    await src.copy(dest.path);
+
+    String? mime;
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.mp4')) {
+      mime = 'video/mp4';
+    } else if (lower.endsWith('.webm')) {
+      mime = 'video/webm';
+    } else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      mime = 'image/jpeg';
+    } else if (lower.endsWith('.png')) {
+      mime = 'image/png';
+    }
+
+    return {
+      'rel': rel,
+      'name': name,
+      'size': await dest.length(),
+      if (mime != null) 'mime': mime,
+    };
   }
 
   Future<void> _deleteApp() async {

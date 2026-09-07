@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' show AppExitResponse;
 import 'package:media_kit/media_kit.dart';
@@ -13,6 +14,8 @@ import 'core/services/syncthing_lifecycle.dart';
 /// 保持引用，避免被 GC 后退出钩子失效
 // ignore: unused_element
 AppLifecycleListener? _desktopLifecycleListener;
+// ignore: unused_element
+Timer? _parentWatchTimer;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,34 +44,108 @@ void main() async {
   runApp(const DataKeepApp());
 }
 
-/// 桌面：关闭窗口 / 退出应用时停掉 detached 的 Syncthing
+/// 桌面：关闭窗口 / 退出应用 / 终端挂断时停掉 detached 的 Syncthing
 void _installDesktopShutdownHooks() {
-  _desktopLifecycleListener = AppLifecycleListener(
-    onExitRequested: () async {
-      debugPrint('[shutdown] 退出前停止 Syncthing…');
-      await NativeService.stopSyncthingService();
-      return AppExitResponse.exit;
-    },
-  );
+  var stopping = false;
 
-  Future<void> stopAndExit(ProcessSignal signal) async {
-    debugPrint('[shutdown] 收到 $signal，停止 Syncthing…');
-    await NativeService.stopSyncthingService();
+  Future<void> stopSyncthingOnce(String reason) async {
+    if (stopping) return;
+    stopping = true;
+    _parentWatchTimer?.cancel();
+    debugPrint('[shutdown] $reason，停止 Syncthing…');
+    try {
+      await NativeService.stopSyncthingService();
+    } catch (e) {
+      debugPrint('[shutdown] 停止 Syncthing 失败: $e');
+    }
+  }
+
+  Future<void> shutdownAndExit(String reason) async {
+    await stopSyncthingOnce(reason);
+    // 确保原因进终端（debugPrint 在 exit 前可能被丢掉）
+    stderr.writeln('[shutdown] 退出: $reason');
     exit(0);
   }
 
+  _desktopLifecycleListener = AppLifecycleListener(
+    onExitRequested: () async {
+      await stopSyncthingOnce('退出前');
+      return AppExitResponse.exit;
+    },
+    onDetach: () {
+      unawaited(stopSyncthingOnce('onDetach'));
+    },
+  );
+
   try {
-    ProcessSignal.sigint.watch().listen(stopAndExit);
+    ProcessSignal.sigint.watch().listen((s) => unawaited(shutdownAndExit('收到 $s')));
   } catch (e) {
     debugPrint('[shutdown] 无法监听 SIGINT: $e');
   }
   if (!Platform.isWindows) {
     try {
-      ProcessSignal.sigterm.watch().listen(stopAndExit);
+      ProcessSignal.sigterm.watch().listen((s) => unawaited(shutdownAndExit('收到 $s')));
     } catch (e) {
       debugPrint('[shutdown] 无法监听 SIGTERM: $e');
     }
+    try {
+      // 终端关闭常发 SIGHUP；但 CEF/子进程等也可能误发。
+      // 仅当已成孤儿（父进程已不在）时才退出，避免开发中误杀。
+      ProcessSignal.sighup.watch().listen((s) {
+        final ppid = _readLinuxPpid();
+        final parentAlive =
+            ppid != null && ppid > 1 && Directory('/proc/$ppid').existsSync();
+        if (parentAlive) {
+          debugPrint('[shutdown] 忽略 SIGHUP（父进程 pid=$ppid 仍在）');
+          return;
+        }
+        unawaited(shutdownAndExit('收到 $s（父进程已退出）'));
+      });
+    } catch (e) {
+      debugPrint('[shutdown] 无法监听 SIGHUP: $e');
+    }
   }
+
+  // flutter run -d linux：关终端时常只杀掉 flutter tools，应用窗口成孤儿。
+  // 监视启动时的父进程，父进程消失则自行退出并停 Syncthing。
+  _watchLaunchParent(shutdownAndExit);
+}
+
+/// Linux：读 /proc；父进程退出后自动 shutdown（适配裸 flutter run）
+void _watchLaunchParent(Future<void> Function(String reason) shutdownAndExit) {
+  if (!Platform.isLinux) return;
+  final launchPpid = _readLinuxPpid();
+  if (launchPpid == null || launchPpid <= 1) {
+    debugPrint('[shutdown] 跳过父进程监视 (ppid=$launchPpid)');
+    return;
+  }
+  debugPrint('[shutdown] 监视父进程 pid=$launchPpid（flutter run / 终端退出时自动关闭）');
+  var miss = 0;
+  _parentWatchTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    // 连续两次确认父进程不在，避免 /proc 瞬时不可见误杀
+    final alive = Directory('/proc/$launchPpid').existsSync();
+    if (alive) {
+      miss = 0;
+      return;
+    }
+    miss++;
+    if (miss < 2) return;
+    _parentWatchTimer?.cancel();
+    unawaited(shutdownAndExit('父进程 $launchPpid 已退出'));
+  });
+}
+
+int? _readLinuxPpid() {
+  try {
+    for (final line in File('/proc/self/status').readAsLinesSync()) {
+      if (line.startsWith('PPid:')) {
+        return int.tryParse(line.substring(5).trim());
+      }
+    }
+  } catch (e) {
+    debugPrint('[shutdown] 读取 PPid 失败: $e');
+  }
+  return null;
 }
 
 Future<void> _startPlatformServices() async {

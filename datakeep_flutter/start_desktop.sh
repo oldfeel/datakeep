@@ -51,4 +51,23 @@ esac
 
 echo -e "${GREEN}✅ 使用平台: $PLATFORM${NC}"
 echo -e "\n${BLUE}🚀 flutter run -d $PLATFORM${NC}"
+
+# 关闭终端（SIGHUP）/ Ctrl+C 时兜底停掉应用窗口与 detached 的 syncthing
+# （Dart 侧也会处理信号与窗口关闭；此处应对 flutter run 被终端强杀、钩子来不及跑的情况）
+_cleanup_desktop() {
+  if [[ "$PLATFORM" == "linux" ]]; then
+    # Linux comm 仅 15 字符，-x 匹配不可靠；按 bundle 路径杀本次工程进程
+    pkill -f "${SCRIPT_DIR}/build/linux/.*/bundle/datakeep_flutter" 2>/dev/null || true
+    pkill -x syncthing 2>/dev/null || true
+  elif [[ "$PLATFORM" == "macos" ]]; then
+    pkill -f "${SCRIPT_DIR}/build/macos/.*/datakeep_flutter" 2>/dev/null || true
+    pkill -x syncthing 2>/dev/null || true
+  fi
+}
+trap _cleanup_desktop EXIT INT TERM HUP
+
 flutter run -d "$PLATFORM"
+_flutter_status=$?
+trap - EXIT INT TERM HUP
+_cleanup_desktop
+exit "$_flutter_status"
