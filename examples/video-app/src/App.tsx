@@ -303,11 +303,30 @@ export default function App() {
                 overflow: 'auto',
                 display: { xs: 'flex', sm: 'block' },
                 minHeight: 0,
+                '& .MuiListItemButton-root': {
+                  borderRadius: 1,
+                  mx: 0.75,
+                  my: 0.25,
+                  borderLeft: '3px solid transparent',
+                  '&.Mui-selected': {
+                    bgcolor: 'primary.main',
+                    color: 'primary.contrastText',
+                    borderLeftColor: 'primary.dark',
+                    fontWeight: 600,
+                    '&:hover': {
+                      bgcolor: 'primary.dark',
+                    },
+                    '& .MuiTypography-root': {
+                      color: 'inherit',
+                      fontWeight: 600,
+                    },
+                  },
+                },
               }}
             >
               <ListItemButton selected={l1 === 'all'} onClick={() => selectL1('all')}>
                 <ListItemText primary="全部" />
-                <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0, ml: 1 }}>
+                <Typography variant="body2" sx={{ flexShrink: 0, ml: 1, opacity: 0.85 }}>
                   {countEntriesInL1(library, 'all')}
                 </Typography>
               </ListItemButton>
@@ -327,7 +346,7 @@ export default function App() {
                       },
                     }}
                   />
-                  <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0, ml: 1 }}>
+                  <Typography variant="body2" sx={{ flexShrink: 0, ml: 1, opacity: 0.85 }}>
                     {countEntriesInL1(library, name)}
                   </Typography>
                 </ListItemButton>
