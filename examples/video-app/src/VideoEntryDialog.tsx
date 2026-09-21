@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { OutputData } from '@editorjs/editorjs';
 import {
+  Alert,
   Autocomplete,
   Box,
   Button,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   LinearProgress,
   Stack,
   TextField,
@@ -36,6 +39,7 @@ import {
   KEEP_NAME,
   META_NAME,
   entryPath,
+  findDuplicateTitles,
   isReservedName,
   l1Names,
   l2Names,
@@ -272,6 +276,10 @@ export default function VideoEntryDialog({
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [editorKey, setEditorKey] = useState(0);
+  const [favorite, setFavorite] = useState(false);
+  const [subtitlePick, setSubtitlePick] = useState<VideoPick | null>(null);
+  const [subtitleChanged, setSubtitleChanged] = useState(false);
+  const [dupHint, setDupHint] = useState('');
   const saveDescRef = useRef<(() => Promise<OutputData>) | null>(null);
   const objectUrls = useRef<string[]>([]);
 
@@ -296,6 +304,10 @@ export default function VideoEntryDialog({
     setError('');
     setProgress(null);
     setLoading(false);
+    setFavorite(false);
+    setSubtitlePick(null);
+    setSubtitleChanged(false);
+    setDupHint('');
     saveDescRef.current = null;
     setEditorKey((k) => k + 1);
     revokeUrls();
@@ -331,11 +343,21 @@ export default function VideoEntryDialog({
         setCollection(entry.collection || '');
         setTitle(m.title || entry.title);
         setInitialDesc(m.description || { blocks: [] });
+        setFavorite(!!m.favorite);
         setEditorKey((k) => k + 1);
         setVideoPick({
           rel: entry.videoRel,
           name: m.video || entry.videoRel.split('/').pop() || 'video.mp4',
         });
+        if (m.subtitle) {
+          setSubtitlePick({
+            rel: `${entry.dir}/${m.subtitle}`,
+            name: m.subtitle,
+          });
+        } else {
+          setSubtitlePick(null);
+        }
+        setSubtitleChanged(false);
         if (m.cover) {
           setCoverPreview(dataUrl(`${entry.dir}/${m.cover}`));
         } else if (entry.coverRel) {
@@ -387,11 +409,26 @@ export default function VideoEntryDialog({
       const name = isStagedPick(picked) ? picked.name : picked.name;
       if (!title.trim() || !isEdit) {
         const i = name.lastIndexOf('.');
-        setTitle(i > 0 ? name.slice(0, i) : name);
+        const t = i > 0 ? name.slice(0, i) : name;
+        setTitle(t);
+        const dups = findDuplicateTitles(library, t, entry?.dir);
+        setDupHint(dups.length ? `库中已有同名条目：${dups[0].title}` : '');
       }
     } catch (e) {
       if (e instanceof Error && e.message === 'cancelled') return;
       setError(e instanceof Error ? e.message : '选择视频失败');
+    }
+  };
+
+  const onPickSubtitle = async () => {
+    setError('');
+    try {
+      const picked = await pickFile('.srt,.ass,.ssa,.vtt,text/plain');
+      setSubtitlePick(picked);
+      setSubtitleChanged(true);
+    } catch (e) {
+      if (e instanceof Error && e.message === 'cancelled') return;
+      setError(e instanceof Error ? e.message : '选择字幕失败');
     }
   };
 
@@ -476,6 +513,28 @@ export default function VideoEntryDialog({
         setProgress(0.92);
       }
 
+      let subtitleName: string | undefined;
+      if (subtitlePick) {
+        const subFileName = isStagedPick(subtitlePick)
+          ? subtitlePick.name
+          : subtitlePick.name;
+        const ext = (() => {
+          const i = subFileName.lastIndexOf('.');
+          const e = i > 0 ? subFileName.slice(i + 1).toLowerCase() : 'srt';
+          return ['srt', 'ass', 'ssa', 'vtt'].includes(e) ? e : 'srt';
+        })();
+        subtitleName = `subtitle.${ext}`;
+        let subBlob: Blob;
+        if (isStagedPick(subtitlePick)) {
+          const b = await getDataBlob(subtitlePick.rel);
+          if (!b) throw new Error('读取字幕失败');
+          subBlob = b;
+        } else {
+          subBlob = subtitlePick;
+        }
+        await putDataFile(`${dir}/${subtitleName}`, subBlob);
+      }
+
       const description = await saveDescription();
       const now = new Date().toISOString();
       const durationSec =
@@ -486,8 +545,10 @@ export default function VideoEntryDialog({
         description,
         cover: hasCover ? COVER_NAME : undefined,
         video: videoName,
+        subtitle: subtitleName,
         playCount: 0,
         durationSec,
+        favorite,
         createdAt: now,
         updatedAt: now,
       };
@@ -579,6 +640,36 @@ export default function VideoEntryDialog({
         }
       }
 
+      let subtitleName = meta.subtitle;
+      if (subtitleChanged && !subtitlePick) {
+        subtitleName = undefined;
+      } else if (subtitleChanged && subtitlePick) {
+        const subFileName = isStagedPick(subtitlePick)
+          ? subtitlePick.name
+          : subtitlePick.name;
+        const ext = (() => {
+          const i = subFileName.lastIndexOf('.');
+          const e = i > 0 ? subFileName.slice(i + 1).toLowerCase() : 'srt';
+          return ['srt', 'ass', 'ssa', 'vtt'].includes(e) ? e : 'srt';
+        })();
+        subtitleName = `subtitle.${ext}`;
+        let subBlob: Blob;
+        if (isStagedPick(subtitlePick)) {
+          const b = await getDataBlob(subtitlePick.rel);
+          if (!b) throw new Error('读取字幕失败');
+          subBlob = b;
+        } else {
+          subBlob = subtitlePick;
+        }
+        await putDataFile(`${newDir}/${subtitleName}`, subBlob);
+      } else if (pathChanged && meta.subtitle) {
+        const b = await getDataBlob(`${oldDir}/${meta.subtitle}`);
+        if (b) {
+          await putDataFile(`${newDir}/${meta.subtitle}`, b);
+          subtitleName = meta.subtitle;
+        }
+      }
+
       const description = await saveDescription();
       let durationSec = meta.durationSec;
       if (videoChanged || durationSec == null || !(durationSec > 0)) {
@@ -592,23 +683,35 @@ export default function VideoEntryDialog({
         description,
         cover: coverName,
         video: videoName,
+        subtitle: subtitleName,
         playCount: meta.playCount ?? 0,
         durationSec,
+        favorite,
         createdAt: meta.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
       await putDataJson(`${newDir}/${META_NAME}`, next);
       setProgress(0.95);
 
-      if (pathChanged || videoChanged) {
+      if (pathChanged || videoChanged || subtitleChanged) {
         // 清理旧路径多余文件
         const toDelete = new Set<string>();
         if (pathChanged) {
           toDelete.add(`${oldDir}/${META_NAME}`);
           toDelete.add(`${oldDir}/${meta.video}`);
           if (meta.cover) toDelete.add(`${oldDir}/${meta.cover}`);
-        } else if (videoChanged && meta.video !== videoName) {
-          toDelete.add(`${oldDir}/${meta.video}`);
+          if (meta.subtitle) toDelete.add(`${oldDir}/${meta.subtitle}`);
+        } else {
+          if (videoChanged && meta.video !== videoName) {
+            toDelete.add(`${oldDir}/${meta.video}`);
+          }
+          if (
+            subtitleChanged &&
+            meta.subtitle &&
+            meta.subtitle !== subtitleName
+          ) {
+            toDelete.add(`${oldDir}/${meta.subtitle}`);
+          }
         }
         for (const rel of toDelete) {
           try {
@@ -691,9 +794,25 @@ export default function VideoEntryDialog({
                 <TextField
                   label="标题"
                   value={title}
-                  onChange={(e) => setTitle(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setTitle(v);
+                    const dups = findDuplicateTitles(library, v, entry?.dir);
+                    setDupHint(dups.length ? `库中已有同名条目（${dups.length}）` : '');
+                  }}
                   disabled={busy}
                   fullWidth
+                />
+                {dupHint && <Alert severity="warning">{dupHint}</Alert>}
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={favorite}
+                      onChange={(e) => setFavorite(e.target.checked)}
+                      disabled={busy}
+                    />
+                  }
+                  label="收藏 / 稍后再看"
                 />
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
                   <Button variant="outlined" disabled={busy} onClick={() => void onPickVideo()}>
@@ -706,6 +825,30 @@ export default function VideoEntryDialog({
                     <Typography variant="body2" color="text.secondary">
                       播放 {meta?.playCount ?? entry?.playCount ?? 0} 次
                     </Typography>
+                  )}
+                </Stack>
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Button
+                    variant="outlined"
+                    disabled={busy}
+                    onClick={() => void onPickSubtitle()}
+                  >
+                    {subtitlePick ? '更换字幕' : '外挂字幕'}
+                  </Button>
+                  <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 220 }}>
+                    {subtitlePick ? pickDisplayName(subtitlePick) : '未选择（可选 .srt/.ass）'}
+                  </Typography>
+                  {subtitlePick && (
+                    <Button
+                      size="small"
+                      disabled={busy}
+                      onClick={() => {
+                        setSubtitlePick(null);
+                        setSubtitleChanged(true);
+                      }}
+                    >
+                      清除
+                    </Button>
                   )}
                 </Stack>
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>

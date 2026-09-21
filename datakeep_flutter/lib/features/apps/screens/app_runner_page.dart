@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_static/shelf_static.dart';
@@ -24,7 +25,9 @@ import '../../../core/services/thumbnail_service.dart';
 import '../../../shared/utils/app_dir.dart';
 import '../../../shared/utils/app_manifest.dart';
 import '../../../shared/utils/dev_app_source.dart';
+import '../../../shared/utils/open_system_file.dart';
 import '../../../shared/utils/open_url_external.dart';
+import '../../../shared/widgets/video_preview.dart';
 import '../../folders/screens/video_preview_screen.dart';
 
 /// 在本地 HTTP 服务上打开应用目录（入口默认 index.html）
@@ -1299,14 +1302,21 @@ window.__datakeepExtractCoverFrame=function(rel,sec,index){
     }catch(e){reject(e);}
   });
 };
-window.__datakeepPlayVideo=function(rel,title){
+window.__datakeepPlayVideo=function(rel,title,opts){
   return new Promise(function(resolve,reject){
     if(typeof DataKeepHost!=="function"){
       reject(new Error("NO_HOST"));
       return;
     }
     try{
-      DataKeepHost({method:"playVideo",rel:rel||"",title:title||""},function(res){
+      var o=opts&&typeof opts==="object"?opts:{};
+      DataKeepHost({
+        method:"playVideo",
+        rel:rel||"",
+        title:title||"",
+        startPosition:o.startPosition||0,
+        subtitleRel:o.subtitleRel||""
+      },function(res){
         try{
           var j=res;
           if(typeof res==="string"){
@@ -1394,6 +1404,68 @@ window.__datakeepProbeDuration=function(rel){
         return;
       }
 
+      if (method == 'pickFiles') {
+        final accept = raw['accept']?.toString() ?? '';
+        final picked = await _pickFilesForAccept(accept);
+        if (picked == null || picked.isEmpty) {
+          reply({'cancelled': true});
+          return;
+        }
+        final files = <Map<String, dynamic>>[];
+        for (final f in picked) {
+          final staged = await _stagePickedFile(f);
+          if (staged != null) files.add(staged);
+        }
+        if (files.isEmpty) {
+          reply({'error': '暂存失败'});
+          return;
+        }
+        reply({'files': files});
+        return;
+      }
+
+      if (method == 'revealInFolder') {
+        final rel = raw['rel']?.toString() ?? '';
+        final cleaned =
+            rel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+        if (cleaned.isEmpty || cleaned.contains('..')) {
+          reply({'error': '非法路径'});
+          return;
+        }
+        final file = File(p.join(_installPath, 'data', cleaned));
+        final target = await file.exists()
+            ? file.parent.path
+            : Directory(p.join(_installPath, 'data', cleaned)).path;
+        final err = await openSystemFile(target);
+        if (err != null) {
+          reply({'error': err});
+          return;
+        }
+        reply({'ok': true});
+        return;
+      }
+
+      if (method == 'shareFile') {
+        final rel = raw['rel']?.toString() ?? '';
+        final cleaned =
+            rel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+        if (cleaned.isEmpty || cleaned.contains('..')) {
+          reply({'error': '非法路径'});
+          return;
+        }
+        final file = File(p.join(_installPath, 'data', cleaned));
+        if (!await file.exists()) {
+          reply({'error': '文件不存在'});
+          return;
+        }
+        await Share.shareXFiles(
+          [XFile(file.path)],
+          subject: p.basename(file.path),
+        );
+        reply({'ok': true});
+        return;
+      }
+
       if (method == 'generateCover') {
         final rel = raw['rel']?.toString() ?? '';
         final cover = await _generateCoverFromDataRel(rel);
@@ -1456,6 +1528,11 @@ window.__datakeepProbeDuration=function(rel){
       if (method == 'playVideo') {
         final rel = raw['rel']?.toString() ?? '';
         final titleRaw = raw['title']?.toString() ?? '';
+        final startRaw = raw['startPosition'];
+        final startPosition = startRaw is num
+            ? startRaw.toDouble()
+            : double.tryParse('$startRaw') ?? 0;
+        final subtitleRel = raw['subtitleRel']?.toString() ?? '';
         final cleaned =
             rel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
         if (cleaned.isEmpty || cleaned.contains('..')) {
@@ -1467,19 +1544,37 @@ window.__datakeepProbeDuration=function(rel){
           reply({'error': '文件不存在'});
           return;
         }
+        String? subtitlePath;
+        final subClean = subtitleRel
+            .replaceAll('\\', '/')
+            .replaceAll(RegExp(r'^/+'), '');
+        if (subClean.isNotEmpty && !subClean.contains('..')) {
+          final sub = File(p.join(_installPath, 'data', subClean));
+          if (await sub.exists()) subtitlePath = sub.path;
+        }
         final title =
             titleRaw.trim().isNotEmpty ? titleRaw.trim() : p.basename(cleaned);
-        // 先回 OK，再打开与文件浏览相同的 media_kit 全屏页
-        reply({'ok': true, 'path': file.path});
-        if (!mounted) return;
-        await Navigator.of(context).push(
-          MaterialPageRoute<void>(
+        if (!mounted) {
+          reply({'error': '页面已关闭'});
+          return;
+        }
+        // 关闭播放页后再回传进度（供续播 / 连播）
+        final result = await Navigator.of(context).push<VideoPlayResult>(
+          MaterialPageRoute<VideoPlayResult>(
             builder: (_) => VideoPreviewScreen(
               title: title,
               filePath: file.path,
+              startPositionSec: startPosition > 0 ? startPosition : 0,
+              subtitlePath: subtitlePath,
             ),
           ),
         );
+        reply({
+          'ok': true,
+          'path': file.path,
+          'positionSec': result?.positionSec ?? 0,
+          'completed': result?.completed ?? false,
+        });
         return;
       }
 
@@ -1648,23 +1743,46 @@ window.__datakeepProbeDuration=function(rel){
   }
 
   Future<PlatformFile?> _pickFileForAccept(String accept) async {
+    final files = await _pickFilesForAccept(accept, allowMultiple: false);
+    if (files == null || files.isEmpty) return null;
+    return files.first;
+  }
+
+  Future<List<PlatformFile>?> _pickFilesForAccept(
+    String accept, {
+    bool allowMultiple = true,
+  }) async {
     final a = accept.toLowerCase();
     FileType type = FileType.any;
     List<String>? exts;
     if (a.contains('video')) {
       type = FileType.custom;
-      exts = const ['mp4', 'webm', 'mkv', 'mov', 'm4v', 'avi', 'ogv', 'mpeg', 'mpg'];
+      exts = const [
+        'mp4',
+        'webm',
+        'mkv',
+        'mov',
+        'm4v',
+        'avi',
+        'ogv',
+        'mpeg',
+        'mpg',
+      ];
     } else if (a.contains('image')) {
       type = FileType.custom;
       exts = const ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
+    } else if (a.contains('srt') || a.contains('ass') || a.contains('subtitle')) {
+      type = FileType.custom;
+      exts = const ['srt', 'ass', 'ssa', 'vtt'];
     }
     final result = await FilePicker.platform.pickFiles(
       type: type,
       allowedExtensions: exts,
       withData: false,
+      allowMultiple: allowMultiple,
     );
     if (result == null || result.files.isEmpty) return null;
-    return result.files.first;
+    return result.files;
   }
 
   /// 复制到 installPath/data/.staging/<id>/<name>，返回相对 data 的路径信息

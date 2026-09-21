@@ -82,6 +82,20 @@ export async function deleteDataFile(rel: string): Promise<void> {
   if (!res.ok) throw new Error(`删除失败: HTTP ${res.status}`);
 }
 
+/** 删除前缀下全部文件（先深后浅） */
+export async function deleteDataTree(prefix: string): Promise<void> {
+  const base = String(prefix || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '');
+  if (!base || base.includes('..')) throw new Error('非法路径');
+  const all = await listDir('');
+  const under = all.filter((f) => f === base || f.startsWith(base + '/'));
+  under.sort((a, b) => b.length - a.length || b.localeCompare(a));
+  for (const rel of under) {
+    await deleteDataFile(rel);
+  }
+}
+
 export type Revision = { dataRev: number; appRev: number };
 
 /** 选封面等临时写 data 时暂停，避免 scanLibrary 导致界面整页重刷 */

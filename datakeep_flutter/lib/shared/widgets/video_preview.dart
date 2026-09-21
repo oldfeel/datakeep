@@ -6,28 +6,66 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+/// 播放结束时上报进度
+class VideoPlayResult {
+  final double positionSec;
+  final bool completed;
+
+  const VideoPlayResult({
+    required this.positionSec,
+    required this.completed,
+  });
+}
+
 /// 内置视频播放器（media_kit），直接播放本地文件
 class VideoPreview extends StatefulWidget {
   final String filePath;
+  /// 续播起点（秒）
+  final double startPositionSec;
+  /// 外挂字幕本地绝对路径
+  final String? subtitlePath;
+  /// 进度变化回调（节流由父级决定）
+  final ValueChanged<VideoPlayResult>? onProgress;
 
-  const VideoPreview({super.key, required this.filePath});
+  const VideoPreview({
+    super.key,
+    required this.filePath,
+    this.startPositionSec = 0,
+    this.subtitlePath,
+    this.onProgress,
+  });
 
   @override
-  State<VideoPreview> createState() => _VideoPreviewState();
+  State<VideoPreview> createState() => VideoPreviewState();
 }
 
-class _VideoPreviewState extends State<VideoPreview> {
+class VideoPreviewState extends State<VideoPreview> {
   late final Player _player = Player();
   late final VideoController _controller;
   String? _error;
   bool _opening = true;
   double _rate = 1.0;
   StreamSubscription<double>? _rateSub;
+  StreamSubscription<Duration>? _posSub;
+  StreamSubscription<bool>? _completedSub;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _completed = false;
 
   bool get _isDesktop =>
       !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
 
   static const _rates = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+
+  VideoPlayResult currentResult() {
+    final pos = _position.inMilliseconds / 1000.0;
+    final dur = _duration.inMilliseconds / 1000.0;
+    final nearEnd = dur > 0 && pos >= dur - 2.0;
+    return VideoPlayResult(
+      positionSec: pos.clamp(0, double.infinity),
+      completed: _completed || nearEnd,
+    );
+  }
 
   @override
   void initState() {
@@ -43,6 +81,19 @@ class _VideoPreviewState extends State<VideoPreview> {
     _rateSub = _player.stream.rate.listen((r) {
       if (mounted) setState(() => _rate = r);
     });
+    _posSub = _player.stream.position.listen((p) {
+      _position = p;
+      widget.onProgress?.call(currentResult());
+    });
+    _player.stream.duration.listen((d) {
+      _duration = d;
+    });
+    _completedSub = _player.stream.completed.listen((c) {
+      if (c) {
+        _completed = true;
+        widget.onProgress?.call(currentResult());
+      }
+    });
 
     if (!File(widget.filePath).existsSync()) {
       _error = '文件不存在';
@@ -57,6 +108,22 @@ class _VideoPreviewState extends State<VideoPreview> {
   Future<void> _openFile() async {
     try {
       await _player.open(Media(Uri.file(widget.filePath).toString()));
+      final sub = widget.subtitlePath;
+      if (sub != null && sub.isNotEmpty && File(sub).existsSync()) {
+        try {
+          await _player.setSubtitleTrack(SubtitleTrack.uri(Uri.file(sub).toString()));
+        } catch (e) {
+          debugPrint('[VideoPreview] 加载字幕失败: $e');
+        }
+      }
+      final start = widget.startPositionSec;
+      if (start > 1) {
+        try {
+          await _player.seek(Duration(milliseconds: (start * 1000).round()));
+        } catch (e) {
+          debugPrint('[VideoPreview] seek 失败: $e');
+        }
+      }
       await _player.play();
       if (mounted) setState(() => _opening = false);
     } catch (e) {
@@ -119,6 +186,8 @@ class _VideoPreviewState extends State<VideoPreview> {
   @override
   void dispose() {
     _rateSub?.cancel();
+    _posSub?.cancel();
+    _completedSub?.cancel();
     _player.dispose();
     super.dispose();
   }

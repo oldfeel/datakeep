@@ -28,10 +28,18 @@ export type EntryMeta = {
   description?: OutputData | null;
   cover?: string;
   video: string;
+  /** 外挂字幕文件名（相对条目目录） */
+  subtitle?: string;
   /** 播放次数 */
   playCount?: number;
   /** 视频时长（秒） */
   durationSec?: number;
+  /** 上次观看进度（秒） */
+  positionSec?: number;
+  /** 收藏 / 稍后再看 */
+  favorite?: boolean;
+  /** 合集内排序（越小越靠前；缺省按创建时间） */
+  episodeOrder?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -53,6 +61,12 @@ export type VideoEntry = {
   playCount: number;
   /** 时长秒；未知为 null */
   durationSec: number | null;
+  /** 上次观看进度秒 */
+  positionSec: number;
+  favorite: boolean;
+  episodeOrder: number | null;
+  /** 外挂字幕相对 data/ 路径 */
+  subtitleRel: string | null;
   /** ISO8601，上传/创建时间；legacy 为空串 */
   createdAt: string;
 };
@@ -223,6 +237,18 @@ export async function scanLibrary(): Promise<Library> {
           meta.durationSec > 0
             ? meta.durationSec
             : null,
+        positionSec:
+          typeof meta.positionSec === 'number' &&
+          Number.isFinite(meta.positionSec) &&
+          meta.positionSec > 0
+            ? meta.positionSec
+            : 0,
+        favorite: !!meta.favorite,
+        episodeOrder:
+          typeof meta.episodeOrder === 'number' && Number.isFinite(meta.episodeOrder)
+            ? meta.episodeOrder
+            : null,
+        subtitleRel: meta.subtitle ? `${dir}/${meta.subtitle}` : null,
         createdAt: meta.createdAt || '',
       });
     } catch (e) {
@@ -276,6 +302,10 @@ export async function scanLibrary(): Promise<Library> {
         legacy: true,
         playCount: 0,
         durationSec: null,
+        positionSec: 0,
+        favorite: false,
+        episodeOrder: null,
+        subtitleRel: null,
         createdAt: '',
       });
       continue;
@@ -297,6 +327,10 @@ export async function scanLibrary(): Promise<Library> {
         legacy: true,
         playCount: 0,
         durationSec: null,
+        positionSec: 0,
+        favorite: false,
+        episodeOrder: null,
+        subtitleRel: null,
         createdAt: '',
       });
     }
@@ -317,17 +351,47 @@ export type EntrySort =
   | 'createdAt_desc'
   | 'createdAt_asc'
   | 'playCount_desc'
-  | 'playCount_asc';
+  | 'playCount_asc'
+  | 'duration_desc'
+  | 'duration_asc'
+  | 'title_asc'
+  | 'title_desc';
 
 export function sortEntries(entries: VideoEntry[], sort: EntrySort): VideoEntry[] {
   const list = [...entries];
   const byPlay = sort.startsWith('playCount');
+  const byDuration = sort.startsWith('duration');
+  const byTitle = sort.startsWith('title');
   const asc = sort.endsWith('_asc');
   const dir = asc ? 1 : -1;
 
   list.sort((a, b) => {
+    // 合集内优先 episodeOrder
+    if (
+      a.collection &&
+      b.collection &&
+      a.collection === b.collection &&
+      a.l1 === b.l1 &&
+      a.l2 === b.l2
+    ) {
+      const oa = a.episodeOrder;
+      const ob = b.episodeOrder;
+      if (oa != null && ob != null && oa !== ob) return oa - ob;
+      if (oa != null && ob == null) return -1;
+      if (oa == null && ob != null) return 1;
+    }
+    if (byTitle) {
+      const d = a.title.localeCompare(b.title, 'zh') * dir;
+      if (d !== 0) return d;
+      return a.createdAt.localeCompare(b.createdAt);
+    }
     if (byPlay) {
       const d = (a.playCount - b.playCount) * dir;
+      if (d !== 0) return d;
+    } else if (byDuration) {
+      const da = a.durationSec ?? -1;
+      const db = b.durationSec ?? -1;
+      const d = (da - db) * dir;
       if (d !== 0) return d;
     } else {
       const d = a.createdAt.localeCompare(b.createdAt) * dir;
@@ -407,6 +471,8 @@ export function collapseToLibraryItems(
   }
 
   const byPlay = sort.startsWith('playCount');
+  const byDuration = sort.startsWith('duration');
+  const byTitle = sort.startsWith('title');
   const asc = sort.endsWith('_asc');
   const dir = asc ? 1 : -1;
   items.sort((a, b) => {
@@ -416,8 +482,20 @@ export function collapseToLibraryItems(
     const createdB = b.kind === 'series' ? b.createdAt : b.entry.createdAt;
     const titleA = a.kind === 'series' ? a.name : a.entry.title;
     const titleB = b.kind === 'series' ? b.name : b.entry.title;
+    const durA =
+      a.kind === 'series' ? a.durationSec ?? -1 : a.entry.durationSec ?? -1;
+    const durB =
+      b.kind === 'series' ? b.durationSec ?? -1 : b.entry.durationSec ?? -1;
+    if (byTitle) {
+      const d = titleA.localeCompare(titleB, 'zh') * dir;
+      if (d !== 0) return d;
+      return createdA.localeCompare(createdB);
+    }
     if (byPlay) {
       const d = (playA - playB) * dir;
+      if (d !== 0) return d;
+    } else if (byDuration) {
+      const d = (durA - durB) * dir;
       if (d !== 0) return d;
     } else {
       const d = createdA.localeCompare(createdB) * dir;
@@ -462,13 +540,17 @@ export function filterEntries(
     l2: string;
     collection: string | null;
     query: string;
+    favoriteOnly?: boolean;
   },
 ): VideoEntry[] {
   const q = opts.query.trim().toLowerCase();
   return library.entries.filter((e) => {
+    if (opts.favoriteOnly && !e.favorite) return false;
     if (opts.l1 !== 'all') {
       if (opts.l1 === 'root') {
         if (e.l1) return false;
+      } else if (opts.l1 === 'favorites') {
+        /* 由 favoriteOnly 处理 */
       } else if (e.l1 !== opts.l1) return false;
     }
     if (opts.l2 !== 'all' && e.l2 !== opts.l2) return false;
@@ -482,6 +564,52 @@ export function filterEntries(
       e.title.toLowerCase().includes(q) || e.descriptionText.toLowerCase().includes(q)
     );
   });
+}
+
+/** 同合集下一集；无则 null */
+export function nextEpisode(
+  library: Library,
+  entry: VideoEntry,
+  sort: EntrySort = 'createdAt_asc',
+): VideoEntry | null {
+  if (!entry.collection || entry.legacy) return null;
+  const eps = sortEntries(
+    library.entries.filter(
+      (e) =>
+        e.l1 === entry.l1 &&
+        e.l2 === entry.l2 &&
+        e.collection === entry.collection &&
+        !e.legacy,
+    ),
+    sort,
+  );
+  const i = eps.findIndex((e) => e.dir === entry.dir);
+  if (i < 0 || i >= eps.length - 1) return null;
+  return eps[i + 1];
+}
+
+/** 标题重复（忽略自身） */
+export function findDuplicateTitles(
+  library: Library,
+  title: string,
+  excludeDir?: string,
+): VideoEntry[] {
+  const t = title.trim().toLowerCase();
+  if (!t) return [];
+  return library.entries.filter(
+    (e) =>
+      e.title.trim().toLowerCase() === t &&
+      (!excludeDir || e.dir !== excludeDir),
+  );
+}
+
+export function countFavorites(library: Library): number {
+  return library.entries.filter((e) => e.favorite).length;
+}
+
+export function isL1Empty(library: Library, l1: string): boolean {
+  if (!l1 || l1 === 'all' || l1 === 'favorites') return false;
+  return !library.entries.some((e) => e.l1 === l1);
 }
 
 export function newEntryId(): string {

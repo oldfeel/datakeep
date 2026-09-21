@@ -48,6 +48,17 @@ declare global {
   }
 }
 
+export type PlayVideoResult = {
+  ok?: boolean;
+  positionSec?: number;
+  completed?: boolean;
+};
+
+export type PlayVideoOpts = {
+  startPosition?: number;
+  subtitleRel?: string;
+};
+
 function parseHostResult(res: unknown): Record<string, unknown> {
   let j: unknown = res;
   if (typeof res === 'string') {
@@ -114,6 +125,44 @@ export async function pickFile(accept: string): Promise<PickedStagedFile | File>
     input.onchange = () => {
       const f = input.files?.[0];
       if (f) resolve(f);
+      else reject(new Error('cancelled'));
+    };
+    input.oncancel = () => reject(new Error('cancelled'));
+    input.click();
+  });
+}
+
+/** 多选文件（批量导入） */
+export async function pickFiles(accept: string): Promise<Array<PickedStagedFile | File>> {
+  if (typeof window.DataKeepHost === 'function') {
+    try {
+      const m = await callHost({ method: 'pickFiles', accept: accept || '' });
+      const files = m.files;
+      if (Array.isArray(files) && files.length) {
+        return files.map((f) => {
+          const o = f as Record<string, unknown>;
+          return {
+            rel: String(o.rel || ''),
+            name: String(o.name || ''),
+            size: typeof o.size === 'number' ? o.size : undefined,
+            mime: typeof o.mime === 'string' ? o.mime : undefined,
+          };
+        });
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message === 'cancelled') throw e;
+      /* fall through to input */
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.multiple = true;
+    input.onchange = () => {
+      const list = input.files ? Array.from(input.files) : [];
+      if (list.length) resolve(list);
       else reject(new Error('cancelled'));
     };
     input.oncancel = () => reject(new Error('cancelled'));
@@ -207,12 +256,46 @@ export function hasPlayVideoHost(): boolean {
 export async function playVideoFromRel(
   rel: string,
   title?: string,
-): Promise<void> {
+  opts?: PlayVideoOpts,
+): Promise<PlayVideoResult> {
   if (typeof window.__datakeepPlayVideo === 'function') {
-    await window.__datakeepPlayVideo(rel, title);
-    return;
+    const r = await (window.__datakeepPlayVideo as (
+      rel: string,
+      title?: string,
+      opts?: PlayVideoOpts,
+    ) => Promise<PlayVideoResult>)(rel, title, opts);
+    return (r || { ok: true }) as PlayVideoResult;
   }
-  await callHost({ method: 'playVideo', rel, title: title || '' });
+  const m = await callHost({
+    method: 'playVideo',
+    rel,
+    title: title || '',
+    startPosition: opts?.startPosition ?? 0,
+    subtitleRel: opts?.subtitleRel || '',
+  });
+  return {
+    ok: true,
+    positionSec: typeof m.positionSec === 'number' ? m.positionSec : undefined,
+    completed: !!m.completed,
+  };
+}
+
+/** 在文件管理器中打开条目所在目录 */
+export async function revealInFolder(rel: string): Promise<void> {
+  await callHost({ method: 'revealInFolder', rel });
+}
+
+/** 系统分享视频文件 */
+export async function shareFileFromRel(rel: string): Promise<void> {
+  await callHost({ method: 'shareFile', rel });
+}
+
+export function hasRevealHost(): boolean {
+  return typeof window.DataKeepHost === 'function';
+}
+
+export function hasShareHost(): boolean {
+  return typeof window.DataKeepHost === 'function';
 }
 
 export function hasProbeDurationHost(): boolean {
