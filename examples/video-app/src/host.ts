@@ -52,11 +52,26 @@ export type PlayVideoResult = {
   ok?: boolean;
   positionSec?: number;
   completed?: boolean;
+  entryDir?: string;
+  favorite?: boolean;
+};
+
+export type PlayVideoEpisode = {
+  rel: string;
+  title?: string;
+  subtitleRel?: string;
+  startPosition?: number;
+  entryDir?: string;
+  favorite?: boolean;
 };
 
 export type PlayVideoOpts = {
   startPosition?: number;
   subtitleRel?: string;
+  entryDir?: string;
+  favorite?: boolean;
+  autoNext?: boolean;
+  playlist?: PlayVideoEpisode[];
 };
 
 function parseHostResult(res: unknown): Record<string, unknown> {
@@ -272,11 +287,17 @@ export async function playVideoFromRel(
     title: title || '',
     startPosition: opts?.startPosition ?? 0,
     subtitleRel: opts?.subtitleRel || '',
+    entryDir: opts?.entryDir || '',
+    favorite: !!opts?.favorite,
+    autoNext: opts?.autoNext !== false,
+    playlist: opts?.playlist || [],
   });
   return {
     ok: true,
     positionSec: typeof m.positionSec === 'number' ? m.positionSec : undefined,
     completed: !!m.completed,
+    entryDir: typeof m.entryDir === 'string' ? m.entryDir : undefined,
+    favorite: typeof m.favorite === 'boolean' ? m.favorite : undefined,
   };
 }
 

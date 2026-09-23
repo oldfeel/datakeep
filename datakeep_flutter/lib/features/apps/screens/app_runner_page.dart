@@ -1315,7 +1315,11 @@ window.__datakeepPlayVideo=function(rel,title,opts){
         rel:rel||"",
         title:title||"",
         startPosition:o.startPosition||0,
-        subtitleRel:o.subtitleRel||""
+        subtitleRel:o.subtitleRel||"",
+        entryDir:o.entryDir||"",
+        favorite:!!o.favorite,
+        autoNext:o.autoNext!==false,
+        playlist:Array.isArray(o.playlist)?o.playlist:[]
       },function(res){
         try{
           var j=res;
@@ -1533,6 +1537,9 @@ window.__datakeepProbeDuration=function(rel){
             ? startRaw.toDouble()
             : double.tryParse('$startRaw') ?? 0;
         final subtitleRel = raw['subtitleRel']?.toString() ?? '';
+        final entryDir = raw['entryDir']?.toString() ?? '';
+        final favorite = raw['favorite'] == true;
+        final autoNext = raw['autoNext'] != false;
         final cleaned =
             rel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
         if (cleaned.isEmpty || cleaned.contains('..')) {
@@ -1554,6 +1561,65 @@ window.__datakeepProbeDuration=function(rel){
         }
         final title =
             titleRaw.trim().isNotEmpty ? titleRaw.trim() : p.basename(cleaned);
+
+        final episodes = <VideoEpisode>[];
+        final playlistRaw = raw['playlist'];
+        if (playlistRaw is List && playlistRaw.isNotEmpty) {
+          for (final item in playlistRaw) {
+            if (item is! Map) continue;
+            final erel = item['rel']?.toString() ?? '';
+            final eClean =
+                erel.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+            if (eClean.isEmpty || eClean.contains('..')) continue;
+            final eFile = File(p.join(_installPath, 'data', eClean));
+            if (!await eFile.exists()) continue;
+            String? eSubPath;
+            final eSub = item['subtitleRel']?.toString() ?? '';
+            final eSubClean =
+                eSub.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+            if (eSubClean.isNotEmpty && !eSubClean.contains('..')) {
+              final sf = File(p.join(_installPath, 'data', eSubClean));
+              if (await sf.exists()) eSubPath = sf.path;
+            }
+            final eStartRaw = item['startPosition'];
+            final eStart = eStartRaw is num
+                ? eStartRaw.toDouble()
+                : double.tryParse('$eStartRaw') ?? 0;
+            final eTitle = item['title']?.toString().trim();
+            episodes.add(
+              VideoEpisode(
+                filePath: eFile.path,
+                title: (eTitle != null && eTitle.isNotEmpty)
+                    ? eTitle
+                    : p.basename(eClean),
+                entryDir: item['entryDir']?.toString() ?? '',
+                startPositionSec: eStart > 0 ? eStart : 0,
+                subtitlePath: eSubPath,
+                favorite: item['favorite'] == true,
+              ),
+            );
+          }
+        }
+        if (episodes.isEmpty) {
+          episodes.add(
+            VideoEpisode(
+              filePath: file.path,
+              title: title,
+              entryDir: entryDir,
+              startPositionSec: startPosition > 0 ? startPosition : 0,
+              subtitlePath: subtitlePath,
+              favorite: favorite,
+            ),
+          );
+        }
+        var initialIndex = 0;
+        for (var i = 0; i < episodes.length; i++) {
+          if (episodes[i].filePath == file.path) {
+            initialIndex = i;
+            break;
+          }
+        }
+
         if (!mounted) {
           reply({'error': '页面已关闭'});
           return;
@@ -1566,6 +1632,10 @@ window.__datakeepProbeDuration=function(rel){
               filePath: file.path,
               startPositionSec: startPosition > 0 ? startPosition : 0,
               subtitlePath: subtitlePath,
+              episodes: episodes,
+              initialIndex: initialIndex,
+              autoNext: autoNext,
+              dataRoot: p.join(_installPath, 'data'),
             ),
           ),
         );
@@ -1574,6 +1644,8 @@ window.__datakeepProbeDuration=function(rel){
           'path': file.path,
           'positionSec': result?.positionSec ?? 0,
           'completed': result?.completed ?? false,
+          'entryDir': result?.entryDir ?? entryDir,
+          'favorite': result?.favorite,
         });
         return;
       }

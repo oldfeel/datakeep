@@ -1,19 +1,44 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:path/path.dart' as p;
 
 /// 播放结束时上报进度
 class VideoPlayResult {
   final double positionSec;
   final bool completed;
+  final String? entryDir;
+  final bool? favorite;
 
   const VideoPlayResult({
     required this.positionSec,
     required this.completed,
+    this.entryDir,
+    this.favorite,
+  });
+}
+
+/// 播放列表中的一集
+class VideoEpisode {
+  final String filePath;
+  final String title;
+  final String entryDir;
+  final double startPositionSec;
+  final String? subtitlePath;
+  final bool favorite;
+
+  const VideoEpisode({
+    required this.filePath,
+    required this.title,
+    required this.entryDir,
+    this.startPositionSec = 0,
+    this.subtitlePath,
+    this.favorite = false,
   });
 }
 
@@ -26,6 +51,17 @@ class VideoPreview extends StatefulWidget {
   final String? subtitlePath;
   /// 进度变化回调（节流由父级决定）
   final ValueChanged<VideoPlayResult>? onProgress;
+  /// 播完回调（用于连播）
+  final VoidCallback? onCompleted;
+  /// 剧集：上一集 / 下一集（放在播放按钮两侧）
+  final bool showEpisodeNav;
+  final bool hasPrevEpisode;
+  final bool hasNextEpisode;
+  final VoidCallback? onPrevEpisode;
+  final VoidCallback? onNextEpisode;
+  /// 控制栏全屏右侧：剧集列表（传入按钮 context，全屏路由内可正确弹层）
+  final bool showPlaylistButton;
+  final void Function(BuildContext buttonContext)? onPlaylist;
 
   const VideoPreview({
     super.key,
@@ -33,6 +69,14 @@ class VideoPreview extends StatefulWidget {
     this.startPositionSec = 0,
     this.subtitlePath,
     this.onProgress,
+    this.onCompleted,
+    this.showEpisodeNav = false,
+    this.hasPrevEpisode = false,
+    this.hasNextEpisode = false,
+    this.onPrevEpisode,
+    this.onNextEpisode,
+    this.showPlaylistButton = false,
+    this.onPlaylist,
   });
 
   @override
@@ -47,29 +91,48 @@ class VideoPreviewState extends State<VideoPreview> {
   double _rate = 1.0;
   StreamSubscription<double>? _rateSub;
   StreamSubscription<Duration>? _posSub;
+  StreamSubscription<Duration>? _durSub;
   StreamSubscription<bool>? _completedSub;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _completed = false;
+  bool _didSeek = false;
+  double _pendingStart = 0;
 
   bool get _isDesktop =>
       !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
 
   static const _rates = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
-  VideoPlayResult currentResult() {
+  VideoPlayResult currentResult({String? entryDir, bool? favorite}) {
     final pos = _position.inMilliseconds / 1000.0;
     final dur = _duration.inMilliseconds / 1000.0;
     final nearEnd = dur > 0 && pos >= dur - 2.0;
     return VideoPlayResult(
       positionSec: pos.clamp(0, double.infinity),
       completed: _completed || nearEnd,
+      entryDir: entryDir,
+      favorite: favorite,
     );
+  }
+
+  Future<void> jumpTo(VideoEpisode ep) async {
+    setState(() {
+      _opening = true;
+      _error = null;
+      _completed = false;
+      _didSeek = false;
+      _pendingStart = ep.startPositionSec;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+    });
+    await _openEpisode(ep);
   }
 
   @override
   void initState() {
     super.initState();
+    _pendingStart = widget.startPositionSec;
     // Linux 上 EGL 常不可用；关闭硬解，走软件渲染更稳定
     _controller = VideoController(
       _player,
@@ -85,13 +148,19 @@ class VideoPreviewState extends State<VideoPreview> {
       _position = p;
       widget.onProgress?.call(currentResult());
     });
-    _player.stream.duration.listen((d) {
+    _durSub = _player.stream.duration.listen((d) {
       _duration = d;
+      // 时长就绪后再 seek，避免 open 后立刻 seek 被重置
+      if (!_didSeek && _pendingStart > 1 && d > Duration.zero) {
+        _didSeek = true;
+        unawaited(_seekStart(_pendingStart));
+      }
     });
     _completedSub = _player.stream.completed.listen((c) {
       if (c) {
         _completed = true;
         widget.onProgress?.call(currentResult());
+        widget.onCompleted?.call();
       }
     });
 
@@ -102,29 +171,71 @@ class VideoPreviewState extends State<VideoPreview> {
     }
 
     // Video 必须先挂载到 Widget 树，再 open；否则 Linux 纹理会卡在 1x1 黑屏
-    WidgetsBinding.instance.addPostFrameCallback((_) => _openFile());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        _openEpisode(
+          VideoEpisode(
+            filePath: widget.filePath,
+            title: '',
+            entryDir: '',
+            startPositionSec: widget.startPositionSec,
+            subtitlePath: widget.subtitlePath,
+          ),
+        ),
+      );
+    });
   }
 
-  Future<void> _openFile() async {
+  Future<void> _seekStart(double start) async {
     try {
-      await _player.open(Media(Uri.file(widget.filePath).toString()));
-      final sub = widget.subtitlePath;
+      await _player.seek(Duration(milliseconds: (start * 1000).round()));
+    } catch (e) {
+      debugPrint('[VideoPreview] seek 失败: $e');
+    }
+  }
+
+  Future<void> _openEpisode(VideoEpisode ep) async {
+    try {
+      if (!File(ep.filePath).existsSync()) {
+        if (mounted) {
+          setState(() {
+            _error = '文件不存在';
+            _opening = false;
+          });
+        }
+        return;
+      }
+      final start = ep.startPositionSec > 1
+          ? Duration(milliseconds: (ep.startPositionSec * 1000).round())
+          : null;
+      // Media.start 让 mpv 从指定位置起播；再用 duration 回调兜底 seek
+      _pendingStart = ep.startPositionSec;
+      _didSeek = start == null;
+      await _player.open(
+        Media(
+          Uri.file(ep.filePath).toString(),
+          start: start,
+        ),
+      );
+      final sub = ep.subtitlePath;
       if (sub != null && sub.isNotEmpty && File(sub).existsSync()) {
         try {
-          await _player.setSubtitleTrack(SubtitleTrack.uri(Uri.file(sub).toString()));
+          await _player.setSubtitleTrack(
+            SubtitleTrack.uri(Uri.file(sub).toString()),
+          );
         } catch (e) {
           debugPrint('[VideoPreview] 加载字幕失败: $e');
         }
       }
-      final start = widget.startPositionSec;
-      if (start > 1) {
-        try {
-          await _player.seek(Duration(milliseconds: (start * 1000).round()));
-        } catch (e) {
-          debugPrint('[VideoPreview] seek 失败: $e');
+      await _player.play();
+      if (start != null) {
+        // 部分后端忽略 Media.start，延迟再 seek 一次
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        if (!_didSeek || (_position.inMilliseconds / 1000.0) < 1) {
+          _didSeek = true;
+          await _seekStart(ep.startPositionSec);
         }
       }
-      await _player.play();
       if (mounted) setState(() => _opening = false);
     } catch (e) {
       if (mounted) {
@@ -187,28 +298,81 @@ class VideoPreviewState extends State<VideoPreview> {
   void dispose() {
     _rateSub?.cancel();
     _posSub?.cancel();
+    _durSub?.cancel();
     _completedSub?.cancel();
     _player.dispose();
     super.dispose();
   }
 
-  List<Widget> get _desktopBottomBar => [
-        const MaterialDesktopSkipPreviousButton(),
-        const MaterialDesktopPlayOrPauseButton(),
-        const MaterialDesktopSkipNextButton(),
-        const MaterialDesktopVolumeButton(),
-        const MaterialDesktopPositionIndicator(),
-        const Spacer(),
-        _RateChip(label: _rateLabel(_rate), onPressed: _pickRate),
-        const MaterialDesktopFullscreenButton(),
-      ];
+  Widget get _playlistButton => Builder(
+        builder: (btnCtx) => IconButton(
+          onPressed: widget.onPlaylist == null
+              ? null
+              : () => widget.onPlaylist!(btnCtx),
+          tooltip: '剧集列表',
+          color: Colors.white,
+          icon: const Icon(Icons.playlist_play),
+        ),
+      );
 
-  List<Widget> get _mobileBottomBar => [
-        const MaterialPositionIndicator(),
-        const Spacer(),
-        _RateChip(label: _rateLabel(_rate), onPressed: _pickRate),
-        const MaterialFullscreenButton(),
-      ];
+  /// 左右 Spacer 近似居中播放键（勿用 Expanded 嵌套 Row，易触发 media_kit 主题依赖异常）
+  List<Widget> get _desktopBottomBar {
+    final prev = widget.showEpisodeNav
+        ? IconButton(
+            onPressed: widget.hasPrevEpisode ? widget.onPrevEpisode : null,
+            tooltip: '上一集',
+            color: Colors.white,
+            icon: const Icon(Icons.skip_previous),
+          )
+        : const MaterialDesktopSkipPreviousButton();
+    final next = widget.showEpisodeNav
+        ? IconButton(
+            onPressed: widget.hasNextEpisode ? widget.onNextEpisode : null,
+            tooltip: '下一集',
+            color: Colors.white,
+            icon: const Icon(Icons.skip_next),
+          )
+        : const MaterialDesktopSkipNextButton();
+    return [
+      const MaterialDesktopVolumeButton(),
+      const MaterialDesktopPositionIndicator(),
+      const Spacer(),
+      prev,
+      const MaterialDesktopPlayOrPauseButton(),
+      next,
+      const Spacer(),
+      _RateChip(label: _rateLabel(_rate), onPressed: _pickRate),
+      const MaterialDesktopFullscreenButton(),
+      if (widget.showPlaylistButton) _playlistButton,
+    ];
+  }
+
+  List<Widget> get _mobileBottomBar {
+    return [
+      const MaterialPositionIndicator(),
+      const Spacer(),
+      if (widget.showEpisodeNav) ...[
+        IconButton(
+          onPressed: widget.hasPrevEpisode ? widget.onPrevEpisode : null,
+          tooltip: '上一集',
+          color: Colors.white,
+          icon: const Icon(Icons.skip_previous),
+        ),
+        const MaterialPlayOrPauseButton(),
+        IconButton(
+          onPressed: widget.hasNextEpisode ? widget.onNextEpisode : null,
+          tooltip: '下一集',
+          color: Colors.white,
+          icon: const Icon(Icons.skip_next),
+        ),
+        const SizedBox(width: 4),
+      ] else
+        const MaterialPlayOrPauseButton(),
+      _RateChip(label: _rateLabel(_rate), onPressed: _pickRate),
+      const MaterialFullscreenButton(),
+      if (widget.showPlaylistButton) _playlistButton,
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -301,5 +465,29 @@ class _RateChip extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// 写入条目 meta.json 的局部字段（收藏 / 进度）
+Future<void> patchVideoEntryMeta(
+  String dataRoot,
+  String entryDir,
+  Map<String, dynamic> patch,
+) async {
+  final dir = entryDir.replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
+  if (dir.isEmpty || dir.contains('..')) return;
+  final file = File(p.join(dataRoot, dir, 'meta.json'));
+  if (!await file.exists()) return;
+  try {
+    final raw = jsonDecode(await file.readAsString());
+    if (raw is! Map) return;
+    final map = Map<String, dynamic>.from(raw);
+    map.addAll(patch);
+    map['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+    await file.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(map),
+    );
+  } catch (e) {
+    debugPrint('[VideoPreview] 写 meta 失败: $e');
   }
 }

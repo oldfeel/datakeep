@@ -82,6 +82,33 @@ export async function deleteDataFile(rel: string): Promise<void> {
   if (!res.ok) throw new Error(`删除失败: HTTP ${res.status}`);
 }
 
+/** 复制前缀树到新路径后删除旧树（浅→深复制，深→浅删除） */
+export async function moveDataTree(fromPrefix: string, toPrefix: string): Promise<void> {
+  const from = String(fromPrefix || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '');
+  const to = String(toPrefix || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '');
+  if (!from || !to || from.includes('..') || to.includes('..')) {
+    throw new Error('非法路径');
+  }
+  if (from === to) return;
+  const all = await listDir('');
+  const under = all.filter((f) => f === from || f.startsWith(from + '/'));
+  under.sort((a, b) => a.length - b.length || a.localeCompare(b));
+  for (const rel of under) {
+    const dest = to + rel.slice(from.length);
+    const blob = await getDataBlob(rel);
+    if (blob) await putDataFile(dest, blob);
+    else await putDataFile(dest, '');
+  }
+  under.sort((a, b) => b.length - a.length || b.localeCompare(a));
+  for (const rel of under) {
+    await deleteDataFile(rel);
+  }
+}
+
 /** 删除前缀下全部文件（先深后浅） */
 export async function deleteDataTree(prefix: string): Promise<void> {
   const base = String(prefix || '')

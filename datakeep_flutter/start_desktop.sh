@@ -52,6 +52,21 @@ esac
 echo -e "${GREEN}✅ 使用平台: $PLATFORM${NC}"
 echo -e "\n${BLUE}🚀 flutter run -d $PLATFORM${NC}"
 
+# NVIDIA + CEF：勿用 FLUTTER_LINUX_RENDERER=software（CEF 纹理会白屏）。
+# 改用 Mesa 软 GL，保留 OpenGL 合成路径。
+if [[ "$PLATFORM" == "linux" ]]; then
+  if [[ "${FLUTTER_LINUX_RENDERER:-}" == "software" ]]; then
+    unset FLUTTER_LINUX_RENDERER
+    echo -e "${YELLOW}⚠️  已取消 FLUTTER_LINUX_RENDERER=software（会导致应用页白屏）${NC}"
+  fi
+  if [[ -z "${LIBGL_ALWAYS_SOFTWARE:-}" ]] && [[ -z "${DATAKEEP_ALLOW_NVIDIA_GL:-}" ]]; then
+    if [[ -r /proc/driver/nvidia/version ]] || grep -q '^nvidia' /proc/modules 2>/dev/null; then
+      export LIBGL_ALWAYS_SOFTWARE=1
+      echo -e "${YELLOW}⚠️  检测到 NVIDIA：已设 LIBGL_ALWAYS_SOFTWARE=1（防 CEF 闪退，略影响性能）${NC}"
+    fi
+  fi
+fi
+
 # 关闭终端（SIGHUP）/ Ctrl+C 时兜底停掉应用窗口与 detached 的 syncthing
 # （Dart 侧也会处理信号与窗口关闭；此处应对 flutter run 被终端强杀、钩子来不及跑的情况）
 _cleanup_desktop() {

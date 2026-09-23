@@ -45,7 +45,9 @@ import {
   l2Names,
   collectionNamesFor,
   newEntryId,
+  nextEpisodeOrderBase,
   normalizeCatName,
+  resolveCollectionName,
   videoExtFromName,
   type EntryMeta,
   type Library,
@@ -181,6 +183,20 @@ async function ensureCatKeeps(l1n: string, l2n: string, coln: string) {
   }
 }
 
+async function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: number | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<T>((resolve) => {
+        timer = window.setTimeout(() => resolve(fallback), ms);
+      }),
+    ]);
+  } finally {
+    if (timer != null) window.clearTimeout(timer);
+  }
+}
+
 async function resolveDurationSec(
   videoPick: VideoPick,
   videoRelInData: string,
@@ -275,6 +291,7 @@ export default function VideoEntryDialog({
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
+  const [busyLabel, setBusyLabel] = useState('');
   const [editorKey, setEditorKey] = useState(0);
   const [favorite, setFavorite] = useState(false);
   const [subtitlePick, setSubtitlePick] = useState<VideoPick | null>(null);
@@ -463,7 +480,7 @@ export default function VideoEntryDialog({
   const submitAdd = async () => {
     const l1n = normalizeCatName(l1);
     const l2n = normalizeCatName(l2);
-    const coln = normalizeCatName(collection);
+    const coln = resolveCollectionName(library, l1n, l2n, collection);
     if (!l1n || isReservedName(l1n)) {
       setError('请填写有效的一级分类');
       return;
@@ -485,6 +502,7 @@ export default function VideoEntryDialog({
     setBusy(true);
     setError('');
     setProgress(0);
+    setBusyLabel('正在上传视频…');
     const entryId = newEntryId();
     const dir = entryPath(l1n, l2n, coln || null, entryId);
     const videoName = `video.${videoExtFromName(fileName)}`;
@@ -501,20 +519,26 @@ export default function VideoEntryDialog({
         videoBlob = videoPick;
       }
       await putDataFileWithProgress(`${dir}/${videoName}`, videoBlob, (r) =>
-        setProgress(r * 0.85),
+        setProgress(r * 0.8),
       );
 
+      setBusyLabel('正在生成封面…');
+      setProgress(0.82);
       let cover = coverBlob;
-      if (!cover) cover = await resolveAutoCover(videoPick, fileName);
+      if (!cover) {
+        // 抽帧可能很慢（大文件 / 宿主解码），限时避免一直卡在「上传中」
+        cover = await withTimeout(resolveAutoCover(videoPick, fileName), 8000, null);
+      }
       let hasCover = false;
       if (cover) {
         await putDataFile(`${dir}/${COVER_NAME}`, cover);
         hasCover = true;
-        setProgress(0.92);
       }
+      setProgress(0.9);
 
       let subtitleName: string | undefined;
       if (subtitlePick) {
+        setBusyLabel('正在写入字幕…');
         const subFileName = isStagedPick(subtitlePick)
           ? subtitlePick.name
           : subtitlePick.name;
@@ -535,11 +559,14 @@ export default function VideoEntryDialog({
         await putDataFile(`${dir}/${subtitleName}`, subBlob);
       }
 
+      setBusyLabel('正在保存信息…');
       const description = await saveDescription();
       const now = new Date().toISOString();
-      const durationSec =
-        (await resolveDurationSec(videoPick, `${dir}/${videoName}`)) ??
-        undefined;
+      const durationSec = await withTimeout(
+        resolveDurationSec(videoPick, `${dir}/${videoName}`).then((d) => d),
+        5000,
+        undefined,
+      );
       const next: EntryMeta = {
         title: titleN,
         description,
@@ -549,6 +576,9 @@ export default function VideoEntryDialog({
         playCount: 0,
         durationSec,
         favorite,
+        episodeOrder: coln
+          ? nextEpisodeOrderBase(library, l1n, l2n, coln)
+          : undefined,
         createdAt: now,
         updatedAt: now,
       };
@@ -562,6 +592,7 @@ export default function VideoEntryDialog({
       setError(e instanceof Error ? e.message : '添加失败');
     } finally {
       setBusy(false);
+      setBusyLabel('');
       setProgress(null);
     }
   };
@@ -573,7 +604,7 @@ export default function VideoEntryDialog({
     }
     const l1n = normalizeCatName(l1);
     const l2n = normalizeCatName(l2);
-    const coln = normalizeCatName(collection);
+    const coln = resolveCollectionName(library, l1n, l2n, collection);
     if (!l1n || isReservedName(l1n)) {
       setError('请填写有效的一级分类');
       return;
@@ -882,7 +913,14 @@ export default function VideoEntryDialog({
               </>
             )}
             {progress != null && (
-              <LinearProgress variant="determinate" value={Math.round(progress * 100)} />
+              <Box>
+                {busyLabel && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                    {busyLabel}
+                  </Typography>
+                )}
+                <LinearProgress variant="determinate" value={Math.round(progress * 100)} />
+              </Box>
             )}
             {error && (
               <Typography color="error" variant="body2">
@@ -900,7 +938,7 @@ export default function VideoEntryDialog({
             onClick={submit}
             disabled={busy || loading || (isEdit && !meta)}
           >
-            {busy ? (isEdit ? '保存中…' : '上传中…') : isEdit ? '保存' : '确定'}
+            {busy ? busyLabel || (isEdit ? '保存中…' : '上传中…') : isEdit ? '保存' : '确定'}
           </Button>
         </DialogActions>
       </Dialog>

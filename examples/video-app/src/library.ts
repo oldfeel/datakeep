@@ -348,6 +348,7 @@ export async function scanLibrary(): Promise<Library> {
 }
 
 export type EntrySort =
+  | 'custom'
   | 'createdAt_desc'
   | 'createdAt_asc'
   | 'playCount_desc'
@@ -358,6 +359,8 @@ export type EntrySort =
   | 'title_desc';
 
 export function sortEntries(entries: VideoEntry[], sort: EntrySort): VideoEntry[] {
+  if (sort === 'custom') return sortSeriesEpisodes(entries);
+
   const list = [...entries];
   const byPlay = sort.startsWith('playCount');
   const byDuration = sort.startsWith('duration');
@@ -366,20 +369,6 @@ export function sortEntries(entries: VideoEntry[], sort: EntrySort): VideoEntry[
   const dir = asc ? 1 : -1;
 
   list.sort((a, b) => {
-    // 合集内优先 episodeOrder
-    if (
-      a.collection &&
-      b.collection &&
-      a.collection === b.collection &&
-      a.l1 === b.l1 &&
-      a.l2 === b.l2
-    ) {
-      const oa = a.episodeOrder;
-      const ob = b.episodeOrder;
-      if (oa != null && ob != null && oa !== ob) return oa - ob;
-      if (oa != null && ob == null) return -1;
-      if (oa == null && ob != null) return 1;
-    }
     if (byTitle) {
       const d = a.title.localeCompare(b.title, 'zh') * dir;
       if (d !== 0) return d;
@@ -400,6 +389,23 @@ export function sortEntries(entries: VideoEntry[], sort: EntrySort): VideoEntry[
     return a.title.localeCompare(b.title, 'zh');
   });
   return list;
+}
+
+/**
+ * 合集内固定顺序：episodeOrder → 创建时间旧→新 → 标题。
+ * 列表展示、连播、上一集/下一集必须共用此顺序，避免「倒序连播」。
+ */
+export function sortSeriesEpisodes(entries: VideoEntry[]): VideoEntry[] {
+  return [...entries].sort((a, b) => {
+    const oa = a.episodeOrder;
+    const ob = b.episodeOrder;
+    if (oa != null && ob != null && oa !== ob) return oa - ob;
+    if (oa != null && ob == null) return -1;
+    if (oa == null && ob != null) return 1;
+    const d = a.createdAt.localeCompare(b.createdAt);
+    if (d !== 0) return d;
+    return a.title.localeCompare(b.title, 'zh');
+  });
 }
 
 /** 列表项：单集视频，或折叠后的剧集合集 */
@@ -436,7 +442,9 @@ export function collapseToLibraryItems(
       singles.push(e);
       continue;
     }
-    const key = seriesKey(e.l1, e.l2, e.collection);
+    // 同分类下规范化合集名，避免「同名多合集」
+    const col = normalizeCatName(e.collection) || e.collection;
+    const key = seriesKey(e.l1, e.l2, col);
     const arr = groups.get(key);
     if (arr) arr.push(e);
     else groups.set(key, [e]);
@@ -447,7 +455,7 @@ export function collapseToLibraryItems(
     items.push({ kind: 'video', entry: e });
   }
   for (const [key, eps] of groups) {
-    const sorted = sortEntries(eps, sort);
+    const sorted = sortSeriesEpisodes(eps);
     const head = sorted[0];
     const coverRel = sorted.find((x) => x.coverRel)?.coverRel ?? null;
     const createdAt =
@@ -457,7 +465,7 @@ export function collapseToLibraryItems(
       key,
       l1: head.l1,
       l2: head.l2,
-      name: head.collection!,
+      name: normalizeCatName(head.collection!) || head.collection!,
       episodes: sorted,
       coverRel,
       playCount: sorted.reduce((s, x) => s + x.playCount, 0),
@@ -528,6 +536,45 @@ export function collectionNamesFor(library: Library, l1: string, l2: string): st
   return library.collections[l2Key(l1, l2)] || [];
 }
 
+/**
+ * 解析合集名：同分类下已有同名（规范化后）则复用原名，避免重复合集。
+ */
+export function resolveCollectionName(
+  library: Library,
+  l1: string,
+  l2: string,
+  raw: string,
+): string {
+  const n = normalizeCatName(raw);
+  if (!n) return '';
+  const existing = collectionNamesFor(library, l1, l2);
+  const hit = existing.find((x) => normalizeCatName(x) === n);
+  return hit || n;
+}
+
+/** 合集内下一集 episodeOrder 起点（接在已有集之后） */
+export function nextEpisodeOrderBase(
+  library: Library,
+  l1: string,
+  l2: string,
+  collection: string,
+): number {
+  const col = normalizeCatName(collection);
+  if (!col) return 0;
+  let max = -1;
+  for (const e of library.entries) {
+    if (e.l1 !== l1 || e.l2 !== l2 || e.collection !== col || e.legacy) continue;
+    if (e.episodeOrder != null && e.episodeOrder > max) max = e.episodeOrder;
+  }
+  // 若尚无 episodeOrder，用已有集数接续
+  if (max < 0) {
+    return library.entries.filter(
+      (e) => e.l1 === l1 && e.l2 === l2 && e.collection === col && !e.legacy,
+    ).length;
+  }
+  return max + 1;
+}
+
 export function countEntriesInL1(library: Library, l1: string): number {
   if (l1 === 'all') return library.entries.length;
   return library.entries.filter((e) => e.l1 === l1 || (l1 === 'root' && !e.l1)).length;
@@ -566,26 +613,56 @@ export function filterEntries(
   });
 }
 
-/** 同合集下一集；无则 null */
+/** 同合集下一集（循环） */
 export function nextEpisode(
   library: Library,
   entry: VideoEntry,
-  sort: EntrySort = 'createdAt_asc',
 ): VideoEntry | null {
   if (!entry.collection || entry.legacy) return null;
-  const eps = sortEntries(
+  const eps = seriesEpisodes(library, entry);
+  if (eps.length < 2) return null;
+  const i = eps.findIndex((e) => e.dir === entry.dir);
+  if (i < 0) return null;
+  return eps[(i + 1) % eps.length];
+}
+
+/** 同合集上一集（循环） */
+export function prevEpisode(
+  library: Library,
+  entry: VideoEntry,
+): VideoEntry | null {
+  if (!entry.collection || entry.legacy) return null;
+  const eps = seriesEpisodes(library, entry);
+  if (eps.length < 2) return null;
+  const i = eps.findIndex((e) => e.dir === entry.dir);
+  if (i < 0) return null;
+  return eps[(i - 1 + eps.length) % eps.length];
+}
+
+/** 同合集全部剧集（固定正序） */
+export function seriesEpisodes(
+  library: Library,
+  entry: VideoEntry,
+): VideoEntry[] {
+  if (!entry.collection || entry.legacy) return [entry];
+  return sortSeriesEpisodes(
     library.entries.filter(
       (e) =>
         e.l1 === entry.l1 &&
         e.l2 === entry.l2 &&
-        e.collection === entry.collection &&
+        !!e.collection &&
+        normalizeCatName(e.collection) === normalizeCatName(entry.collection!) &&
         !e.legacy,
     ),
-    sort,
   );
-  const i = eps.findIndex((e) => e.dir === entry.dir);
-  if (i < 0 || i >= eps.length - 1) return null;
-  return eps[i + 1];
+}
+
+export function countEntriesInL2(library: Library, l1: string, l2: string): number {
+  return library.entries.filter((e) => e.l1 === l1 && e.l2 === l2).length;
+}
+
+export function isL2Empty(library: Library, l1: string, l2: string): boolean {
+  return countEntriesInL2(library, l1, l2) === 0;
 }
 
 /** 标题重复（忽略自身） */

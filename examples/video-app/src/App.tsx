@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+} from 'react';
 import {
   Alert,
   AppBar,
@@ -37,6 +44,7 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteIcon from '@mui/icons-material/Delete';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import EditIcon from '@mui/icons-material/Edit';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
@@ -56,6 +64,7 @@ import {
   getDataBlob,
   getDataJson,
   listDir,
+  moveDataTree,
   putDataFile,
   putDataFileWithProgress,
   putDataJson,
@@ -81,36 +90,51 @@ import {
   META_NAME,
   RESERVED_NAMES,
   collapseToLibraryItems,
+  collectionNamesFor,
   countEntriesInL1,
+  countEntriesInL2,
   countFavorites,
   emptyLibrary,
   entryPath,
   filterEntries,
   findDuplicateTitles,
   isL1Empty,
+  isL2Empty,
   isReservedName,
   l1Names,
   l2Names,
   newEntryId,
   nextEpisode,
+  nextEpisodeOrderBase,
   normalizeCatName,
+  resolveCollectionName,
   scanLibrary,
+  seriesEpisodes,
   sortEntries,
+  sortSeriesEpisodes,
   videoExtFromName,
   type EntryMeta,
   type EntrySort,
   type Library,
+  type LibraryItem,
   type SeriesGroup,
   type VideoEntry,
 } from './library';
 import {
+  applyNameOrder,
   densityMinWidth,
   loadAutoNext,
   loadDensity,
+  loadL1Order,
+  loadL2Order,
+  loadLibraryOrder,
   loadPosterRatio,
   posterAspect,
   saveAutoNext,
   saveDensity,
+  saveL1Order,
+  saveL2Order,
+  saveLibraryOrder,
   savePosterRatio,
   type ListDensity,
   type PosterRatio,
@@ -118,6 +142,53 @@ import {
 
 type L1Id = 'all' | 'favorites' | string;
 type SeriesFocus = { l1: string; l2: string; name: string };
+
+type DragGhost =
+  | {
+      kind: 'l1';
+      x: number;
+      y: number;
+      name: string;
+      count: number;
+      selected: boolean;
+    }
+  | {
+      kind: 'episode';
+      x: number;
+      y: number;
+      entry: VideoEntry;
+      aspect: string;
+    }
+  | {
+      kind: 'series';
+      x: number;
+      y: number;
+      group: SeriesGroup;
+      aspect: string;
+    };
+
+/** 列表项移动到目标前；向下拖时修正下标偏移 */
+function moveBefore<T>(list: T[], fromIdx: number, toIdx: number): T[] {
+  if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return list;
+  const next = [...list];
+  const [item] = next.splice(fromIdx, 1);
+  const insertAt = fromIdx < toIdx ? toIdx - 1 : toIdx;
+  next.splice(insertAt, 0, item);
+  return next;
+}
+
+function libraryItemKey(item: LibraryItem): string {
+  if (item.kind === 'series') return `s:${item.key}`;
+  return `v:${item.entry.dir || item.entry.videoRel}`;
+}
+
+function applyLibraryItemOrder(items: LibraryItem[], order: string[]): LibraryItem[] {
+  if (!order.length || items.length < 2) return items;
+  const keys = items.map(libraryItemKey);
+  const ordered = applyNameOrder(keys, order);
+  const byKey = new Map(keys.map((k, i) => [k, items[i]]));
+  return ordered.map((k) => byKey.get(k)!).filter(Boolean);
+}
 
 export default function App() {
   const [library, setLibrary] = useState<Library>(emptyLibrary);
@@ -149,6 +220,28 @@ export default function App() {
   const [density, setDensity] = useState<ListDensity>(() => loadDensity());
   const [posterRatio, setPosterRatio] = useState<PosterRatio>(() => loadPosterRatio());
   const [autoNext, setAutoNext] = useState(() => loadAutoNext());
+  const [l1Order, setL1Order] = useState<string[]>(() => loadL1Order());
+  const [l2OrderMap, setL2OrderMap] = useState<Record<string, string[]>>(() => loadL2Order());
+  const [libraryOrderMap, setLibraryOrderMap] = useState<Record<string, string[]>>(
+    () => loadLibraryOrder(),
+  );
+  const [l2EditOpen, setL2EditOpen] = useState(false);
+  const [dragL1, setDragL1] = useState<string | null>(null);
+  const [dropL1, setDropL1] = useState<string | null>(null);
+  const [dragGhost, setDragGhost] = useState<DragGhost | null>(null);
+  const [dragEpisodeDir, setDragEpisodeDir] = useState<string | null>(null);
+  const [dropEpisodeDir, setDropEpisodeDir] = useState<string | null>(null);
+  const [dragLibKey, setDragLibKey] = useState<string | null>(null);
+  const [dropLibKey, setDropLibKey] = useState<string | null>(null);
+  const dragLibKeyRef = useRef<string | null>(null);
+  const dragEpisodeDirRef = useRef<string | null>(null);
+  const dragL1Ref = useRef<string | null>(null);
+  const dropLibKeyRef = useRef<string | null>(null);
+  const dropEpisodeDirRef = useRef<string | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const [renameSeries, setRenameSeries] = useState<SeriesFocus | null>(null);
+  const [dissolveSeries, setDissolveSeries] = useState<SeriesFocus | null>(null);
+  const [seriesBusy, setSeriesBusy] = useState(false);
   const [snack, setSnack] = useState('');
   const webVideoRef = useRef<HTMLVideoElement | null>(null);
   const playingRef = useRef<VideoEntry | null>(null);
@@ -184,8 +277,113 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [snack]);
 
-  const l1List = useMemo(() => l1Names(library), [library]);
-  const l2List = useMemo(() => l2Names(library, l1 === 'favorites' ? 'all' : l1), [library, l1]);
+  // 拖拽结束 / 落到空隙：必须清虚影（CEF 在未命中 drop 目标时 dragend 偶发丢失）
+  useEffect(() => {
+    const clearDrag = () => {
+      dragLibKeyRef.current = null;
+      dragEpisodeDirRef.current = null;
+      dragL1Ref.current = null;
+      dropLibKeyRef.current = null;
+      dropEpisodeDirRef.current = null;
+      setDragGhost(null);
+      setDragL1(null);
+      setDropL1(null);
+      setDragEpisodeDir(null);
+      setDropEpisodeDir(null);
+      setDragLibKey(null);
+      setDropLibKey(null);
+    };
+    const isDragging = () =>
+      !!(
+        dragLibKeyRef.current ||
+        dragEpisodeDirRef.current ||
+        dragL1Ref.current
+      );
+    const allowDrop = (e: DragEvent) => {
+      if (!isDragging()) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    };
+    const onDropAnywhere = (e: DragEvent) => {
+      if (!isDragging()) return;
+      e.preventDefault();
+      // 卡片自身 onDrop 已处理排序；此处兜底清状态（含空隙松开）
+      window.setTimeout(clearDrag, 0);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isDragging()) clearDrag();
+    };
+    window.addEventListener('dragend', clearDrag, true);
+    window.addEventListener('dragover', allowDrop, true);
+    window.addEventListener('drop', onDropAnywhere);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('dragend', clearDrag, true);
+      window.removeEventListener('dragover', allowDrop, true);
+      window.removeEventListener('drop', onDropAnywhere);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, []);
+
+  const clearLibDrag = () => {
+    dragLibKeyRef.current = null;
+    dropLibKeyRef.current = null;
+    setDragLibKey(null);
+    setDropLibKey(null);
+    setDragGhost(null);
+  };
+
+  const nearestLibKeyAt = (clientX: number, clientY: number): string | null => {
+    const root = gridRef.current;
+    if (!root) return null;
+    const nodes = root.querySelectorAll<HTMLElement>('[data-lib-key]');
+    let best: string | null = null;
+    let bestDist = Infinity;
+    nodes.forEach((el) => {
+      const key = el.dataset.libKey;
+      if (!key || key === dragLibKeyRef.current) return;
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const d = (cx - clientX) ** 2 + (cy - clientY) ** 2;
+      if (d < bestDist) {
+        bestDist = d;
+        best = key;
+      }
+    });
+    return best;
+  };
+
+  const nearestEpisodeDirAt = (clientX: number, clientY: number): string | null => {
+    const root = gridRef.current;
+    if (!root) return null;
+    const nodes = root.querySelectorAll<HTMLElement>('[data-ep-dir]');
+    let best: string | null = null;
+    let bestDist = Infinity;
+    nodes.forEach((el) => {
+      const dir = el.dataset.epDir;
+      if (!dir || dir === dragEpisodeDirRef.current) return;
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const d = (cx - clientX) ** 2 + (cy - clientY) ** 2;
+      if (d < bestDist) {
+        bestDist = d;
+        best = dir;
+      }
+    });
+    return best;
+  };
+
+  const l1List = useMemo(
+    () => applyNameOrder(l1Names(library), l1Order),
+    [library, l1Order],
+  );
+  const l2List = useMemo(() => {
+    const base = l2Names(library, l1 === 'favorites' ? 'all' : l1);
+    if (l1 === 'all' || l1 === 'favorites') return base;
+    return applyNameOrder(base, l2OrderMap[l1] || []);
+  }, [library, l1, l2OrderMap]);
   const favCount = useMemo(() => countFavorites(library), [library]);
 
   const filtered = useMemo(() => {
@@ -198,40 +396,64 @@ export default function App() {
       favoriteOnly,
     });
     if (seriesFocus) {
+      const focusCol = normalizeCatName(seriesFocus.name);
       list = list.filter(
         (e) =>
           e.l1 === seriesFocus.l1 &&
           e.l2 === seriesFocus.l2 &&
-          e.collection === seriesFocus.name,
+          !!e.collection &&
+          normalizeCatName(e.collection) === focusCol,
       );
     }
     return list;
   }, [library, l1, l2, seriesFocus, query]);
 
+  const libraryOrderScope = useMemo(() => {
+    if (l1 === 'all' || l1 === 'favorites') return 'all';
+    if (l2 === 'all') return l1;
+    return `${l1}/${l2}`;
+  }, [l1, l2]);
+
   const gridItems = useMemo(() => {
-    const sorted = sortEntries(filtered, sortBy);
-    if (seriesFocus || query.trim() || l1 === 'favorites') {
-      return sorted.map((entry) => ({ kind: 'video' as const, entry }));
+    if (seriesFocus) {
+      return sortEntries(filtered, sortBy).map((entry) => ({
+        kind: 'video' as const,
+        entry,
+      }));
     }
-    return collapseToLibraryItems(sorted, sortBy);
-  }, [filtered, sortBy, seriesFocus, query, l1]);
+    const sortKey = sortBy === 'custom' ? 'createdAt_desc' : sortBy;
+    const sorted = sortEntries(filtered, sortKey);
+    let items: LibraryItem[] =
+      query.trim() || l1 === 'favorites'
+        ? sorted.map((entry) => ({ kind: 'video' as const, entry }))
+        : collapseToLibraryItems(sorted, sortKey);
+
+    if (sortBy === 'custom') {
+      items = applyLibraryItemOrder(items, libraryOrderMap[libraryOrderScope] || []);
+    }
+    return items;
+  }, [filtered, sortBy, seriesFocus, query, l1, libraryOrderMap, libraryOrderScope]);
 
   const selectL1 = (id: L1Id) => {
     setL1(id);
     setL2('all');
     setSeriesFocus(null);
     setPlaying(null);
+    if (sortBy === 'custom') setSortBy('createdAt_desc');
   };
 
   const selectL2 = (id: string) => {
     setL2(id);
     setSeriesFocus(null);
     setPlaying(null);
+    if (sortBy === 'custom') setSortBy('createdAt_desc');
   };
 
   const openSeries = (g: SeriesGroup) => {
     setSeriesFocus({ l1: g.l1, l2: g.l2, name: g.name });
     setPlaying(null);
+    const hasCustom = g.episodes.some((e) => e.episodeOrder != null);
+    setSortBy(hasCustom ? 'custom' : sortBy === 'custom' ? 'createdAt_asc' : sortBy);
   };
 
   const patchEntryLocal = (dir: string, patch: Partial<VideoEntry>) => {
@@ -300,7 +522,7 @@ export default function App() {
 
   const moveEpisode = async (e: VideoEntry, delta: -1 | 1) => {
     if (!e.collection || e.legacy || !e.dir) return;
-    const eps = sortEntries(
+    const eps = sortSeriesEpisodes(
       library.entries.filter(
         (x) =>
           x.l1 === e.l1 &&
@@ -308,7 +530,6 @@ export default function App() {
           x.collection === e.collection &&
           !x.legacy,
       ),
-      'createdAt_asc',
     );
     const i = eps.findIndex((x) => x.dir === e.dir);
     const j = i + delta;
@@ -319,29 +540,60 @@ export default function App() {
         await saveMetaPatch(eps[k], { episodeOrder: order });
         patchEntryLocal(eps[k].dir, { episodeOrder: order });
       }
+      setSortBy('custom');
       await refresh();
     } catch (err) {
       setSnack(err instanceof Error ? err.message : '排序失败');
     }
   };
 
+  const resumeStart = (e: VideoEntry) =>
+    e.positionSec > 5 &&
+    (!e.durationSec || e.positionSec < e.durationSec * 0.95)
+      ? e.positionSec
+      : 0;
+
   const playOne = async (e: VideoEntry): Promise<boolean> => {
     setPlayError('');
     void bumpPlayCount(e);
 
-    const start =
-      e.positionSec > 5 &&
-      (!e.durationSec || e.positionSec < e.durationSec * 0.95)
-        ? e.positionSec
-        : 0;
+    const start = resumeStart(e);
+    // 播放列表顺序与当前合集列表展示一致（含自定义 / 时间等排序）
+    const eps =
+      seriesFocus && e.collection
+        ? sortEntries(
+            library.entries.filter(
+              (x) =>
+                x.l1 === seriesFocus.l1 &&
+                x.l2 === seriesFocus.l2 &&
+                !!x.collection &&
+                normalizeCatName(x.collection) ===
+                  normalizeCatName(seriesFocus.name) &&
+                !x.legacy,
+            ),
+            sortBy,
+          )
+        : seriesEpisodes(library, e);
+    const playlist = eps.map((x) => ({
+      rel: x.videoRel,
+      title: x.title,
+      subtitleRel: x.subtitleRel || undefined,
+      startPosition: resumeStart(x),
+      entryDir: x.dir,
+      favorite: x.favorite,
+    }));
 
     if (hasPlayVideoHost()) {
       try {
         const result = await playVideoFromRel(e.videoRel, e.title, {
           startPosition: start,
           subtitleRel: e.subtitleRel || undefined,
+          entryDir: e.dir,
+          favorite: e.favorite,
+          autoNext,
+          playlist,
         });
-        await saveWatchProgress(e, result.positionSec ?? 0, result.completed);
+        await refresh();
         return !!result.completed;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -361,11 +613,171 @@ export default function App() {
 
   const openEntry = async (e: VideoEntry) => {
     const completed = await playOne(e);
-    if (!completed || !autoNext) return;
-    const nxt = nextEpisode(library, e, 'createdAt_asc');
+    if (!completed || !autoNext || hasPlayVideoHost()) return;
+    const nxt = nextEpisode(library, e);
     if (nxt) {
       setSnack(`即将播放下一集：${nxt.title}`);
       await openEntry(nxt);
+    }
+  };
+
+  const reorderL1 = (from: string, to: string) => {
+    if (from === to) return;
+    const i = l1List.indexOf(from);
+    const j = l1List.indexOf(to);
+    if (i < 0 || j < 0) return;
+    const next = moveBefore(l1List, i, j);
+    setL1Order(next);
+    saveL1Order(next);
+  };
+
+  const reorderEpisodes = async (fromDir: string, toDir: string) => {
+    if (!seriesFocus || fromDir === toDir) return;
+    const focusCol = normalizeCatName(seriesFocus.name);
+    const eps = sortSeriesEpisodes(
+      library.entries.filter(
+        (x) =>
+          x.l1 === seriesFocus.l1 &&
+          x.l2 === seriesFocus.l2 &&
+          !!x.collection &&
+          normalizeCatName(x.collection) === focusCol &&
+          !x.legacy,
+      ),
+    );
+    const i = eps.findIndex((x) => x.dir === fromDir);
+    const j = eps.findIndex((x) => x.dir === toDir);
+    if (i < 0 || j < 0) return;
+    const next = moveBefore(eps, i, j);
+    try {
+      for (let k = 0; k < next.length; k++) {
+        await saveMetaPatch(next[k], { episodeOrder: k });
+        patchEntryLocal(next[k].dir, { episodeOrder: k });
+      }
+      setSortBy('custom');
+      setSnack('已更新合集顺序（自定义排序）');
+      await refresh();
+    } catch (err) {
+      setSnack(err instanceof Error ? err.message : '排序失败');
+    } finally {
+      setDragGhost(null);
+      setDragEpisodeDir(null);
+      setDropEpisodeDir(null);
+    }
+  };
+
+  const reorderLibraryItems = (fromKey: string, toKey: string) => {
+    if (!fromKey || !toKey || fromKey === toKey) return;
+    const keys = gridItems.map(libraryItemKey);
+    const i = keys.indexOf(fromKey);
+    const j = keys.indexOf(toKey);
+    if (i < 0 || j < 0) return;
+    const nextKeys = moveBefore(keys, i, j);
+    const nextMap = { ...libraryOrderMap, [libraryOrderScope]: nextKeys };
+    setLibraryOrderMap(nextMap);
+    saveLibraryOrder(nextMap);
+    setSortBy('custom');
+    clearLibDrag();
+  };
+
+  const submitRenameSeries = async () => {
+    if (!renameSeries) return;
+    const newName = normalizeCatName(renameInput);
+    if (!newName) {
+      setRenameError('请输入名称');
+      return;
+    }
+    if (newName === renameSeries.name) {
+      setRenameSeries(null);
+      return;
+    }
+    if (isReservedName(newName)) {
+      setRenameError('该名称已保留');
+      return;
+    }
+    const existing = collectionNamesFor(library, renameSeries.l1, renameSeries.l2);
+    if (existing.includes(newName)) {
+      setRenameError('同名合集已存在');
+      return;
+    }
+    setSeriesBusy(true);
+    setRenameError('');
+    try {
+      const from = `${renameSeries.l1}/${renameSeries.l2}/${renameSeries.name}`;
+      const to = `${renameSeries.l1}/${renameSeries.l2}/${newName}`;
+      await moveDataTree(from, to);
+      if (
+        seriesFocus &&
+        seriesFocus.l1 === renameSeries.l1 &&
+        seriesFocus.l2 === renameSeries.l2 &&
+        seriesFocus.name === renameSeries.name
+      ) {
+        setSeriesFocus({ ...seriesFocus, name: newName });
+      }
+      setRenameSeries(null);
+      setSnack('合集已重命名');
+      await refresh();
+    } catch (e) {
+      setRenameError(e instanceof Error ? e.message : '重命名失败');
+    } finally {
+      setSeriesBusy(false);
+    }
+  };
+
+  const submitDissolveSeries = async () => {
+    if (!dissolveSeries) return;
+    setSeriesBusy(true);
+    try {
+      const eps = library.entries.filter(
+        (x) =>
+          x.l1 === dissolveSeries.l1 &&
+          x.l2 === dissolveSeries.l2 &&
+          x.collection === dissolveSeries.name &&
+          !x.legacy &&
+          x.dir,
+      );
+      for (const e of eps) {
+        // l1/l2/collection/entryId → l1/l2/entryId
+        const parts = e.dir.split('/');
+        if (parts.length < 4) continue;
+        const entryId = parts[parts.length - 1];
+        const dest = `${dissolveSeries.l1}/${dissolveSeries.l2}/${entryId}`;
+        await moveDataTree(e.dir, dest);
+        // 清除自定义集序
+        try {
+          const meta = await getDataJson<EntryMeta>(`${dest}/${META_NAME}`);
+          if (meta && meta.episodeOrder != null) {
+            const { episodeOrder: _, ...rest } = meta;
+            await putDataJson(`${dest}/${META_NAME}`, {
+              ...rest,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      try {
+        await deleteDataTree(
+          `${dissolveSeries.l1}/${dissolveSeries.l2}/${dissolveSeries.name}`,
+        );
+      } catch {
+        /* ignore */
+      }
+      if (
+        seriesFocus &&
+        seriesFocus.l1 === dissolveSeries.l1 &&
+        seriesFocus.l2 === dissolveSeries.l2 &&
+        seriesFocus.name === dissolveSeries.name
+      ) {
+        setSeriesFocus(null);
+      }
+      setDissolveSeries(null);
+      setSnack('合集已解散，视频保留在原分类下');
+      await refresh();
+    } catch (e) {
+      setSnack(e instanceof Error ? e.message : '解散失败');
+    } finally {
+      setSeriesBusy(false);
     }
   };
 
@@ -593,6 +1005,8 @@ export default function App() {
                   selected={l1 === name}
                   count={countEntriesInL1(library, name)}
                   empty={isL1Empty(library, name)}
+                  dragging={dragL1 === name}
+                  dropTarget={dropL1 === name && dragL1 !== name}
                   onSelect={() => selectL1(name)}
                   onRename={() => {
                     setRenameInput(name);
@@ -600,6 +1014,50 @@ export default function App() {
                     setRenameL1(name);
                   }}
                   onDelete={() => setDeleteTarget({ kind: 'l1', name })}
+                  onDragStart={(ev) => {
+                    setDragL1(name);
+                    setDropL1(null);
+                    setDragGhost({
+                      kind: 'l1',
+                      x: ev.clientX,
+                      y: ev.clientY,
+                      name,
+                      count: countEntriesInL1(library, name),
+                      selected: l1 === name,
+                    });
+                  }}
+                  onDrag={(ev) => {
+                    if (ev.clientX === 0 && ev.clientY === 0) return;
+                    setDragGhost((g) =>
+                      g && g.kind === 'l1'
+                        ? { ...g, x: ev.clientX, y: ev.clientY }
+                        : {
+                            kind: 'l1',
+                            x: ev.clientX,
+                            y: ev.clientY,
+                            name,
+                            count: countEntriesInL1(library, name),
+                            selected: l1 === name,
+                          },
+                    );
+                  }}
+                  onDragEnter={() => {
+                    if (dragL1 && dragL1 !== name) setDropL1(name);
+                  }}
+                  onDragLeave={() => {
+                    setDropL1((cur) => (cur === name ? null : cur));
+                  }}
+                  onDragEnd={() => {
+                    setDragL1(null);
+                    setDropL1(null);
+                    setDragGhost(null);
+                  }}
+                  onDrop={(from) => {
+                    reorderL1(from || dragL1 || '', name);
+                    setDragL1(null);
+                    setDropL1(null);
+                    setDragGhost(null);
+                  }}
                 />
               ))}
             </List>
@@ -641,26 +1099,30 @@ export default function App() {
                 spacing={1}
                 sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1 }}
               >
-                <Box sx={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 0.75, minWidth: 0 }}>
+                <Box sx={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 1, minWidth: 0, alignItems: 'center' }}>
                   {l1 !== 'favorites' &&
                   ((l1 !== 'all' ? l2List : l2Names(library, 'all')).length > 0 ||
                     l1 !== 'all') ? (
                     <>
                       <Chip
                         label="全部"
-                        size="small"
                         color={l2 === 'all' ? 'primary' : 'default'}
                         variant={l2 === 'all' ? 'filled' : 'outlined'}
                         onClick={() => selectL2('all')}
+                        sx={{ height: 36, fontSize: '0.9rem', px: 0.5 }}
                       />
                       {(l1 !== 'all' ? l2List : l2Names(library, 'all')).map((name) => (
                         <Chip
                           key={name}
-                          label={name}
-                          size="small"
+                          label={
+                            l1 !== 'all' && l1 !== 'favorites'
+                              ? `${name} (${countEntriesInL2(library, l1, name)})`
+                              : name
+                          }
                           color={l2 === name ? 'primary' : 'default'}
                           variant={l2 === name ? 'filled' : 'outlined'}
                           onClick={() => selectL2(name)}
+                          sx={{ height: 36, fontSize: '0.9rem', px: 0.5 }}
                         />
                       ))}
                     </>
@@ -670,6 +1132,17 @@ export default function App() {
                     </Typography>
                   )}
                 </Box>
+                {l1 !== 'all' && l1 !== 'favorites' && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<EditIcon />}
+                    onClick={() => setL2EditOpen(true)}
+                    sx={{ flexShrink: 0, height: 36 }}
+                  >
+                    编辑二级分类
+                  </Button>
+                )}
                 <Button
                   variant="outlined"
                   size="small"
@@ -719,6 +1192,7 @@ export default function App() {
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value as EntrySort)}
                   >
+                    <MenuItem value="custom">自定义（拖拽顺序）</MenuItem>
                     <MenuItem value="createdAt_desc">上传时间 · 新→旧</MenuItem>
                     <MenuItem value="createdAt_asc">上传时间 · 旧→新</MenuItem>
                     <MenuItem value="title_asc">标题 · A→Z</MenuItem>
@@ -733,41 +1207,315 @@ export default function App() {
             </Stack>
 
             <Box sx={{ flex: 1, p: 2, pb: 4, overflowY: 'auto' }}>
-              {seriesFocus && (
-                <Button
-                  startIcon={<ArrowBackIcon />}
-                  onClick={() => setSeriesFocus(null)}
-                  sx={{ mb: 2 }}
-                >
-                  返回列表 · {seriesFocus.name}
-                </Button>
+              {seriesFocus ? (
+                <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: 'center' }}>
+                  <Button
+                    startIcon={<ArrowBackIcon />}
+                    onClick={() => setSeriesFocus(null)}
+                  >
+                    返回列表 · {seriesFocus.name}
+                  </Button>
+                  <Typography variant="caption" color="text.secondary">
+                    {sortBy === 'custom'
+                      ? '按住左侧手柄拖拽可调整集顺序'
+                      : '拖拽排序将切换为「自定义」'}
+                  </Typography>
+                </Stack>
+              ) : (
+                !query.trim() &&
+                l1 !== 'favorites' && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1.5, display: 'block' }}>
+                    按住卡片左侧手柄可拖拽排序（视频与合集均可）
+                  </Typography>
+                )
               )}
 
               <Box
+                ref={gridRef}
+                onDragOver={(ev) => {
+                  if (dragLibKeyRef.current) {
+                    ev.preventDefault();
+                    ev.dataTransfer.dropEffect = 'move';
+                    const near = nearestLibKeyAt(ev.clientX, ev.clientY);
+                    if (near && near !== dropLibKeyRef.current) {
+                      dropLibKeyRef.current = near;
+                      setDropLibKey(near);
+                    }
+                  } else if (dragEpisodeDirRef.current) {
+                    ev.preventDefault();
+                    ev.dataTransfer.dropEffect = 'move';
+                    const near = nearestEpisodeDirAt(ev.clientX, ev.clientY);
+                    if (near && near !== dropEpisodeDirRef.current) {
+                      dropEpisodeDirRef.current = near;
+                      setDropEpisodeDir(near);
+                    }
+                  }
+                }}
+                onDrop={(ev) => {
+                  ev.preventDefault();
+                  if (dragLibKeyRef.current) {
+                    const from =
+                      ev.dataTransfer.getData('text/plain') ||
+                      dragLibKeyRef.current;
+                    const to =
+                      dropLibKeyRef.current ||
+                      nearestLibKeyAt(ev.clientX, ev.clientY);
+                    if (from && to) reorderLibraryItems(from, to);
+                    else clearLibDrag();
+                    return;
+                  }
+                  if (dragEpisodeDirRef.current) {
+                    const from =
+                      ev.dataTransfer.getData('text/plain') ||
+                      dragEpisodeDirRef.current;
+                    const to =
+                      dropEpisodeDirRef.current ||
+                      nearestEpisodeDirAt(ev.clientX, ev.clientY);
+                    if (from && to) {
+                      void reorderEpisodes(from, to);
+                    }
+                    dragEpisodeDirRef.current = null;
+                    dropEpisodeDirRef.current = null;
+                    setDragEpisodeDir(null);
+                    setDropEpisodeDir(null);
+                    setDragGhost(null);
+                  }
+                }}
                 sx={{
                   display: 'grid',
                   gridTemplateColumns: `repeat(auto-fill, minmax(${densityMinWidth(density)}, 1fr))`,
                   gap: density === 'compact' ? 1.25 : 2,
+                  minHeight: 80,
                 }}
               >
                 {gridItems.map((item) => {
+                  const canLibDrag =
+                    !seriesFocus && !query.trim() && l1 !== 'favorites';
                   if (item.kind === 'series') {
+                    const libKey = libraryItemKey(item);
                     return (
+                      <Box key={item.key} data-lib-key={libKey} sx={{ minWidth: 0 }}>
                       <SeriesCard
-                        key={item.key}
                         group={item}
                         aspect={posterAspect(posterRatio)}
                         onOpen={() => openSeries(item)}
+                        onRename={() => {
+                          setRenameInput(item.name);
+                          setRenameError('');
+                          setRenameSeries({
+                            l1: item.l1,
+                            l2: item.l2,
+                            name: item.name,
+                          });
+                        }}
+                        onDissolve={() =>
+                          setDissolveSeries({
+                            l1: item.l1,
+                            l2: item.l2,
+                            name: item.name,
+                          })
+                        }
+                        draggable={canLibDrag}
+                        dragging={dragLibKey === libKey}
+                        dropTarget={
+                          !!dragLibKey &&
+                          dropLibKey === libKey &&
+                          dragLibKey !== libKey
+                        }
+                        onDragStart={(ev) => {
+                          dragLibKeyRef.current = libKey;
+                          setDragLibKey(libKey);
+                          setDropLibKey(null);
+                          dropLibKeyRef.current = null;
+                          setDragGhost({
+                            kind: 'series',
+                            x: ev.clientX,
+                            y: ev.clientY,
+                            group: item,
+                            aspect: posterAspect(posterRatio),
+                          });
+                        }}
+                        onDrag={(ev) => {
+                          if (ev.clientX === 0 && ev.clientY === 0) return;
+                          setDragGhost((g) =>
+                            g && g.kind === 'series'
+                              ? { ...g, x: ev.clientX, y: ev.clientY }
+                              : {
+                                  kind: 'series',
+                                  x: ev.clientX,
+                                  y: ev.clientY,
+                                  group: item,
+                                  aspect: posterAspect(posterRatio),
+                                },
+                          );
+                        }}
+                        onDragEnter={() => {
+                          if (
+                            dragLibKeyRef.current &&
+                            dragLibKeyRef.current !== libKey
+                          ) {
+                            dropLibKeyRef.current = libKey;
+                            setDropLibKey(libKey);
+                          }
+                        }}
+                        onDragLeave={() => {
+                          setDropLibKey((cur) => {
+                            if (cur === libKey) {
+                              dropLibKeyRef.current = null;
+                              return null;
+                            }
+                            return cur;
+                          });
+                        }}
+                        onDragEnd={() => clearLibDrag()}
+                        onDropSeries={(fromKey) => {
+                          reorderLibraryItems(
+                            fromKey || dragLibKeyRef.current || '',
+                            libKey,
+                          );
+                        }}
+                        dragPayload={libKey}
                       />
+                      </Box>
                     );
                   }
                   const e = item.entry;
+                  const libKey = libraryItemKey(item);
                   return (
-                    <EntryCard
+                    <Box
                       key={e.dir || e.videoRel}
+                      data-lib-key={canLibDrag ? libKey : undefined}
+                      data-ep-dir={seriesFocus ? e.dir : undefined}
+                      sx={{ minWidth: 0 }}
+                    >
+                    <EntryCard
                       entry={e}
                       aspect={posterAspect(posterRatio)}
                       showEpisodeMove={!!seriesFocus}
+                      draggable={
+                        (!!seriesFocus && !e.legacy) || (canLibDrag && !e.legacy)
+                      }
+                      dragging={
+                        seriesFocus
+                          ? dragEpisodeDir === e.dir
+                          : dragLibKey === libKey
+                      }
+                      dropTarget={
+                        seriesFocus
+                          ? !!dragEpisodeDir &&
+                            dropEpisodeDir === e.dir &&
+                            dragEpisodeDir !== e.dir
+                          : !!dragLibKey &&
+                            dropLibKey === libKey &&
+                            dragLibKey !== libKey
+                      }
+                      onDragStart={(ev) => {
+                        if (seriesFocus) {
+                          dragEpisodeDirRef.current = e.dir;
+                          setDragEpisodeDir(e.dir);
+                          setDropEpisodeDir(null);
+                          dropEpisodeDirRef.current = null;
+                          setDragGhost({
+                            kind: 'episode',
+                            x: ev.clientX,
+                            y: ev.clientY,
+                            entry: e,
+                            aspect: posterAspect(posterRatio),
+                          });
+                        } else {
+                          dragLibKeyRef.current = libKey;
+                          setDragLibKey(libKey);
+                          setDropLibKey(null);
+                          dropLibKeyRef.current = null;
+                          setDragGhost({
+                            kind: 'episode',
+                            x: ev.clientX,
+                            y: ev.clientY,
+                            entry: e,
+                            aspect: posterAspect(posterRatio),
+                          });
+                        }
+                      }}
+                      onDrag={(ev) => {
+                        if (ev.clientX === 0 && ev.clientY === 0) return;
+                        setDragGhost((g) =>
+                          g && g.kind === 'episode'
+                            ? { ...g, x: ev.clientX, y: ev.clientY }
+                            : {
+                                kind: 'episode',
+                                x: ev.clientX,
+                                y: ev.clientY,
+                                entry: e,
+                                aspect: posterAspect(posterRatio),
+                              },
+                        );
+                      }}
+                      onDragEnter={() => {
+                        if (seriesFocus) {
+                          if (
+                            dragEpisodeDirRef.current &&
+                            dragEpisodeDirRef.current !== e.dir
+                          ) {
+                            dropEpisodeDirRef.current = e.dir;
+                            setDropEpisodeDir(e.dir);
+                          }
+                        } else if (
+                          dragLibKeyRef.current &&
+                          dragLibKeyRef.current !== libKey
+                        ) {
+                          dropLibKeyRef.current = libKey;
+                          setDropLibKey(libKey);
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (seriesFocus) {
+                          setDropEpisodeDir((cur) => {
+                            if (cur === e.dir) {
+                              dropEpisodeDirRef.current = null;
+                              return null;
+                            }
+                            return cur;
+                          });
+                        } else {
+                          setDropLibKey((cur) => {
+                            if (cur === libKey) {
+                              dropLibKeyRef.current = null;
+                              return null;
+                            }
+                            return cur;
+                          });
+                        }
+                      }}
+                      onDragEnd={() => {
+                        if (seriesFocus) {
+                          dragEpisodeDirRef.current = null;
+                          dropEpisodeDirRef.current = null;
+                          setDragEpisodeDir(null);
+                          setDropEpisodeDir(null);
+                          setDragGhost(null);
+                        } else {
+                          clearLibDrag();
+                        }
+                      }}
+                      onDropEpisode={(fromPayload) => {
+                        if (seriesFocus) {
+                          void reorderEpisodes(
+                            fromPayload || dragEpisodeDirRef.current || '',
+                            e.dir,
+                          );
+                          dragEpisodeDirRef.current = null;
+                          dropEpisodeDirRef.current = null;
+                          setDragEpisodeDir(null);
+                          setDropEpisodeDir(null);
+                          setDragGhost(null);
+                        } else {
+                          reorderLibraryItems(
+                            fromPayload || dragLibKeyRef.current || '',
+                            libKey,
+                          );
+                        }
+                      }}
+                      dragPayload={seriesFocus ? e.dir : libKey}
                       onOpen={() => void openEntry(e)}
                       onEnsureDuration={() => void ensureEntryDuration(e)}
                       onEdit={e.legacy ? undefined : () => setEditEntry(e)}
@@ -784,6 +1532,7 @@ export default function App() {
                         seriesFocus ? () => void moveEpisode(e, 1) : undefined
                       }
                     />
+                    </Box>
                   );
                 })}
               </Box>
@@ -801,6 +1550,92 @@ export default function App() {
           </Box>
         </Box>
       </Box>
+
+      {dragGhost && (
+        <Box
+          sx={{
+            position: 'fixed',
+            left: dragGhost.x + 12,
+            top: dragGhost.y + 12,
+            zIndex: 2000,
+            pointerEvents: 'none',
+            filter: 'drop-shadow(0 4px 12px rgba(0,0,0,.35))',
+          }}
+        >
+          {dragGhost.kind === 'l1' ? (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                minWidth: 160,
+                maxWidth: 220,
+                px: 1,
+                py: 0.75,
+                borderRadius: 1,
+                bgcolor: dragGhost.selected ? 'primary.main' : 'background.paper',
+                color: dragGhost.selected ? 'primary.contrastText' : 'text.primary',
+                border: 1,
+                borderColor: 'divider',
+              }}
+            >
+              <DragIndicatorIcon fontSize="small" sx={{ mr: 0.5, opacity: 0.55 }} />
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ flex: 1, fontWeight: dragGhost.selected ? 600 : 400 }}
+              >
+                {dragGhost.name}
+              </Typography>
+              <Typography variant="body2" sx={{ ml: 0.5, opacity: 0.85 }}>
+                {dragGhost.count}
+              </Typography>
+            </Box>
+          ) : (
+            <Card variant="outlined" sx={{ width: 160, bgcolor: 'background.paper' }}>
+              <Box sx={{ position: 'relative', aspectRatio: dragGhost.aspect }}>
+                {(dragGhost.kind === 'episode'
+                  ? dragGhost.entry.coverRel
+                  : dragGhost.group.coverRel) ? (
+                  <CardMedia
+                    component="img"
+                    image={dataUrl(
+                      (dragGhost.kind === 'episode'
+                        ? dragGhost.entry.coverRel
+                        : dragGhost.group.coverRel)!,
+                    )}
+                    alt=""
+                    sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <Box
+                    sx={{
+                      width: '100%',
+                      height: '100%',
+                      bgcolor: 'action.hover',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    {dragGhost.kind === 'series' ? (
+                      <FolderIcon color="action" />
+                    ) : (
+                      <MovieIcon color="action" />
+                    )}
+                  </Box>
+                )}
+              </Box>
+              <CardContent sx={{ py: 0.75, px: 1, '&:last-child': { pb: 0.75 } }}>
+                <Typography variant="caption" noWrap sx={{ display: 'block' }}>
+                  {dragGhost.kind === 'episode'
+                    ? dragGhost.entry.title
+                    : dragGhost.group.name}
+                </Typography>
+              </CardContent>
+            </Card>
+          )}
+        </Box>
+      )}
 
       {snack && (
         <Alert
@@ -884,6 +1719,75 @@ export default function App() {
       </Dialog>
 
       <Dialog
+        open={!!renameSeries}
+        onClose={() => !seriesBusy && setRenameSeries(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>重命名合集</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            margin="dense"
+            label="新名称"
+            value={renameInput}
+            error={!!renameError}
+            helperText={renameError || ' '}
+            disabled={seriesBusy}
+            onChange={(e) => {
+              setRenameInput(e.target.value);
+              if (renameError) setRenameError('');
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void submitRenameSeries();
+              }
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRenameSeries(null)} disabled={seriesBusy}>
+            取消
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void submitRenameSeries()}
+            disabled={seriesBusy}
+          >
+            确定
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={!!dissolveSeries}
+        onClose={() => !seriesBusy && setDissolveSeries(null)}
+      >
+        <DialogTitle>解散合集</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            确定解散合集「{dissolveSeries?.name}」？视频将保留在「
+            {dissolveSeries?.l1}/{dissolveSeries?.l2}」下，不再成组。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDissolveSeries(null)} disabled={seriesBusy}>
+            取消
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => void submitDissolveSeries()}
+            disabled={seriesBusy}
+          >
+            解散
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
         open={!!deleteTarget}
         onClose={() => !deleteBusy && setDeleteTarget(null)}
       >
@@ -941,6 +1845,26 @@ export default function App() {
           void refresh();
         }}
       />
+
+      {l1 !== 'all' && l1 !== 'favorites' && (
+        <L2EditDialog
+          open={l2EditOpen}
+          l1={l1}
+          library={library}
+          order={l2List}
+          onClose={() => setL2EditOpen(false)}
+          onReorder={(names) => {
+            const next = { ...l2OrderMap, [l1]: names };
+            setL2OrderMap(next);
+            saveL2Order(next);
+          }}
+          onRenamed={() => void refresh()}
+          onDeleted={(name) => {
+            if (l2 === name) setL2('all');
+            void refresh();
+          }}
+        />
+      )}
 
       <VideoEntryDialog
         open={addOpen}
@@ -1010,7 +1934,7 @@ export default function App() {
                 const e = playing;
                 await saveWatchProgress(e, 0, true);
                 if (autoNext) {
-                  const nxt = nextEpisode(library, e, 'createdAt_asc');
+                  const nxt = nextEpisode(library, e);
                   if (nxt) {
                     setPlaying(null);
                     await openEntry(nxt);
@@ -1050,25 +1974,82 @@ function L1NavItem({
   selected,
   count,
   empty,
+  dragging,
+  dropTarget,
   onSelect,
   onRename,
   onDelete,
+  onDragStart,
+  onDrag,
+  onDragEnter,
+  onDragLeave,
+  onDragEnd,
+  onDrop,
 }: {
   name: string;
   selected: boolean;
   count: number;
   empty: boolean;
+  dragging?: boolean;
+  dropTarget?: boolean;
   onSelect: () => void;
   onRename: () => void;
   onDelete: () => void;
+  onDragStart: (ev: ReactDragEvent) => void;
+  onDrag: (ev: ReactDragEvent) => void;
+  onDragEnter: () => void;
+  onDragLeave: () => void;
+  onDragEnd: () => void;
+  onDrop: (from: string) => void;
 }) {
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
   return (
     <ListItemButton
       selected={selected}
       onClick={onSelect}
-      sx={{ whiteSpace: 'nowrap', pr: 0.5 }}
+      draggable
+      onDragStart={(ev) => {
+        // CEF/Chromium 对自定义 MIME 不稳定，统一用 text/plain
+        ev.dataTransfer.setData('text/plain', name);
+        ev.dataTransfer.effectAllowed = 'move';
+        // 隐藏浏览器默认幽灵图，改用自定义悬浮提示
+        const img = new Image();
+        img.src =
+          'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        ev.dataTransfer.setDragImage(img, 0, 0);
+        onDragStart(ev);
+      }}
+      onDrag={onDrag}
+      onDragEnd={onDragEnd}
+      onDragEnter={(ev) => {
+        ev.preventDefault();
+        onDragEnter();
+      }}
+      onDragLeave={onDragLeave}
+      onDragOver={(ev) => {
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = 'move';
+        onDragEnter();
+      }}
+      onDrop={(ev) => {
+        ev.preventDefault();
+        const from = ev.dataTransfer.getData('text/plain');
+        onDrop(from);
+      }}
+      sx={{
+        whiteSpace: 'nowrap',
+        pr: 0.5,
+        opacity: dragging ? 0.45 : 1,
+        cursor: 'grab',
+        borderTop: dropTarget ? '2px solid' : '2px solid transparent',
+        borderColor: dropTarget ? 'primary.main' : 'transparent',
+        bgcolor: dropTarget ? 'action.selected' : undefined,
+      }}
     >
+      <DragIndicatorIcon
+        fontSize="small"
+        sx={{ mr: 0.5, opacity: 0.55, flexShrink: 0 }}
+      />
       <ListItemText
         primary={name}
         slotProps={{
@@ -1185,6 +2166,216 @@ function PrefsDialog({
   );
 }
 
+function L2EditDialog({
+  open,
+  l1,
+  library,
+  order,
+  onClose,
+  onReorder,
+  onRenamed,
+  onDeleted,
+}: {
+  open: boolean;
+  l1: string;
+  library: Library;
+  order: string[];
+  onClose: () => void;
+  onReorder: (names: string[]) => void;
+  onRenamed: () => void;
+  onDeleted: (name: string) => void;
+}) {
+  const [renameTarget, setRenameTarget] = useState<string | null>(null);
+  const [renameInput, setRenameInput] = useState('');
+  const [renameError, setRenameError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [dragName, setDragName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setRenameTarget(null);
+      setRenameError('');
+      setBusy(false);
+    }
+  }, [open]);
+
+  const submitRename = async () => {
+    if (!renameTarget) return;
+    const newName = normalizeCatName(renameInput);
+    if (!newName) {
+      setRenameError('请输入名称');
+      return;
+    }
+    if (newName === renameTarget) {
+      setRenameTarget(null);
+      return;
+    }
+    if (isReservedName(newName)) {
+      setRenameError('该名称已保留');
+      return;
+    }
+    const existing = l2Names(library, l1);
+    if (existing.includes(newName)) {
+      setRenameError('二级分类已存在');
+      return;
+    }
+    setBusy(true);
+    setRenameError('');
+    try {
+      const all = await listDir('');
+      const prefix = `${l1}/${renameTarget}`;
+      const under = all.filter((f) => f === prefix || f.startsWith(prefix + '/'));
+      under.sort((a, b) => a.length - b.length);
+      for (const rel of under) {
+        const dest = `${l1}/${newName}${rel.slice(prefix.length)}`;
+        const blob = await getDataBlob(rel);
+        if (blob) await putDataFile(dest, blob);
+        else await putDataFile(dest, '');
+      }
+      under.sort((a, b) => b.length - a.length);
+      for (const rel of under) {
+        try {
+          await deleteDataFile(rel);
+        } catch {
+          /* ignore */
+        }
+      }
+      onReorder(order.map((n) => (n === renameTarget ? newName : n)));
+      setRenameTarget(null);
+      onRenamed();
+    } catch (e) {
+      setRenameError(e instanceof Error ? e.message : '重命名失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteEmpty = async (name: string) => {
+    if (!isL2Empty(library, l1, name)) return;
+    setBusy(true);
+    try {
+      await deleteDataTree(`${l1}/${name}`);
+      onReorder(order.filter((n) => n !== name));
+      onDeleted(name);
+    } catch (e) {
+      setRenameError(e instanceof Error ? e.message : '删除失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={() => !busy && onClose()} fullWidth maxWidth="sm">
+      <DialogTitle>编辑二级分类 · {l1}</DialogTitle>
+      <DialogContent>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          拖拽可调整顺序；可重命名或删除空分类。
+        </Typography>
+        <List dense>
+          {order.map((name) => {
+            const count = countEntriesInL2(library, l1, name);
+            return (
+              <ListItemButton
+                key={name}
+                draggable
+                onDragStart={(ev) => {
+                  ev.dataTransfer.setData('text/plain', name);
+                  setDragName(name);
+                }}
+                onDragEnd={() => setDragName(null)}
+                onDragOver={(ev) => ev.preventDefault()}
+                onDrop={(ev) => {
+                  ev.preventDefault();
+                  const from = ev.dataTransfer.getData('text/plain') || dragName;
+                  if (!from || from === name) return;
+                  const next = [...order];
+                  const i = next.indexOf(from);
+                  const j = next.indexOf(name);
+                  if (i < 0 || j < 0) return;
+                  next.splice(i, 1);
+                  next.splice(j, 0, from);
+                  onReorder(next);
+                  setDragName(null);
+                }}
+                sx={{ opacity: dragName === name ? 0.5 : 1, cursor: 'grab', borderRadius: 1 }}
+              >
+                <DragIndicatorIcon fontSize="small" sx={{ mr: 1, opacity: 0.5 }} />
+                <ListItemText primary={name} secondary={`${count} 个视频`} />
+                <Button
+                  size="small"
+                  disabled={busy}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    setRenameTarget(name);
+                    setRenameInput(name);
+                    setRenameError('');
+                  }}
+                >
+                  重命名
+                </Button>
+                <Button
+                  size="small"
+                  color="error"
+                  disabled={busy || count > 0}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    void deleteEmpty(name);
+                  }}
+                >
+                  删除
+                </Button>
+              </ListItemButton>
+            );
+          })}
+          {!order.length && (
+            <Typography color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>
+              暂无二级分类
+            </Typography>
+          )}
+        </List>
+        {renameError && (
+          <Typography color="error" variant="body2" sx={{ mt: 1 }}>
+            {renameError}
+          </Typography>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={busy}>
+          关闭
+        </Button>
+      </DialogActions>
+
+      <Dialog
+        open={!!renameTarget}
+        onClose={() => !busy && setRenameTarget(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>重命名二级分类</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            margin="dense"
+            label="新名称"
+            value={renameInput}
+            disabled={busy}
+            onChange={(e) => setRenameInput(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRenameTarget(null)} disabled={busy}>
+            取消
+          </Button>
+          <Button variant="contained" onClick={() => void submitRename()} disabled={busy}>
+            确定
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Dialog>
+  );
+}
+
 function BatchImportDialog({
   open,
   library,
@@ -1248,7 +2439,7 @@ function BatchImportDialog({
   const submit = async () => {
     const l1n = normalizeCatName(l1);
     const l2n = normalizeCatName(l2);
-    const coln = normalizeCatName(collection);
+    const coln = resolveCollectionName(library, l1n, l2n, collection);
     if (!l1n || isReservedName(l1n)) {
       setError('请填写有效的一级分类');
       return;
@@ -1268,6 +2459,7 @@ function BatchImportDialog({
       await putDataFile(`${l1n}/${l2n}/${KEEP_NAME}`, '');
       if (coln) await putDataFile(`${l1n}/${l2n}/${coln}/${KEEP_NAME}`, '');
 
+      const orderBase = coln ? nextEpisodeOrderBase(library, l1n, l2n, coln) : 0;
       for (let i = 0; i < picks.length; i++) {
         const pick = picks[i];
         const fileName = isStagedPick(pick) ? pick.name : pick.name;
@@ -1304,7 +2496,7 @@ function BatchImportDialog({
           video: videoName,
           playCount: 0,
           durationSec,
-          episodeOrder: coln ? i : undefined,
+          episodeOrder: coln ? orderBase + i : undefined,
           createdAt: now,
           updatedAt: now,
         };
@@ -1428,6 +2620,16 @@ function EntryCard({
   onMoveDown,
   onEnsureDuration,
   showEpisodeMove,
+  draggable,
+  dragging,
+  dropTarget,
+  onDragStart,
+  onDrag,
+  onDragEnter,
+  onDragLeave,
+  onDragEnd,
+  onDropEpisode,
+  dragPayload,
 }: {
   entry: VideoEntry;
   aspect: string;
@@ -1441,6 +2643,16 @@ function EntryCard({
   onMoveDown?: () => void;
   onEnsureDuration?: () => void;
   showEpisodeMove?: boolean;
+  draggable?: boolean;
+  dragging?: boolean;
+  dropTarget?: boolean;
+  onDragStart?: (ev: ReactDragEvent) => void;
+  onDrag?: (ev: ReactDragEvent) => void;
+  onDragEnter?: () => void;
+  onDragLeave?: () => void;
+  onDragEnd?: () => void;
+  onDropEpisode?: (fromDir: string) => void;
+  dragPayload?: string;
 }) {
   const cover = entry.coverRel ? dataUrl(entry.coverRel) : null;
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
@@ -1450,7 +2662,74 @@ function EntryCard({
   }, [entry.dir, entry.videoRel, entry.durationSec, onEnsureDuration]);
 
   return (
-    <Card variant="outlined" sx={{ position: 'relative' }}>
+    <Card
+      variant="outlined"
+      sx={{
+        position: 'relative',
+        opacity: dragging ? 0.5 : 1,
+        outline: dropTarget ? '2px solid' : 'none',
+        outlineColor: dropTarget ? 'primary.main' : undefined,
+        bgcolor: dropTarget ? 'action.hover' : undefined,
+      }}
+      onDragEnter={(ev) => {
+        if (!draggable) return;
+        ev.preventDefault();
+        onDragEnter?.();
+      }}
+      onDragLeave={() => {
+        if (!draggable) return;
+        onDragLeave?.();
+      }}
+      onDragOver={(ev) => {
+        if (!draggable) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = 'move';
+        onDragEnter?.();
+      }}
+      onDrop={(ev) => {
+        if (!draggable) return;
+        ev.preventDefault();
+        const from = ev.dataTransfer.getData('text/plain');
+        onDropEpisode?.(from);
+      }}
+    >
+      {draggable && (
+        <Box
+          draggable
+          onDragStart={(ev) => {
+            ev.stopPropagation();
+            ev.dataTransfer.setData('text/plain', dragPayload || entry.dir);
+            ev.dataTransfer.effectAllowed = 'move';
+            const img = new Image();
+            img.src =
+              'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+            ev.dataTransfer.setDragImage(img, 0, 0);
+            onDragStart?.(ev);
+          }}
+          onDrag={(ev) => onDrag?.(ev)}
+          onDragEnd={() => onDragEnd?.()}
+          onClick={(ev) => ev.stopPropagation()}
+          sx={{
+            position: 'absolute',
+            top: 4,
+            left: 4,
+            zIndex: 2,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 32,
+            height: 32,
+            borderRadius: 1,
+            bgcolor: 'rgba(0,0,0,0.55)',
+            color: 'common.white',
+            cursor: 'grab',
+            '&:active': { cursor: 'grabbing' },
+          }}
+          title="拖拽排序"
+        >
+          <DragIndicatorIcon fontSize="small" />
+        </Box>
+      )}
       <IconButton
         size="small"
         aria-label="更多"
@@ -1595,7 +2874,7 @@ function EntryCard({
               sx={{
                 position: 'absolute',
                 top: 6,
-                left: 6,
+                left: draggable ? 40 : 6,
                 color: 'error.light',
                 filter: 'drop-shadow(0 1px 2px rgba(0,0,0,.6))',
               }}
@@ -1632,15 +2911,144 @@ function SeriesCard({
   group,
   aspect,
   onOpen,
+  onRename,
+  onDissolve,
+  draggable,
+  dragging,
+  dropTarget,
+  onDragStart,
+  onDrag,
+  onDragEnter,
+  onDragLeave,
+  onDragEnd,
+  onDropSeries,
+  dragPayload,
 }: {
   group: SeriesGroup;
   aspect: string;
   onOpen: () => void;
+  onRename: () => void;
+  onDissolve: () => void;
+  draggable?: boolean;
+  dragging?: boolean;
+  dropTarget?: boolean;
+  onDragStart?: (ev: ReactDragEvent) => void;
+  onDrag?: (ev: ReactDragEvent) => void;
+  onDragEnter?: () => void;
+  onDragLeave?: () => void;
+  onDragEnd?: () => void;
+  onDropSeries?: (fromKey: string) => void;
+  dragPayload?: string;
 }) {
   const cover = group.coverRel ? dataUrl(group.coverRel) : null;
   const n = group.episodes.length;
+  const [anchor, setAnchor] = useState<null | HTMLElement>(null);
   return (
-    <Card variant="outlined">
+    <Card
+      variant="outlined"
+      sx={{
+        position: 'relative',
+        opacity: dragging ? 0.5 : 1,
+        outline: dropTarget ? '2px solid' : 'none',
+        outlineColor: dropTarget ? 'primary.main' : undefined,
+        bgcolor: dropTarget ? 'action.hover' : undefined,
+      }}
+      onDragEnter={(ev) => {
+        if (!draggable) return;
+        ev.preventDefault();
+        onDragEnter?.();
+      }}
+      onDragLeave={() => {
+        if (!draggable) return;
+        onDragLeave?.();
+      }}
+      onDragOver={(ev) => {
+        if (!draggable) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = 'move';
+        onDragEnter?.();
+      }}
+      onDrop={(ev) => {
+        if (!draggable) return;
+        ev.preventDefault();
+        const from = ev.dataTransfer.getData('text/plain');
+        onDropSeries?.(from);
+      }}
+    >
+      {draggable && (
+        <Box
+          draggable
+          onDragStart={(ev) => {
+            ev.stopPropagation();
+            ev.dataTransfer.setData('text/plain', dragPayload || group.key);
+            ev.dataTransfer.effectAllowed = 'move';
+            const img = new Image();
+            img.src =
+              'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+            ev.dataTransfer.setDragImage(img, 0, 0);
+            onDragStart?.(ev);
+          }}
+          onDrag={(ev) => onDrag?.(ev)}
+          onDragEnd={() => onDragEnd?.()}
+          onClick={(ev) => ev.stopPropagation()}
+          sx={{
+            position: 'absolute',
+            top: 4,
+            left: 4,
+            zIndex: 2,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 32,
+            height: 32,
+            borderRadius: 1,
+            bgcolor: 'rgba(0,0,0,0.55)',
+            color: 'common.white',
+            cursor: 'grab',
+            '&:active': { cursor: 'grabbing' },
+          }}
+          title="拖拽排序"
+        >
+          <DragIndicatorIcon fontSize="small" />
+        </Box>
+      )}
+      <IconButton
+        size="small"
+        aria-label="合集菜单"
+        onClick={(ev) => {
+          ev.stopPropagation();
+          setAnchor(ev.currentTarget);
+        }}
+        sx={{
+          position: 'absolute',
+          top: 4,
+          right: 4,
+          zIndex: 1,
+          bgcolor: 'rgba(0,0,0,0.45)',
+          color: 'common.white',
+          '&:hover': { bgcolor: 'rgba(0,0,0,0.65)' },
+        }}
+      >
+        <MoreVertIcon fontSize="small" />
+      </IconButton>
+      <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)}>
+        <MenuItem
+          onClick={() => {
+            setAnchor(null);
+            onRename();
+          }}
+        >
+          <EditIcon fontSize="small" sx={{ mr: 1 }} /> 重命名合集
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setAnchor(null);
+            onDissolve();
+          }}
+        >
+          <DeleteIcon fontSize="small" sx={{ mr: 1 }} color="error" /> 解散合集
+        </MenuItem>
+      </Menu>
       <CardActionArea onClick={onOpen}>
         <Box sx={{ position: 'relative', aspectRatio: aspect }}>
           {cover ? (
