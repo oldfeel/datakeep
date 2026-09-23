@@ -15,7 +15,11 @@
 cd examples
 ./pack.sh              # 全部 → dist/<id>-<version>.zip
 ./pack.sh todo-app     # 单个
+./publish.sh video-app --bump patch   # +0.0.1 后打包上传（读 examples/.env）
+./publish.sh video-app 1.0.1          # 指定版本上传
 ```
+
+账号写在 `examples/.env`（已 gitignore）：`ACCOUNT=…` / `PASSWORD=…`；管理端默认 [admin.datakeep.site](https://admin.datakeep.site/)。
 
 - `app.json` 的 `id` / `version` 决定 zip 文件名。
 - 改 `id` 或逻辑/数据协议后务必升 `version` 再打包上架；`id` 变更视为新应用，需在市场新建条目。

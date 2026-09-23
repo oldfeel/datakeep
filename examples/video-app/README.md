@@ -58,4 +58,7 @@ Debug 下 Flutter AppRunner 直连 `www/`，`data/` 用安装目录。改前端�
 
 ```bash
 cd examples && ./pack.sh video-app
+# 升版本并上传到 https://datakeep.site/apps（账号见 examples/.env）
+# ./publish.sh video-app --bump patch   # 1.0.0 → 1.0.1
+# ./publish.sh video-app 1.0.1
 ```
