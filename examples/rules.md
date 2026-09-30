@@ -30,7 +30,7 @@ cd examples
 {
   "id": "site.datakeep.todo",
   "name": "待办清单",
-  "version": "1.2.3",
+  "version": "2.0.0",
   "entry": "index.html",
   "description": "…",
   "syncIgnore": []
@@ -38,6 +38,7 @@ cd examples
 ```
 
 - `id`：稳定包名（至少两段，如 `site.datakeep.todo`）；文件夹 id 为 `app-<id>`。
+- Vite 应用（如 `todo-app` / `video-app`）：源码在 `src/`，`npm run build` 产出 `www/`，由 `pack.sh` 打包。
 - `syncIgnore`：可选。**仅**对本机缓存、且**不是**跨设备同步源的文件使用（见下节）。
 
 ## 运行环境
