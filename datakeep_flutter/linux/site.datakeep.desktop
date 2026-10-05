@@ -2,7 +2,7 @@
 Name=数据管理
 Comment=跨平台数据管理与同步
 Exec=datakeep_flutter
-Icon=app_icon
+Icon=site.datakeep
 Type=Application
 Categories=Utility;FileTransfer;
 StartupWMClass=site.datakeep

@@ -50,6 +50,12 @@ case "$(uname -s)" in
 esac
 
 echo -e "${GREEN}✅ 使用平台: $PLATFORM${NC}"
+
+# Ubuntu/GNOME：安装用户级 .desktop，任务栏才能按 site.datakeep 显示图标
+if [[ "$PLATFORM" == "linux" ]]; then
+  bash "$SCRIPT_DIR/scripts/install_linux_dev_desktop.sh" || true
+fi
+
 echo -e "\n${BLUE}🚀 flutter run -d $PLATFORM${NC}"
 
 # NVIDIA + CEF：勿用 FLUTTER_LINUX_RENDERER=software（CEF 纹理会白屏）。

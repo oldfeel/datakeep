@@ -4,6 +4,7 @@
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
+#include <gdk-pixbuf/gdk-pixbuf.h>
 
 #include "flutter/generated_plugin_registrant.h"
 #include <webview_cef/webview_cef_plugin.h>
@@ -16,17 +17,42 @@ struct _MyApplication {
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
 // 从 bundle 目录加载应用图标（flutter build linux 后位于 data/icons/）
+// Ubuntu/GNOME 任务栏主要靠 .desktop 匹配 application-id；这里仍设置窗口图标作兜底。
 static void set_application_icon(GtkWindow* window) {
   g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", NULL);
   if (exe_path == NULL) {
     return;
   }
   g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
-  g_autofree gchar* icon_path =
+  const gchar* names[] = {"app_icon_256.png", "app_icon_128.png", "app_icon.png",
+                          "app_icon_512.png", "app_icon_64.png", "app_icon_48.png",
+                          NULL};
+  GList* icon_list = NULL;
+  for (int i = 0; names[i] != NULL; i++) {
+    g_autofree gchar* icon_path =
+        g_build_filename(exe_dir, "data", "icons", names[i], NULL);
+    if (!g_file_test(icon_path, G_FILE_TEST_EXISTS)) {
+      continue;
+    }
+    GError* err = NULL;
+    GdkPixbuf* pix = gdk_pixbuf_new_from_file(icon_path, &err);
+    if (pix != NULL) {
+      icon_list = g_list_append(icon_list, pix);
+    } else if (err != NULL) {
+      g_error_free(err);
+    }
+  }
+  if (icon_list != NULL) {
+    gtk_window_set_default_icon_list(icon_list);
+    gtk_window_set_icon_list(window, icon_list);
+    g_list_free_full(icon_list, g_object_unref);
+    return;
+  }
+  g_autofree gchar* fallback =
       g_build_filename(exe_dir, "data", "icons", "app_icon.png", NULL);
-  if (g_file_test(icon_path, G_FILE_TEST_EXISTS)) {
-    gtk_window_set_default_icon_from_file(icon_path, NULL);
-    gtk_window_set_icon_from_file(window, icon_path, NULL);
+  if (g_file_test(fallback, G_FILE_TEST_EXISTS)) {
+    gtk_window_set_default_icon_from_file(fallback, NULL);
+    gtk_window_set_icon_from_file(window, fallback, NULL);
   }
 }
 
