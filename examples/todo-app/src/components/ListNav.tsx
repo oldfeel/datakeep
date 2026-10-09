@@ -6,7 +6,6 @@ import {
   DialogTitle,
   IconButton,
   List,
-  ListItem,
   ListItemButton,
   ListItemText,
   Menu,
@@ -18,8 +17,20 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
-import { useState } from 'react';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import { useRef, useState } from 'react';
 import type { ListRow } from '../db/types';
+import {
+  applyDropById,
+  clearDropPaint,
+  dropPlaceFromRect,
+  paintDropTarget,
+  setCefDragData,
+  useCefDragAllow,
+  type DropPlace,
+  type GhostHandle,
+} from '../dnd';
+import DragGhost from './DragGhost';
 
 type Props = {
   lists: ListRow[];
@@ -28,6 +39,7 @@ type Props = {
   onCreate: (title: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  onReorder: (ids: string[]) => void;
 };
 
 export default function ListNav({
@@ -37,6 +49,7 @@ export default function ListNav({
   onCreate,
   onRename,
   onDelete,
+  onReorder,
 }: Props) {
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const [menuList, setMenuList] = useState<ListRow | null>(null);
@@ -44,6 +57,41 @@ export default function ListNav({
   const [renameValue, setRenameValue] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [addValue, setAddValue] = useState('');
+  const dragIdRef = useRef<string | null>(null);
+  const ghostRef = useRef<GhostHandle>(null);
+  const dragElRef = useRef<HTMLElement | null>(null);
+  const pendingRef = useRef<{ toId: string; place: DropPlace } | null>(null);
+  const listsRef = useRef(lists);
+  listsRef.current = lists;
+  const onReorderRef = useRef(onReorder);
+  onReorderRef.current = onReorder;
+
+  const clearVisual = () => {
+    if (dragElRef.current) dragElRef.current.style.opacity = '';
+    dragElRef.current = null;
+    ghostRef.current?.hide();
+    clearDropPaint();
+  };
+
+  const cancelDrag = () => {
+    pendingRef.current = null;
+    dragIdRef.current = null;
+    clearVisual();
+  };
+
+  const finishDrag = () => {
+    const from = dragIdRef.current;
+    const pending = pendingRef.current;
+    if (from && pending && from !== pending.toId) {
+      const cur = listsRef.current;
+      const next = applyDropById(cur, from, pending.toId, pending.place);
+      if (next !== cur) onReorderRef.current(next.map((x) => x.id));
+    }
+    pendingRef.current = null;
+    dragIdRef.current = null;
+    clearVisual();
+  };
+  useCefDragAllow(() => !!dragIdRef.current, finishDrag, cancelDrag);
 
   const openMenu = (e: React.MouseEvent<HTMLElement>, list: ListRow) => {
     e.stopPropagation();
@@ -106,25 +154,95 @@ export default function ListNav({
       </Stack>
       <List dense sx={{ flex: 1, overflow: 'auto', py: 0 }}>
         {lists.map((l) => (
-          <ListItem
+          <ListItemButton
             key={l.id}
-            disablePadding
-            secondaryAction={
-              <IconButton edge="end" size="small" onClick={(e) => openMenu(e, l)}>
-                <MoreVertIcon fontSize="small" />
-              </IconButton>
-            }
+            selected={l.id === selectedId}
+            onClick={() => onSelect(l.id)}
+            onDragOver={(ev) => {
+              ev.preventDefault();
+              ev.dataTransfer.dropEffect = 'move';
+              if (!dragIdRef.current || dragIdRef.current === l.id) {
+                if (dragIdRef.current === l.id) {
+                  pendingRef.current = null;
+                  clearDropPaint();
+                }
+                return;
+              }
+              const place = dropPlaceFromRect(
+                ev.currentTarget.getBoundingClientRect(),
+                ev.clientX,
+                ev.clientY,
+              );
+              pendingRef.current = { toId: l.id, place };
+              paintDropTarget(ev.currentTarget, place);
+            }}
+            onDrop={(ev) => {
+              ev.preventDefault();
+              ev.stopPropagation();
+              const place = dropPlaceFromRect(
+                ev.currentTarget.getBoundingClientRect(),
+                ev.clientX,
+                ev.clientY,
+              );
+              pendingRef.current = { toId: l.id, place };
+              finishDrag();
+            }}
+            sx={{
+              pr: 0.5,
+              mx: 0.5,
+              borderRadius: 1,
+              cursor: 'default',
+              '&.Mui-selected': {
+                bgcolor: 'rgba(37, 100, 207, 0.22)',
+                boxShadow: 'inset 4px 0 0 #2564cf',
+              },
+              '&.Mui-selected:hover': {
+                bgcolor: 'rgba(37, 100, 207, 0.32)',
+              },
+            }}
           >
-            <ListItemButton
-              selected={l.id === selectedId}
-              onClick={() => onSelect(l.id)}
-              sx={{ pr: 6 }}
+            <Box
+              draggable
+              onClick={(e) => e.stopPropagation()}
+              onDragStart={(ev) => {
+                ev.stopPropagation();
+                setCefDragData(ev, l.id);
+                dragIdRef.current = l.id;
+                pendingRef.current = null;
+                const row = ev.currentTarget.parentElement;
+                dragElRef.current = row;
+                if (row) row.style.opacity = '0.45';
+                ghostRef.current?.show(l.title, l.id === selectedId, ev.clientX, ev.clientY);
+              }}
+              onDrag={(ev) => {
+                if (ev.clientX === 0 && ev.clientY === 0) return;
+                ghostRef.current?.move(ev.clientX, ev.clientY);
+              }}
+              onDragEnd={finishDrag}
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                cursor: 'grab',
+                mr: 0.5,
+                flexShrink: 0,
+                '&:active': { cursor: 'grabbing' },
+              }}
             >
-              <ListItemText primary={l.title} />
-            </ListItemButton>
-          </ListItem>
+              <DragIndicatorIcon fontSize="small" sx={{ opacity: 0.55 }} />
+            </Box>
+            <ListItemText primary={l.title} />
+            <IconButton
+              size="small"
+              aria-label="列表菜单"
+              onClick={(e) => openMenu(e, l)}
+              sx={{ ml: 0.25, color: 'inherit', opacity: 0.85 }}
+            >
+              <MoreVertIcon fontSize="small" />
+            </IconButton>
+          </ListItemButton>
         ))}
       </List>
+      <DragGhost handleRef={ghostRef} />
 
       <Menu anchorEl={menuAnchor} open={!!menuAnchor} onClose={closeMenu}>
         <MenuItem

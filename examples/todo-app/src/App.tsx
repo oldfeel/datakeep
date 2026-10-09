@@ -14,10 +14,11 @@ import { watchData } from './datakeep';
 import { openDatabase, setPersistErrorHandler } from './db/sql';
 import { mergeConflictDatabases } from './db/merge';
 import * as repo from './db/repo';
-import type { AttachmentRow, ListRow, StepRow, TaskRow } from './db/types';
+import type { CommentRow, ListRow, TaskRow } from './db/types';
 import ListNav from './components/ListNav';
 import TaskList from './components/TaskList';
 import TaskDetail from './components/TaskDetail';
+import { loadSession, saveSession, type TaskSortMode } from './session';
 
 export default function App() {
   const narrow = useMediaQuery('(max-width:900px)');
@@ -28,8 +29,8 @@ export default function App() {
   const [listId, setListId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [taskId, setTaskId] = useState<string | null>(null);
-  const [steps, setSteps] = useState<StepRow[]>([]);
-  const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
+  const [comments, setComments] = useState<CommentRow[]>([]);
+  const [taskSort, setTaskSort] = useState<Record<string, TaskSortMode>>({});
 
   const refreshLists = useCallback(() => {
     const ls = repo.listLists();
@@ -47,12 +48,10 @@ export default function App() {
 
   const refreshDetail = useCallback((tid: string | null) => {
     if (!tid) {
-      setSteps([]);
-      setAttachments([]);
+      setComments([]);
       return;
     }
-    setSteps(repo.listSteps(tid));
-    setAttachments(repo.listAttachments(tid));
+    setComments(repo.listComments(tid));
   }, []);
 
   const reloadAll = useCallback(async () => {
@@ -76,6 +75,27 @@ export default function App() {
         await openDatabase();
         if (cancelled) return;
         await reloadAll();
+        if (cancelled) return;
+        const ls = repo.listLists();
+        const saved = await loadSession();
+        if (cancelled) return;
+        let lid = saved.listId;
+        let tid = saved.taskId;
+        if (tid) {
+          const t = repo.getTask(tid);
+          if (t) lid = t.list_id;
+          else tid = null;
+        }
+        if (!lid || !ls.some((l) => l.id === lid)) {
+          lid = ls[0]?.id ?? null;
+        }
+        if (tid) {
+          const t = repo.getTask(tid);
+          if (!t || t.list_id !== lid) tid = null;
+        }
+        setListId(lid);
+        setTaskId(tid);
+        setTaskSort(saved.taskSort || {});
         setReady(true);
       } catch (e) {
         console.error(e);
@@ -118,32 +138,10 @@ export default function App() {
     refreshDetail(taskId);
   }, [taskId, refreshDetail]);
 
-  // 提醒：简单检查
   useEffect(() => {
     if (!ready) return;
-    const tick = () => {
-      const now = Date.now();
-      for (const t of tasks) {
-        if (!t.remind_at || t.done) continue;
-        const at = new Date(t.remind_at).getTime();
-        if (Number.isNaN(at)) continue;
-        if (at <= now && at > now - 60_000) {
-          try {
-            if (Notification.permission === 'granted') {
-              new Notification('待办提醒', { body: t.title });
-            } else if (Notification.permission !== 'denied') {
-              void Notification.requestPermission();
-            }
-          } catch {
-            /* WebView 可能不支持 */
-          }
-        }
-      }
-    };
-    const id = window.setInterval(tick, 30_000);
-    tick();
-    return () => window.clearInterval(id);
-  }, [ready, tasks]);
+    saveSession({ listId, taskId, taskSort });
+  }, [ready, listId, taskId, taskSort]);
 
   const selectedList = useMemo(
     () => lists.find((l) => l.id === listId) ?? null,
@@ -187,8 +185,7 @@ export default function App() {
     selectedTask != null ? (
       <TaskDetail
         task={selectedTask}
-        steps={steps}
-        attachments={attachments}
+        comments={comments}
         onClose={() => setTaskId(null)}
         onPatch={async (patch) => {
           repo.updateTask(selectedTask.id, patch);
@@ -200,30 +197,12 @@ export default function App() {
           setTaskId(null);
           refreshTasks(listId);
         }}
-        onAddStep={(title) => {
-          repo.createStep(selectedTask.id, title);
+        onAddComment={(data) => {
+          repo.createComment(selectedTask.id, data);
           refreshDetail(selectedTask.id);
         }}
-        onToggleStep={(id, done) => {
-          repo.updateStep(id, { done });
-          refreshDetail(selectedTask.id);
-        }}
-        onRenameStep={(id, title) => {
-          repo.updateStep(id, { title });
-          refreshDetail(selectedTask.id);
-        }}
-        onDeleteStep={(id) => {
-          repo.deleteStep(id);
-          refreshDetail(selectedTask.id);
-        }}
-        onAddFiles={async (files) => {
-          for (const f of Array.from(files)) {
-            await repo.addAttachment(selectedTask.id, f);
-          }
-          refreshDetail(selectedTask.id);
-        }}
-        onRemoveAtt={async (att) => {
-          await repo.removeAttachment(att);
+        onDeleteComment={(id) => {
+          repo.deleteComment(id);
           refreshDetail(selectedTask.id);
         }}
       />
@@ -256,11 +235,28 @@ export default function App() {
             setListId(next || ls[0]?.id || null);
             setTaskId(null);
           }}
+          onReorder={(ids) => {
+            repo.reorderLists(ids);
+            refreshLists();
+          }}
         />
         <TaskList
           listTitle={selectedList?.title ?? ''}
           tasks={tasks}
           selectedId={taskId}
+          sortMode={
+            listId && taskSort[listId] ? taskSort[listId] : 'created_desc'
+          }
+          onSortMode={(mode) => {
+            if (!listId) return;
+            setTaskSort((prev) => ({ ...prev, [listId]: mode }));
+          }}
+          onReorder={(ids) => {
+            if (!listId) return;
+            repo.reorderTasks(listId, ids);
+            setTaskSort((prev) => ({ ...prev, [listId]: 'manual' }));
+            refreshTasks(listId);
+          }}
           onSelect={setTaskId}
           onToggleDone={(id, done) => {
             repo.updateTask(id, { done });

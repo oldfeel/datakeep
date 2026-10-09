@@ -121,6 +121,17 @@ import {
   type VideoEntry,
 } from './library';
 import {
+  applyDropAt,
+  clearDropPaint,
+  dropHighlightSx,
+  dropPaintSx,
+  dropPlaceFromRect,
+  paintDropTarget,
+  setCefDragData,
+  useCefDragAllow,
+  type DropPlace,
+} from './dnd';
+import {
   applyNameOrder,
   densityMinWidth,
   loadAutoNext,
@@ -168,15 +179,6 @@ type DragGhost =
     };
 
 /** 列表项移动到目标前；向下拖时修正下标偏移 */
-function moveBefore<T>(list: T[], fromIdx: number, toIdx: number): T[] {
-  if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return list;
-  const next = [...list];
-  const [item] = next.splice(fromIdx, 1);
-  const insertAt = fromIdx < toIdx ? toIdx - 1 : toIdx;
-  next.splice(insertAt, 0, item);
-  return next;
-}
-
 function libraryItemKey(item: LibraryItem): string {
   if (item.kind === 'series') return `s:${item.key}`;
   return `v:${item.entry.dir || item.entry.videoRel}`;
@@ -226,19 +228,35 @@ export default function App() {
     () => loadLibraryOrder(),
   );
   const [l2EditOpen, setL2EditOpen] = useState(false);
-  const [dragL1, setDragL1] = useState<string | null>(null);
-  const [dropL1, setDropL1] = useState<string | null>(null);
   const [dragGhost, setDragGhost] = useState<DragGhost | null>(null);
   const [dragEpisodeDir, setDragEpisodeDir] = useState<string | null>(null);
   const [dropEpisodeDir, setDropEpisodeDir] = useState<string | null>(null);
+  const [dropEpisodePlace, setDropEpisodePlace] = useState<DropPlace | null>(null);
   const [dragLibKey, setDragLibKey] = useState<string | null>(null);
   const [dropLibKey, setDropLibKey] = useState<string | null>(null);
+  const [dropLibPlace, setDropLibPlace] = useState<DropPlace | null>(null);
   const dragLibKeyRef = useRef<string | null>(null);
   const dragEpisodeDirRef = useRef<string | null>(null);
   const dragL1Ref = useRef<string | null>(null);
   const dropLibKeyRef = useRef<string | null>(null);
+  const dropLibPlaceRef = useRef<DropPlace | null>(null);
   const dropEpisodeDirRef = useRef<string | null>(null);
+  const dropEpisodePlaceRef = useRef<DropPlace | null>(null);
+  const pendingL1Ref = useRef<{ to: string; place: DropPlace } | null>(null);
+  const dragElRef = useRef<HTMLElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const ghostLayerRef = useRef<HTMLDivElement | null>(null);
+
+  const moveGhostLayer = (x: number, y: number) => {
+    const el = ghostLayerRef.current;
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.transform = `translate(${x + 12}px, ${y + 12}px)`;
+  };
+  const hideGhostLayer = () => {
+    const el = ghostLayerRef.current;
+    if (el) el.style.display = 'none';
+  };
   const [renameSeries, setRenameSeries] = useState<SeriesFocus | null>(null);
   const [dissolveSeries, setDissolveSeries] = useState<SeriesFocus | null>(null);
   const [seriesBusy, setSeriesBusy] = useState(false);
@@ -277,59 +295,15 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [snack]);
 
-  // 拖拽结束 / 落到空隙：必须清虚影（CEF 在未命中 drop 目标时 dragend 偶发丢失）
-  useEffect(() => {
-    const clearDrag = () => {
-      dragLibKeyRef.current = null;
-      dragEpisodeDirRef.current = null;
-      dragL1Ref.current = null;
-      dropLibKeyRef.current = null;
-      dropEpisodeDirRef.current = null;
-      setDragGhost(null);
-      setDragL1(null);
-      setDropL1(null);
-      setDragEpisodeDir(null);
-      setDropEpisodeDir(null);
-      setDragLibKey(null);
-      setDropLibKey(null);
-    };
-    const isDragging = () =>
-      !!(
-        dragLibKeyRef.current ||
-        dragEpisodeDirRef.current ||
-        dragL1Ref.current
-      );
-    const allowDrop = (e: DragEvent) => {
-      if (!isDragging()) return;
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    };
-    const onDropAnywhere = (e: DragEvent) => {
-      if (!isDragging()) return;
-      e.preventDefault();
-      // 卡片自身 onDrop 已处理排序；此处兜底清状态（含空隙松开）
-      window.setTimeout(clearDrag, 0);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isDragging()) clearDrag();
-    };
-    window.addEventListener('dragend', clearDrag, true);
-    window.addEventListener('dragover', allowDrop, true);
-    window.addEventListener('drop', onDropAnywhere);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('dragend', clearDrag, true);
-      window.removeEventListener('dragover', allowDrop, true);
-      window.removeEventListener('drop', onDropAnywhere);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, []);
-
   const clearLibDrag = () => {
     dragLibKeyRef.current = null;
     dropLibKeyRef.current = null;
+    dropLibPlaceRef.current = null;
     setDragLibKey(null);
     setDropLibKey(null);
+    setDropLibPlace(null);
+    hideGhostLayer();
+    clearDropPaint();
     setDragGhost(null);
   };
 
@@ -621,17 +595,21 @@ export default function App() {
     }
   };
 
-  const reorderL1 = (from: string, to: string) => {
+  const reorderL1 = (from: string, to: string, place: DropPlace) => {
     if (from === to) return;
     const i = l1List.indexOf(from);
     const j = l1List.indexOf(to);
     if (i < 0 || j < 0) return;
-    const next = moveBefore(l1List, i, j);
+    const next = applyDropAt(l1List, i, j, place);
     setL1Order(next);
     saveL1Order(next);
   };
 
-  const reorderEpisodes = async (fromDir: string, toDir: string) => {
+  const reorderEpisodes = async (
+    fromDir: string,
+    toDir: string,
+    place: DropPlace = 'swap',
+  ) => {
     if (!seriesFocus || fromDir === toDir) return;
     const focusCol = normalizeCatName(seriesFocus.name);
     const eps = sortSeriesEpisodes(
@@ -647,7 +625,7 @@ export default function App() {
     const i = eps.findIndex((x) => x.dir === fromDir);
     const j = eps.findIndex((x) => x.dir === toDir);
     if (i < 0 || j < 0) return;
-    const next = moveBefore(eps, i, j);
+    const next = applyDropAt(eps, i, j, place);
     try {
       for (let k = 0; k < next.length; k++) {
         await saveMetaPatch(next[k], { episodeOrder: k });
@@ -665,19 +643,68 @@ export default function App() {
     }
   };
 
-  const reorderLibraryItems = (fromKey: string, toKey: string) => {
+  const reorderLibraryItems = (
+    fromKey: string,
+    toKey: string,
+    place: DropPlace = 'swap',
+  ) => {
     if (!fromKey || !toKey || fromKey === toKey) return;
     const keys = gridItems.map(libraryItemKey);
     const i = keys.indexOf(fromKey);
     const j = keys.indexOf(toKey);
     if (i < 0 || j < 0) return;
-    const nextKeys = moveBefore(keys, i, j);
+    const nextKeys = applyDropAt(keys, i, j, place);
     const nextMap = { ...libraryOrderMap, [libraryOrderScope]: nextKeys };
     setLibraryOrderMap(nextMap);
     saveLibraryOrder(nextMap);
     setSortBy('custom');
     clearLibDrag();
   };
+
+  const cancelDrag = () => {
+    pendingL1Ref.current = null;
+    dragLibKeyRef.current = null;
+    dragEpisodeDirRef.current = null;
+    dragL1Ref.current = null;
+    dropLibKeyRef.current = null;
+    dropLibPlaceRef.current = null;
+    dropEpisodeDirRef.current = null;
+    dropEpisodePlaceRef.current = null;
+    if (dragElRef.current) dragElRef.current.style.opacity = '';
+    dragElRef.current = null;
+    setDragGhost(null);
+    setDragEpisodeDir(null);
+    setDropEpisodeDir(null);
+    setDropEpisodePlace(null);
+    setDragLibKey(null);
+    setDropLibKey(null);
+    setDropLibPlace(null);
+    hideGhostLayer();
+    clearDropPaint();
+  };
+
+  const finishDrag = () => {
+    const l1from = dragL1Ref.current;
+    const l1p = pendingL1Ref.current;
+    const libFrom = dragLibKeyRef.current;
+    const libTo = dropLibKeyRef.current;
+    const epFrom = dragEpisodeDirRef.current;
+    const epTo = dropEpisodeDirRef.current;
+    if (l1from && l1p && l1from !== l1p.to) {
+      reorderL1(l1from, l1p.to, l1p.place);
+    } else if (libFrom && libTo && libFrom !== libTo) {
+      reorderLibraryItems(libFrom, libTo, dropLibPlaceRef.current || 'swap');
+    } else if (epFrom && epTo && epFrom !== epTo) {
+      void reorderEpisodes(epFrom, epTo, dropEpisodePlaceRef.current || 'swap');
+    }
+    cancelDrag();
+  };
+  useCefDragAllow(
+    () =>
+      !!(dragLibKeyRef.current || dragEpisodeDirRef.current || dragL1Ref.current),
+    finishDrag,
+    cancelDrag,
+  );
 
   const submitRenameSeries = async () => {
     if (!renameSeries) return;
@@ -966,6 +993,7 @@ export default function App() {
                 overflow: 'auto',
                 display: { xs: 'flex', sm: 'block' },
                 minHeight: 0,
+                ...dropPaintSx,
                 '& .MuiListItemButton-root': {
                   borderRadius: 1,
                   mx: 0.75,
@@ -1005,8 +1033,9 @@ export default function App() {
                   selected={l1 === name}
                   count={countEntriesInL1(library, name)}
                   empty={isL1Empty(library, name)}
-                  dragging={dragL1 === name}
-                  dropTarget={dropL1 === name && dragL1 !== name}
+                  dragging={false}
+                  dropTarget={false}
+                  dropPlace={null}
                   onSelect={() => selectL1(name)}
                   onRename={() => {
                     setRenameInput(name);
@@ -1015,8 +1044,11 @@ export default function App() {
                   }}
                   onDelete={() => setDeleteTarget({ kind: 'l1', name })}
                   onDragStart={(ev) => {
-                    setDragL1(name);
-                    setDropL1(null);
+                    dragL1Ref.current = name;
+                    pendingL1Ref.current = null;
+                    const row = ev.currentTarget.parentElement;
+                    dragElRef.current = row;
+                    if (row) row.style.opacity = '0.45';
                     setDragGhost({
                       kind: 'l1',
                       x: ev.clientX,
@@ -1025,38 +1057,24 @@ export default function App() {
                       count: countEntriesInL1(library, name),
                       selected: l1 === name,
                     });
+                    moveGhostLayer(ev.clientX, ev.clientY);
                   }}
                   onDrag={(ev) => {
                     if (ev.clientX === 0 && ev.clientY === 0) return;
-                    setDragGhost((g) =>
-                      g && g.kind === 'l1'
-                        ? { ...g, x: ev.clientX, y: ev.clientY }
-                        : {
-                            kind: 'l1',
-                            x: ev.clientX,
-                            y: ev.clientY,
-                            name,
-                            count: countEntriesInL1(library, name),
-                            selected: l1 === name,
-                          },
-                    );
+                    moveGhostLayer(ev.clientX, ev.clientY);
                   }}
-                  onDragEnter={() => {
-                    if (dragL1 && dragL1 !== name) setDropL1(name);
+                  onHover={(place) => {
+                    if (!dragL1Ref.current || dragL1Ref.current === name) {
+                      pendingL1Ref.current = null;
+                      if (dragL1Ref.current === name) clearDropPaint();
+                      return;
+                    }
+                    pendingL1Ref.current = { to: name, place };
                   }}
-                  onDragLeave={() => {
-                    setDropL1((cur) => (cur === name ? null : cur));
-                  }}
-                  onDragEnd={() => {
-                    setDragL1(null);
-                    setDropL1(null);
-                    setDragGhost(null);
-                  }}
-                  onDrop={(from) => {
-                    reorderL1(from || dragL1 || '', name);
-                    setDragL1(null);
-                    setDropL1(null);
-                    setDragGhost(null);
+                  onDragEnd={finishDrag}
+                  onDrop={(_from, place) => {
+                    pendingL1Ref.current = { to: name, place };
+                    finishDrag();
                   }}
                 />
               ))}
@@ -1237,55 +1255,52 @@ export default function App() {
                     ev.preventDefault();
                     ev.dataTransfer.dropEffect = 'move';
                     const near = nearestLibKeyAt(ev.clientX, ev.clientY);
-                    if (near && near !== dropLibKeyRef.current) {
-                      dropLibKeyRef.current = near;
-                      setDropLibKey(near);
-                    }
+                    if (!near) return;
+                    const el = gridRef.current?.querySelector<HTMLElement>(
+                      `[data-lib-key="${near.replace(/"/g, '')}"]`,
+                    );
+                    const place = el
+                      ? dropPlaceFromRect(
+                          el.getBoundingClientRect(),
+                          ev.clientX,
+                          ev.clientY,
+                          'x',
+                        )
+                      : 'swap';
+                    dropLibKeyRef.current = near;
+                    dropLibPlaceRef.current = place;
+                    paintDropTarget(el, place, { layout: 'x' });
                   } else if (dragEpisodeDirRef.current) {
                     ev.preventDefault();
                     ev.dataTransfer.dropEffect = 'move';
                     const near = nearestEpisodeDirAt(ev.clientX, ev.clientY);
-                    if (near && near !== dropEpisodeDirRef.current) {
-                      dropEpisodeDirRef.current = near;
-                      setDropEpisodeDir(near);
-                    }
+                    if (!near) return;
+                    const el = gridRef.current?.querySelector<HTMLElement>(
+                      `[data-ep-dir="${near.replace(/"/g, '')}"]`,
+                    );
+                    const place = el
+                      ? dropPlaceFromRect(
+                          el.getBoundingClientRect(),
+                          ev.clientX,
+                          ev.clientY,
+                          'x',
+                        )
+                      : 'swap';
+                    dropEpisodeDirRef.current = near;
+                    dropEpisodePlaceRef.current = place;
+                    paintDropTarget(el, place, { layout: 'x' });
                   }
                 }}
                 onDrop={(ev) => {
                   ev.preventDefault();
-                  if (dragLibKeyRef.current) {
-                    const from =
-                      ev.dataTransfer.getData('text/plain') ||
-                      dragLibKeyRef.current;
-                    const to =
-                      dropLibKeyRef.current ||
-                      nearestLibKeyAt(ev.clientX, ev.clientY);
-                    if (from && to) reorderLibraryItems(from, to);
-                    else clearLibDrag();
-                    return;
-                  }
-                  if (dragEpisodeDirRef.current) {
-                    const from =
-                      ev.dataTransfer.getData('text/plain') ||
-                      dragEpisodeDirRef.current;
-                    const to =
-                      dropEpisodeDirRef.current ||
-                      nearestEpisodeDirAt(ev.clientX, ev.clientY);
-                    if (from && to) {
-                      void reorderEpisodes(from, to);
-                    }
-                    dragEpisodeDirRef.current = null;
-                    dropEpisodeDirRef.current = null;
-                    setDragEpisodeDir(null);
-                    setDropEpisodeDir(null);
-                    setDragGhost(null);
-                  }
+                  finishDrag();
                 }}
                 sx={{
                   display: 'grid',
                   gridTemplateColumns: `repeat(auto-fill, minmax(${densityMinWidth(density)}, 1fr))`,
                   gap: density === 'compact' ? 1.25 : 2,
                   minHeight: 80,
+                  ...dropPaintSx,
                 }}
               >
                 {gridItems.map((item) => {
@@ -1322,11 +1337,13 @@ export default function App() {
                           dropLibKey === libKey &&
                           dragLibKey !== libKey
                         }
+                        dropPlace={dropLibKey === libKey ? dropLibPlace : null}
                         onDragStart={(ev) => {
                           dragLibKeyRef.current = libKey;
-                          setDragLibKey(libKey);
-                          setDropLibKey(null);
                           dropLibKeyRef.current = null;
+                          const card = ev.currentTarget.closest('.MuiCard-root');
+                          dragElRef.current = card instanceof HTMLElement ? card : null;
+                          if (dragElRef.current) dragElRef.current.style.opacity = '0.45';
                           setDragGhost({
                             kind: 'series',
                             x: ev.clientX,
@@ -1334,45 +1351,19 @@ export default function App() {
                             group: item,
                             aspect: posterAspect(posterRatio),
                           });
+                          moveGhostLayer(ev.clientX, ev.clientY);
                         }}
                         onDrag={(ev) => {
                           if (ev.clientX === 0 && ev.clientY === 0) return;
-                          setDragGhost((g) =>
-                            g && g.kind === 'series'
-                              ? { ...g, x: ev.clientX, y: ev.clientY }
-                              : {
-                                  kind: 'series',
-                                  x: ev.clientX,
-                                  y: ev.clientY,
-                                  group: item,
-                                  aspect: posterAspect(posterRatio),
-                                },
-                          );
+                          moveGhostLayer(ev.clientX, ev.clientY);
                         }}
-                        onDragEnter={() => {
-                          if (
-                            dragLibKeyRef.current &&
-                            dragLibKeyRef.current !== libKey
-                          ) {
-                            dropLibKeyRef.current = libKey;
-                            setDropLibKey(libKey);
-                          }
-                        }}
-                        onDragLeave={() => {
-                          setDropLibKey((cur) => {
-                            if (cur === libKey) {
-                              dropLibKeyRef.current = null;
-                              return null;
-                            }
-                            return cur;
-                          });
-                        }}
-                        onDragEnd={() => clearLibDrag()}
-                        onDropSeries={(fromKey) => {
-                          reorderLibraryItems(
-                            fromKey || dragLibKeyRef.current || '',
-                            libKey,
-                          );
+                        onDragEnter={() => {}}
+                        onDragLeave={() => {}}
+                        onDragEnd={finishDrag}
+                        onDropSeries={(_fromKey, place) => {
+                          dropLibKeyRef.current = libKey;
+                          dropLibPlaceRef.current = place;
+                          finishDrag();
                         }}
                         dragPayload={libKey}
                       />
@@ -1409,111 +1400,51 @@ export default function App() {
                             dropLibKey === libKey &&
                             dragLibKey !== libKey
                       }
+                      dropPlace={
+                        seriesFocus
+                          ? dropEpisodeDir === e.dir
+                            ? dropEpisodePlace
+                            : null
+                          : dropLibKey === libKey
+                            ? dropLibPlace
+                            : null
+                      }
                       onDragStart={(ev) => {
                         if (seriesFocus) {
                           dragEpisodeDirRef.current = e.dir;
-                          setDragEpisodeDir(e.dir);
-                          setDropEpisodeDir(null);
                           dropEpisodeDirRef.current = null;
-                          setDragGhost({
-                            kind: 'episode',
-                            x: ev.clientX,
-                            y: ev.clientY,
-                            entry: e,
-                            aspect: posterAspect(posterRatio),
-                          });
                         } else {
                           dragLibKeyRef.current = libKey;
-                          setDragLibKey(libKey);
-                          setDropLibKey(null);
                           dropLibKeyRef.current = null;
-                          setDragGhost({
-                            kind: 'episode',
-                            x: ev.clientX,
-                            y: ev.clientY,
-                            entry: e,
-                            aspect: posterAspect(posterRatio),
-                          });
                         }
+                        const card = ev.currentTarget.closest('.MuiCard-root');
+                        dragElRef.current = card instanceof HTMLElement ? card : null;
+                        if (dragElRef.current) dragElRef.current.style.opacity = '0.45';
+                        setDragGhost({
+                          kind: 'episode',
+                          x: ev.clientX,
+                          y: ev.clientY,
+                          entry: e,
+                          aspect: posterAspect(posterRatio),
+                        });
+                        moveGhostLayer(ev.clientX, ev.clientY);
                       }}
                       onDrag={(ev) => {
                         if (ev.clientX === 0 && ev.clientY === 0) return;
-                        setDragGhost((g) =>
-                          g && g.kind === 'episode'
-                            ? { ...g, x: ev.clientX, y: ev.clientY }
-                            : {
-                                kind: 'episode',
-                                x: ev.clientX,
-                                y: ev.clientY,
-                                entry: e,
-                                aspect: posterAspect(posterRatio),
-                              },
-                        );
+                        moveGhostLayer(ev.clientX, ev.clientY);
                       }}
-                      onDragEnter={() => {
+                      onDragEnter={() => {}}
+                      onDragLeave={() => {}}
+                      onDragEnd={finishDrag}
+                      onDropEpisode={(_fromPayload, place) => {
                         if (seriesFocus) {
-                          if (
-                            dragEpisodeDirRef.current &&
-                            dragEpisodeDirRef.current !== e.dir
-                          ) {
-                            dropEpisodeDirRef.current = e.dir;
-                            setDropEpisodeDir(e.dir);
-                          }
-                        } else if (
-                          dragLibKeyRef.current &&
-                          dragLibKeyRef.current !== libKey
-                        ) {
+                          dropEpisodeDirRef.current = e.dir;
+                          dropEpisodePlaceRef.current = place;
+                        } else {
                           dropLibKeyRef.current = libKey;
-                          setDropLibKey(libKey);
+                          dropLibPlaceRef.current = place;
                         }
-                      }}
-                      onDragLeave={() => {
-                        if (seriesFocus) {
-                          setDropEpisodeDir((cur) => {
-                            if (cur === e.dir) {
-                              dropEpisodeDirRef.current = null;
-                              return null;
-                            }
-                            return cur;
-                          });
-                        } else {
-                          setDropLibKey((cur) => {
-                            if (cur === libKey) {
-                              dropLibKeyRef.current = null;
-                              return null;
-                            }
-                            return cur;
-                          });
-                        }
-                      }}
-                      onDragEnd={() => {
-                        if (seriesFocus) {
-                          dragEpisodeDirRef.current = null;
-                          dropEpisodeDirRef.current = null;
-                          setDragEpisodeDir(null);
-                          setDropEpisodeDir(null);
-                          setDragGhost(null);
-                        } else {
-                          clearLibDrag();
-                        }
-                      }}
-                      onDropEpisode={(fromPayload) => {
-                        if (seriesFocus) {
-                          void reorderEpisodes(
-                            fromPayload || dragEpisodeDirRef.current || '',
-                            e.dir,
-                          );
-                          dragEpisodeDirRef.current = null;
-                          dropEpisodeDirRef.current = null;
-                          setDragEpisodeDir(null);
-                          setDropEpisodeDir(null);
-                          setDragGhost(null);
-                        } else {
-                          reorderLibraryItems(
-                            fromPayload || dragLibKeyRef.current || '',
-                            libKey,
-                          );
-                        }
+                        finishDrag();
                       }}
                       dragPayload={seriesFocus ? e.dir : libKey}
                       onOpen={() => void openEntry(e)}
@@ -1551,18 +1482,20 @@ export default function App() {
         </Box>
       </Box>
 
-      {dragGhost && (
-        <Box
-          sx={{
-            position: 'fixed',
-            left: dragGhost.x + 12,
-            top: dragGhost.y + 12,
-            zIndex: 2000,
-            pointerEvents: 'none',
-            filter: 'drop-shadow(0 4px 12px rgba(0,0,0,.35))',
-          }}
-        >
-          {dragGhost.kind === 'l1' ? (
+      <Box
+        ref={ghostLayerRef}
+        sx={{
+          position: 'fixed',
+          left: 0,
+          top: 0,
+          zIndex: 2000,
+          pointerEvents: 'none',
+          display: 'none',
+          willChange: 'transform',
+          filter: 'drop-shadow(0 4px 12px rgba(0,0,0,.35))',
+        }}
+      >
+        {dragGhost && (dragGhost.kind === 'l1' ? (
             <Box
               sx={{
                 display: 'flex',
@@ -1633,9 +1566,8 @@ export default function App() {
                 </Typography>
               </CardContent>
             </Card>
-          )}
-        </Box>
-      )}
+          ))}
+      </Box>
 
       {snack && (
         <Alert
@@ -1975,14 +1907,12 @@ function L1NavItem({
   count,
   empty,
   dragging,
-  dropTarget,
   onSelect,
   onRename,
   onDelete,
   onDragStart,
   onDrag,
-  onDragEnter,
-  onDragLeave,
+  onHover,
   onDragEnd,
   onDrop,
 }: {
@@ -1992,64 +1922,73 @@ function L1NavItem({
   empty: boolean;
   dragging?: boolean;
   dropTarget?: boolean;
+  dropPlace?: DropPlace | null;
   onSelect: () => void;
   onRename: () => void;
   onDelete: () => void;
   onDragStart: (ev: ReactDragEvent) => void;
   onDrag: (ev: ReactDragEvent) => void;
-  onDragEnter: () => void;
-  onDragLeave: () => void;
+  onHover?: (place: DropPlace) => void;
   onDragEnd: () => void;
-  onDrop: (from: string) => void;
+  onDrop: (from: string, place: DropPlace) => void;
 }) {
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
   return (
     <ListItemButton
       selected={selected}
       onClick={onSelect}
-      draggable
-      onDragStart={(ev) => {
-        // CEF/Chromium 对自定义 MIME 不稳定，统一用 text/plain
-        ev.dataTransfer.setData('text/plain', name);
-        ev.dataTransfer.effectAllowed = 'move';
-        // 隐藏浏览器默认幽灵图，改用自定义悬浮提示
-        const img = new Image();
-        img.src =
-          'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-        ev.dataTransfer.setDragImage(img, 0, 0);
-        onDragStart(ev);
-      }}
-      onDrag={onDrag}
-      onDragEnd={onDragEnd}
-      onDragEnter={(ev) => {
-        ev.preventDefault();
-        onDragEnter();
-      }}
-      onDragLeave={onDragLeave}
+      onDragEnter={(ev) => ev.preventDefault()}
       onDragOver={(ev) => {
         ev.preventDefault();
         ev.dataTransfer.dropEffect = 'move';
-        onDragEnter();
+        const place = dropPlaceFromRect(
+          ev.currentTarget.getBoundingClientRect(),
+          ev.clientX,
+          ev.clientY,
+        );
+        paintDropTarget(ev.currentTarget, place);
+        onHover?.(place);
       }}
       onDrop={(ev) => {
         ev.preventDefault();
         const from = ev.dataTransfer.getData('text/plain');
-        onDrop(from);
+        onDrop(
+          from,
+          dropPlaceFromRect(
+            ev.currentTarget.getBoundingClientRect(),
+            ev.clientX,
+            ev.clientY,
+          ),
+        );
       }}
       sx={{
         whiteSpace: 'nowrap',
         pr: 0.5,
         opacity: dragging ? 0.45 : 1,
-        cursor: 'grab',
-        borderTop: dropTarget ? '2px solid' : '2px solid transparent',
-        borderColor: dropTarget ? 'primary.main' : 'transparent',
-        bgcolor: dropTarget ? 'action.selected' : undefined,
+        cursor: 'default',
       }}
     >
-      <DragIndicatorIcon
-        fontSize="small"
-        sx={{ mr: 0.5, opacity: 0.55, flexShrink: 0 }}
-      />
+      <Box
+        draggable
+        onClick={(e) => e.stopPropagation()}
+        onDragStart={(ev) => {
+          ev.stopPropagation();
+          setCefDragData(ev, name);
+          onDragStart(ev);
+        }}
+        onDrag={onDrag}
+        onDragEnd={onDragEnd}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          cursor: 'grab',
+          mr: 0.5,
+          flexShrink: 0,
+          '&:active': { cursor: 'grabbing' },
+        }}
+      >
+        <DragIndicatorIcon fontSize="small" sx={{ opacity: 0.55 }} />
+      </Box>
       <ListItemText
         primary={name}
         slotProps={{
@@ -2189,7 +2128,28 @@ function L2EditDialog({
   const [renameInput, setRenameInput] = useState('');
   const [renameError, setRenameError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [dragName, setDragName] = useState<string | null>(null);
+  const dragNameRef = useRef<string | null>(null);
+  const pendingRef = useRef<{ to: string; place: DropPlace } | null>(null);
+  const dragElRef = useRef<HTMLElement | null>(null);
+
+  const cancelDrag = () => {
+    dragNameRef.current = null;
+    pendingRef.current = null;
+    if (dragElRef.current) dragElRef.current.style.opacity = '';
+    dragElRef.current = null;
+    clearDropPaint();
+  };
+  const finishDrag = () => {
+    const from = dragNameRef.current;
+    const pending = pendingRef.current;
+    if (from && pending && from !== pending.to) {
+      const i = order.indexOf(from);
+      const j = order.indexOf(pending.to);
+      if (i >= 0 && j >= 0) onReorder(applyDropAt(order, i, j, pending.place));
+    }
+    cancelDrag();
+  };
+  useCefDragAllow(() => !!dragNameRef.current, finishDrag, cancelDrag);
 
   useEffect(() => {
     if (!open) {
@@ -2277,29 +2237,56 @@ function L2EditDialog({
             return (
               <ListItemButton
                 key={name}
-                draggable
-                onDragStart={(ev) => {
-                  ev.dataTransfer.setData('text/plain', name);
-                  setDragName(name);
+                onDragOver={(ev) => {
+                  ev.preventDefault();
+                  ev.dataTransfer.dropEffect = 'move';
+                  if (!dragNameRef.current || dragNameRef.current === name) {
+                    pendingRef.current = null;
+                    if (dragNameRef.current === name) clearDropPaint();
+                    return;
+                  }
+                  const place = dropPlaceFromRect(
+                    ev.currentTarget.getBoundingClientRect(),
+                    ev.clientX,
+                    ev.clientY,
+                  );
+                  pendingRef.current = { to: name, place };
+                  paintDropTarget(ev.currentTarget, place);
                 }}
-                onDragEnd={() => setDragName(null)}
-                onDragOver={(ev) => ev.preventDefault()}
                 onDrop={(ev) => {
                   ev.preventDefault();
-                  const from = ev.dataTransfer.getData('text/plain') || dragName;
-                  if (!from || from === name) return;
-                  const next = [...order];
-                  const i = next.indexOf(from);
-                  const j = next.indexOf(name);
-                  if (i < 0 || j < 0) return;
-                  next.splice(i, 1);
-                  next.splice(j, 0, from);
-                  onReorder(next);
-                  setDragName(null);
+                  const place = dropPlaceFromRect(
+                    ev.currentTarget.getBoundingClientRect(),
+                    ev.clientX,
+                    ev.clientY,
+                  );
+                  pendingRef.current = { to: name, place };
+                  finishDrag();
                 }}
-                sx={{ opacity: dragName === name ? 0.5 : 1, cursor: 'grab', borderRadius: 1 }}
+                sx={{ opacity: 1, cursor: 'default', borderRadius: 1 }}
               >
-                <DragIndicatorIcon fontSize="small" sx={{ mr: 1, opacity: 0.5 }} />
+                <Box
+                  draggable
+                  onClick={(e) => e.stopPropagation()}
+                  onDragStart={(ev) => {
+                    ev.stopPropagation();
+                    setCefDragData(ev, name);
+                    dragNameRef.current = name;
+                    pendingRef.current = null;
+                    dragElRef.current = ev.currentTarget.parentElement;
+                    if (dragElRef.current) dragElRef.current.style.opacity = '0.45';
+                  }}
+                  onDragEnd={finishDrag}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    cursor: 'grab',
+                    mr: 1,
+                    '&:active': { cursor: 'grabbing' },
+                  }}
+                >
+                  <DragIndicatorIcon fontSize="small" sx={{ opacity: 0.5 }} />
+                </Box>
                 <ListItemText primary={name} secondary={`${count} 个视频`} />
                 <Button
                   size="small"
@@ -2623,6 +2610,7 @@ function EntryCard({
   draggable,
   dragging,
   dropTarget,
+  dropPlace,
   onDragStart,
   onDrag,
   onDragEnter,
@@ -2646,12 +2634,13 @@ function EntryCard({
   draggable?: boolean;
   dragging?: boolean;
   dropTarget?: boolean;
+  dropPlace?: DropPlace | null;
   onDragStart?: (ev: ReactDragEvent) => void;
   onDrag?: (ev: ReactDragEvent) => void;
   onDragEnter?: () => void;
   onDragLeave?: () => void;
   onDragEnd?: () => void;
-  onDropEpisode?: (fromDir: string) => void;
+  onDropEpisode?: (fromDir: string, place: DropPlace) => void;
   dragPayload?: string;
 }) {
   const cover = entry.coverRel ? dataUrl(entry.coverRel) : null;
@@ -2667,9 +2656,7 @@ function EntryCard({
       sx={{
         position: 'relative',
         opacity: dragging ? 0.5 : 1,
-        outline: dropTarget ? '2px solid' : 'none',
-        outlineColor: dropTarget ? 'primary.main' : undefined,
-        bgcolor: dropTarget ? 'action.hover' : undefined,
+        ...dropHighlightSx(!!dropTarget, dropPlace ?? null),
       }}
       onDragEnter={(ev) => {
         if (!draggable) return;
@@ -2684,13 +2671,20 @@ function EntryCard({
         if (!draggable) return;
         ev.preventDefault();
         ev.dataTransfer.dropEffect = 'move';
-        onDragEnter?.();
       }}
       onDrop={(ev) => {
         if (!draggable) return;
         ev.preventDefault();
         const from = ev.dataTransfer.getData('text/plain');
-        onDropEpisode?.(from);
+        onDropEpisode?.(
+          from,
+          dropPlaceFromRect(
+            ev.currentTarget.getBoundingClientRect(),
+            ev.clientX,
+            ev.clientY,
+            'x',
+          ),
+        );
       }}
     >
       {draggable && (
@@ -2698,12 +2692,7 @@ function EntryCard({
           draggable
           onDragStart={(ev) => {
             ev.stopPropagation();
-            ev.dataTransfer.setData('text/plain', dragPayload || entry.dir);
-            ev.dataTransfer.effectAllowed = 'move';
-            const img = new Image();
-            img.src =
-              'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-            ev.dataTransfer.setDragImage(img, 0, 0);
+            setCefDragData(ev, dragPayload || entry.dir);
             onDragStart?.(ev);
           }}
           onDrag={(ev) => onDrag?.(ev)}
@@ -2916,6 +2905,7 @@ function SeriesCard({
   draggable,
   dragging,
   dropTarget,
+  dropPlace,
   onDragStart,
   onDrag,
   onDragEnter,
@@ -2932,12 +2922,13 @@ function SeriesCard({
   draggable?: boolean;
   dragging?: boolean;
   dropTarget?: boolean;
+  dropPlace?: DropPlace | null;
   onDragStart?: (ev: ReactDragEvent) => void;
   onDrag?: (ev: ReactDragEvent) => void;
   onDragEnter?: () => void;
   onDragLeave?: () => void;
   onDragEnd?: () => void;
-  onDropSeries?: (fromKey: string) => void;
+  onDropSeries?: (fromKey: string, place: DropPlace) => void;
   dragPayload?: string;
 }) {
   const cover = group.coverRel ? dataUrl(group.coverRel) : null;
@@ -2949,9 +2940,7 @@ function SeriesCard({
       sx={{
         position: 'relative',
         opacity: dragging ? 0.5 : 1,
-        outline: dropTarget ? '2px solid' : 'none',
-        outlineColor: dropTarget ? 'primary.main' : undefined,
-        bgcolor: dropTarget ? 'action.hover' : undefined,
+        ...dropHighlightSx(!!dropTarget, dropPlace ?? null),
       }}
       onDragEnter={(ev) => {
         if (!draggable) return;
@@ -2966,13 +2955,20 @@ function SeriesCard({
         if (!draggable) return;
         ev.preventDefault();
         ev.dataTransfer.dropEffect = 'move';
-        onDragEnter?.();
       }}
       onDrop={(ev) => {
         if (!draggable) return;
         ev.preventDefault();
         const from = ev.dataTransfer.getData('text/plain');
-        onDropSeries?.(from);
+        onDropSeries?.(
+          from,
+          dropPlaceFromRect(
+            ev.currentTarget.getBoundingClientRect(),
+            ev.clientX,
+            ev.clientY,
+            'x',
+          ),
+        );
       }}
     >
       {draggable && (
@@ -2980,12 +2976,7 @@ function SeriesCard({
           draggable
           onDragStart={(ev) => {
             ev.stopPropagation();
-            ev.dataTransfer.setData('text/plain', dragPayload || group.key);
-            ev.dataTransfer.effectAllowed = 'move';
-            const img = new Image();
-            img.src =
-              'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-            ev.dataTransfer.setDragImage(img, 0, 0);
+            setCefDragData(ev, dragPayload || group.key);
             onDragStart?.(ev);
           }}
           onDrag={(ev) => onDrag?.(ev)}

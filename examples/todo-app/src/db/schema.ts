@@ -47,6 +47,7 @@ function needsV2Reset(db: Database): boolean {
 }
 
 function dropAllAppTables(db: Database): void {
+  db.run('DROP TABLE IF EXISTS comments');
   db.run('DROP TABLE IF EXISTS attachments');
   db.run('DROP TABLE IF EXISTS steps');
   db.run('DROP TABLE IF EXISTS tasks');
@@ -109,6 +110,24 @@ export function migrate(db: Database): void {
       deleted INTEGER NOT NULL DEFAULT 0
     )
   `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS comments (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      body TEXT NOT NULL,
+      images_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+
+  if (tableExists(db, 'comments')) {
+    const cols = columnNames(db, 'comments');
+    if (!cols.includes('images_json')) {
+      db.run(`ALTER TABLE comments ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'`);
+    }
+  }
 
   ensureDefaultList(db);
 }

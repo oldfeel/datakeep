@@ -11,82 +11,33 @@ import CloseIcon from '@mui/icons-material/Close';
 import DeleteIcon from '@mui/icons-material/DeleteOutlineOutlined';
 import { useEffect, useRef, useState } from 'react';
 import type { OutputData } from '@editorjs/editorjs';
-import type { AttachmentRow, StepRow, TaskRow } from '../db/types';
+import type { CommentRow, TaskRow } from '../db/types';
 import { formatCreatedAt } from '../db/types';
 import NoteEditor from './NoteEditor';
-import StepsEditor from './StepsEditor';
-import AttachmentsPanel from './Attachments';
+import CommentsPanel from './Comments';
 
 type Props = {
   task: TaskRow;
-  steps: StepRow[];
-  attachments: AttachmentRow[];
+  comments: CommentRow[];
   onClose: () => void;
-  onPatch: (patch: {
-    title?: string;
-    due_at?: string | null;
-    remind_at?: string | null;
-    note?: OutputData | null;
-  }) => void | Promise<void>;
+  onPatch: (patch: { title?: string; note?: OutputData | null }) => void | Promise<void>;
   onDelete: () => void;
-  onAddStep: (title: string) => void;
-  onToggleStep: (id: string, done: boolean) => void;
-  onRenameStep: (id: string, title: string) => void;
-  onDeleteStep: (id: string) => void;
-  onAddFiles: (files: FileList) => Promise<void>;
-  onRemoveAtt: (att: AttachmentRow) => Promise<void>;
+  onAddComment: (data: OutputData) => void;
+  onDeleteComment: (id: string) => void;
 };
-
-function toDateInput(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function toDateTimeLocal(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const h = String(d.getHours()).padStart(2, '0');
-  const min = String(d.getMinutes()).padStart(2, '0');
-  return `${y}-${m}-${day}T${h}:${min}`;
-}
-
-function fromDateInput(v: string): string | null {
-  if (!v) return null;
-  return new Date(v + 'T00:00:00').toISOString();
-}
-
-function fromDateTimeLocal(v: string): string | null {
-  if (!v) return null;
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
-}
 
 export default function TaskDetail({
   task,
-  steps,
-  attachments,
+  comments,
   onClose,
   onPatch,
   onDelete,
-  onAddStep,
-  onToggleStep,
-  onRenameStep,
-  onDeleteStep,
-  onAddFiles,
-  onRemoveAtt,
+  onAddComment,
+  onDeleteComment,
 }: Props) {
   const [title, setTitle] = useState(task.title);
   const saveNoteRef = useRef<(() => Promise<OutputData>) | null>(null);
+  const noteBusyRef = useRef(false);
   const noteKey = `${task.id}:${task.note_json.length}`;
 
   useEffect(() => {
@@ -153,56 +104,36 @@ export default function TaskDetail({
           }}
           slotProps={{
             input: {
-              disableUnderline: true,
-              sx: { typography: 'h6', fontWeight: 600 },
+              sx: {
+                typography: 'h6',
+                fontWeight: 600,
+                '&:before': { borderBottom: '1.5px solid rgba(0,0,0,0.42)' },
+                '&:hover:not(.Mui-disabled):before': {
+                  borderBottom: '2px solid #2564cf',
+                },
+              },
             },
           }}
           sx={{ mb: 2 }}
         />
 
         <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
-          步骤
-        </Typography>
-        <StepsEditor
-          steps={steps}
-          onAdd={onAddStep}
-          onToggle={onToggleStep}
-          onRename={onRenameStep}
-          onDelete={onDeleteStep}
-        />
-
-        <Divider sx={{ my: 2 }} />
-
-        <Stack spacing={1.5}>
-          <TextField
-            label="截止日期"
-            type="date"
-            size="small"
-            slotProps={{ inputLabel: { shrink: true } }}
-            value={toDateInput(task.due_at)}
-            onChange={(e) => void onPatch({ due_at: fromDateInput(e.target.value) })}
-          />
-          <TextField
-            label="提醒"
-            type="datetime-local"
-            size="small"
-            slotProps={{ inputLabel: { shrink: true } }}
-            value={toDateTimeLocal(task.remind_at)}
-            onChange={(e) =>
-              void onPatch({ remind_at: fromDateTimeLocal(e.target.value) })
-            }
-          />
-        </Stack>
-
-        <Divider sx={{ my: 2 }} />
-
-        <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
           备注
         </Typography>
-        <Box onBlur={() => void flushNote()}>
+        <Box
+          onBlur={() => {
+            if (noteBusyRef.current) return;
+            void flushNote();
+          }}
+        >
           <NoteEditor
             key={noteKey}
+            taskId={task.id}
             initial={initialNote}
+            onBusy={(busy) => {
+              noteBusyRef.current = busy;
+            }}
+            onImageUploaded={() => void flushNote()}
             onReady={(api) => {
               saveNoteRef.current = api.save;
             }}
@@ -211,10 +142,11 @@ export default function TaskDetail({
 
         <Divider sx={{ my: 2 }} />
 
-        <AttachmentsPanel
-          items={attachments}
-          onAdd={onAddFiles}
-          onRemove={onRemoveAtt}
+        <CommentsPanel
+          taskId={task.id}
+          comments={comments}
+          onAdd={onAddComment}
+          onDelete={onDeleteComment}
         />
 
         <Button

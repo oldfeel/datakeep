@@ -13,14 +13,6 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
-export function todayIsoDate(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 /** 本地时区短可读时间 */
 export function formatCreatedAt(iso: string): string {
   try {
@@ -96,6 +88,17 @@ export type AttachmentRow = {
   rel_path: string;
   mime: string;
   size: number;
+  created_at: string;
+  updated_at: string;
+  deleted: number;
+};
+
+export type CommentRow = {
+  id: string;
+  task_id: string;
+  body: string;
+  /** 评论附图相对 data/ 的路径 */
+  images: string[];
   created_at: string;
   updated_at: string;
   deleted: number;

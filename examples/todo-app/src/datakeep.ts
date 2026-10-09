@@ -1,5 +1,121 @@
 /** DataKeep 宿主 API：相对安装目录 data/ 的文件读写与 revision 监听 */
 
+export type PickedStagedFile = {
+  rel: string;
+  name: string;
+  size?: number;
+  mime?: string;
+};
+
+declare global {
+  interface Window {
+    __datakeepPickFile?: (accept?: string) => Promise<PickedStagedFile>;
+    DataKeepHost?: (msg: object | string, cb: (res: unknown) => void) => void;
+  }
+}
+
+function parseHostResult(res: unknown): Record<string, unknown> {
+  let j: unknown = res;
+  if (typeof res === 'string') {
+    try {
+      j = JSON.parse(res);
+    } catch {
+      /* keep */
+    }
+  }
+  if (!j || typeof j !== 'object') {
+    throw new Error('empty');
+  }
+  return j as Record<string, unknown>;
+}
+
+function callHost(payload: object): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    if (typeof window.DataKeepHost !== 'function') {
+      reject(new Error('NO_HOST'));
+      return;
+    }
+    try {
+      window.DataKeepHost!(payload, (res) => {
+        try {
+          const m = parseHostResult(res);
+          if (m.cancelled) {
+            reject(new Error('cancelled'));
+            return;
+          }
+          if (m.error) {
+            reject(new Error(String(m.error)));
+            return;
+          }
+          resolve(m);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+function pickViaInput(accept: string, multiple: boolean): Promise<File[]> {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.multiple = multiple;
+    input.onchange = () => {
+      const list = input.files ? Array.from(input.files) : [];
+      if (list.length) resolve(list);
+      else reject(new Error('cancelled'));
+    };
+    input.oncancel = () => reject(new Error('cancelled'));
+    input.click();
+  });
+}
+
+/** CEF 无系统文件框：优先宿主 FilePicker，无宿主时回退 input */
+export async function pickFile(accept: string): Promise<PickedStagedFile | File> {
+  if (typeof window.__datakeepPickFile === 'function') {
+    return window.__datakeepPickFile(accept);
+  }
+  if (typeof window.DataKeepHost === 'function') {
+    const m = await callHost({ method: 'pickFile', accept: accept || '' });
+    return {
+      rel: String(m.rel || ''),
+      name: String(m.name || ''),
+      size: typeof m.size === 'number' ? m.size : undefined,
+      mime: typeof m.mime === 'string' ? m.mime : undefined,
+    };
+  }
+  const files = await pickViaInput(accept, false);
+  return files[0];
+}
+
+export async function pickFiles(accept: string): Promise<Array<PickedStagedFile | File>> {
+  if (typeof window.DataKeepHost === 'function') {
+    const m = await callHost({ method: 'pickFiles', accept: accept || '' });
+    const files = m.files;
+    if (Array.isArray(files) && files.length) {
+      return files.map((f) => {
+        const o = f as Record<string, unknown>;
+        return {
+          rel: String(o.rel || ''),
+          name: String(o.name || ''),
+          size: typeof o.size === 'number' ? o.size : undefined,
+          mime: typeof o.mime === 'string' ? o.mime : undefined,
+        };
+      });
+    }
+    throw new Error('cancelled');
+  }
+  return pickViaInput(accept, true);
+}
+
+export function isStagedPick(v: PickedStagedFile | File): v is PickedStagedFile {
+  return !(v instanceof File) && typeof (v as PickedStagedFile).rel === 'string';
+}
+
 export function dataUrl(rel: string): string {
   const parts = String(rel || '')
     .split('/')

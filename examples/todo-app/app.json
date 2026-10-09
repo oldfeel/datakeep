@@ -1,7 +1,7 @@
 {
   "id": "site.datakeep.todo",
   "name": "待办清单",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "entry": "index.html",
   "description": "待办：自定义列表、任务详情（步骤/到期/提醒/备注/附件）；todo.db + 冲突合并",
   "icon": "icon.png"

@@ -6,16 +6,18 @@
 
 ## 功能
 
-- **左栏**：自定义列表（新建 / 重命名 / 删除）
-- **中栏**：添加任务；任务行显示标题、完成勾选、**创建时间**
-- **右栏**：标题、步骤、截止日期、提醒、备注（Editor.js）、附件
+- **左栏**：自定义列表（新建 / 重命名 / 删除 / 拖拽排序）
+- **中栏**：添加任务；表头可点「创建时间」在倒序 / 正序 / 拖拽排序间切换（默认时间倒序）；拖拽任务后使用拖拽顺序
+- **右栏**：标题、备注（Editor.js，可插入图片）、评论（同一套富文本）
 
 ## 数据
 
 ```text
 data/
-  todo.db                          # sql.js（lists / tasks / steps / attachments）
-  attachments/<taskId>/<id>_文件   # 附件二进制
+  todo.db                          # sql.js（lists / tasks / comments）
+  ui-session.json                  # 上次打开的列表/任务与排序方式
+  images/note/{taskId}/…           # 备注图片
+  images/comment/{taskId}/…        # 评论图片
 ```
 
 Syncthing 若产生 `todo.sync-conflict-*.db`，打开时按行 `id` + `updated_at` 合并后删除冲突副本。

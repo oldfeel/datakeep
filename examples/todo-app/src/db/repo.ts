@@ -4,10 +4,12 @@ import {
   putDataFileWithProgress,
   setDataWatchPaused,
 } from '../datakeep';
+import { imageRelsFromOutput, isOutputEmpty } from '../editorData';
 import { ensureDefaultList } from './schema';
 import { getDb, schedulePersist } from './sql';
 import {
   type AttachmentRow,
+  type CommentRow,
   type ListRow,
   type StepRow,
   type TaskRow,
@@ -128,11 +130,32 @@ export function deleteList(id: string): string {
   return ensureDefaultList(db);
 }
 
+export function reorderLists(ids: string[]): void {
+  const db = getDb();
+  const t = nowIso();
+  ids.forEach((id, i) => {
+    db.run('UPDATE lists SET sort_order = ?, updated_at = ? WHERE id = ?', [i, t, id]);
+  });
+  schedulePersist();
+}
+
+export function reorderTasks(listId: string, ids: string[]): void {
+  const db = getDb();
+  const t = nowIso();
+  ids.forEach((id, i) => {
+    db.run(
+      'UPDATE tasks SET sort_order = ?, updated_at = ? WHERE id = ? AND list_id = ?',
+      [i, t, id, listId],
+    );
+  });
+  schedulePersist();
+}
+
 export function listTasks(listId: string): TaskRow[] {
   const db = getDb();
   const out: TaskRow[] = [];
   const stmt = db.prepare(
-    'SELECT * FROM tasks WHERE list_id = ? AND deleted = 0 ORDER BY done ASC, sort_order ASC, created_at DESC',
+    'SELECT * FROM tasks WHERE list_id = ? AND deleted = 0 ORDER BY sort_order ASC, created_at DESC',
   );
   stmt.bind([listId]);
   while (stmt.step()) out.push(asTask(stmt.getAsObject() as Record<string, unknown>));
@@ -219,6 +242,10 @@ export function deleteTask(id: string): void {
   getDb().run('UPDATE tasks SET deleted = 1, updated_at = ? WHERE id = ?', [t, id]);
   getDb().run('UPDATE steps SET deleted = 1, updated_at = ? WHERE task_id = ?', [t, id]);
   getDb().run('UPDATE attachments SET deleted = 1, updated_at = ? WHERE task_id = ?', [
+    t,
+    id,
+  ]);
+  getDb().run('UPDATE comments SET deleted = 1, updated_at = ? WHERE task_id = ?', [
     t,
     id,
   ]);
@@ -356,4 +383,67 @@ export async function removeAttachment(att: AttachmentRow): Promise<void> {
   } catch (e) {
     console.warn('删除附件文件失败', e);
   }
+}
+
+function parseImagesJson(raw: unknown): string[] {
+  try {
+    const v = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!Array.isArray(v)) return [];
+    return v.map((x) => String(x)).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function asComment(r: Record<string, unknown>): CommentRow {
+  return {
+    id: String(r.id),
+    task_id: String(r.task_id),
+    body: String(r.body || ''),
+    images: parseImagesJson(r.images_json),
+    created_at: String(r.created_at || ''),
+    updated_at: String(r.updated_at || ''),
+    deleted: r.deleted ? 1 : 0,
+  };
+}
+
+export function listComments(taskId: string): CommentRow[] {
+  const out: CommentRow[] = [];
+  const stmt = getDb().prepare(
+    'SELECT * FROM comments WHERE task_id = ? AND deleted = 0 ORDER BY created_at ASC',
+  );
+  stmt.bind([taskId]);
+  while (stmt.step()) out.push(asComment(stmt.getAsObject() as Record<string, unknown>));
+  stmt.free();
+  return out;
+}
+
+export function createComment(taskId: string, data: OutputData): CommentRow | null {
+  if (isOutputEmpty(data)) return null;
+  const imgs = imageRelsFromOutput(data);
+  const id = uuid();
+  const t = nowIso();
+  const body = JSON.stringify(data);
+  getDb().run(
+    'INSERT INTO comments (id, task_id, body, images_json, created_at, updated_at, deleted) VALUES (?,?,?,?,?,?,0)',
+    [id, taskId, body, JSON.stringify(imgs), t, t],
+  );
+  schedulePersist();
+  return {
+    id,
+    task_id: taskId,
+    body,
+    images: imgs,
+    created_at: t,
+    updated_at: t,
+    deleted: 0,
+  };
+}
+
+export function deleteComment(id: string): void {
+  getDb().run('UPDATE comments SET deleted = 1, updated_at = ? WHERE id = ?', [
+    nowIso(),
+    id,
+  ]);
+  schedulePersist();
 }

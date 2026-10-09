@@ -94,6 +94,10 @@ const TABLES: { name: string; cols: string[] }[] = [
       'deleted',
     ],
   },
+  {
+    name: 'comments',
+    cols: ['id', 'task_id', 'body', 'images_json', 'created_at', 'updated_at', 'deleted'],
+  },
 ];
 
 function mergeMaps(into: RowMap, from: RowMap): void {
@@ -109,6 +113,7 @@ function writeTable(db: Database, table: string, cols: string[], map: RowMap): v
   for (const row of Object.values(map)) {
     const vals = cols.map((c) => {
       const v = row[c];
+      if (c === 'images_json' && (v == null || v === '')) return '[]';
       if (v == null) return null;
       return v as string | number;
     });
