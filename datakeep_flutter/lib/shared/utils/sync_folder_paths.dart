@@ -48,9 +48,9 @@ Future<String> defaultSyncFolderPath(String folderId) async {
     return media;
   }
   if (Platform.isIOS) {
-    // Documents/sync/<id>：Files App 可见，与 SyncthingCore filesPath 一致
+    // Documents/<id>：与 sushitrain / SyncthingCore filesPath 一致（勿用易失效的深层绝对路径）
     final dir = await getApplicationDocumentsDirectory();
-    return '${dir.path}/sync/$folderId';
+    return p.join(dir.path, folderId);
   }
   if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
     final root = await desktopSyncRoot();
@@ -58,6 +58,65 @@ Future<String> defaultSyncFolderPath(String folderId) async {
   }
   final dir = await getApplicationSupportDirectory();
   return '${dir.path}/sync/$folderId';
+}
+
+/// iOS 应用 Documents 根目录（Files「我的 iPhone / 数据管理」可见）
+Future<Directory> iosAppDocumentsDirectory() => getApplicationDocumentsDirectory();
+
+/// 统一 iOS 路径形式（/var ↔ /private/var、解析符号链接），避免误判「不在 Documents」
+String _canonicalizeIosPath(String path) {
+  var n = p.normalize(path.trim());
+  try {
+    n = p.normalize(File(n).resolveSymbolicLinksSync());
+  } catch (_) {
+    // 目录尚未创建时 resolve 会失败，仅做 /private 归一化
+  }
+  if (n.startsWith('/private/var/')) {
+    n = n.substring('/private'.length);
+  } else if (n.startsWith('/private/tmp/')) {
+    n = n.substring('/private'.length);
+  }
+  return n;
+}
+
+/// iOS：同步目录必须在应用 Documents 下，沙盒外（iCloud 等）进程内 Syncthing 无法持久写入
+Future<bool> isIosAppDocumentsPath(String path) async {
+  if (!Platform.isIOS) return true;
+  final trimmed = path.trim();
+  if (trimmed.isEmpty) return false;
+  final docs = _canonicalizeIosPath((await iosAppDocumentsDirectory()).path);
+  final target = _canonicalizeIosPath(trimmed);
+  return target == docs || p.isWithin(docs, target);
+}
+
+/// 将选择器路径落到应用 Documents 的规范绝对路径；沙盒外则回退默认同步目录。
+/// FilePicker 常返回 `/private/var/...`，与 path_provider 的 `/var/...` 不一致，需统一后再写入 Syncthing。
+Future<String> resolveIosWritableSyncPath(String? picked, String folderId) async {
+  final fallback = await defaultSyncFolderPath(folderId);
+  await Directory(fallback).create(recursive: true);
+  final raw = picked?.trim() ?? '';
+  if (raw.isEmpty) return fallback;
+  if (!await isIosAppDocumentsPath(raw)) return fallback;
+
+  final docsReal = (await iosAppDocumentsDirectory()).path;
+  final docsCanon = _canonicalizeIosPath(docsReal);
+  final targetCanon = _canonicalizeIosPath(raw);
+  final String resolved;
+  if (targetCanon == docsCanon) {
+    resolved = docsReal;
+  } else {
+    final rel = p.relative(targetCanon, from: docsCanon);
+    resolved = p.join(docsReal, rel);
+  }
+  await Directory(resolved).create(recursive: true);
+  return resolved;
+}
+
+/// iOS 默认同步根：Documents（选择器起始目录；与 sushitrain filesPath 一致）
+Future<String> iosSyncRootDirectory() async {
+  final docs = await iosAppDocumentsDirectory();
+  await docs.create(recursive: true);
+  return docs.path;
 }
 
 /// 打开目录选择器时的起始目录
@@ -71,6 +130,9 @@ Future<String?> syncFolderPickerInitialDirectory(String currentPath) async {
       return parent;
     }
   }
+  if (Platform.isIOS) {
+    return iosSyncRootDirectory();
+  }
   if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
     final root = await desktopSyncRoot();
     if (await Directory(root).exists()) return root;
@@ -80,10 +142,12 @@ Future<String?> syncFolderPickerInitialDirectory(String currentPath) async {
   return null;
 }
 
-/// 检测路径是否对 Syncthing native 可写（Android 动态检测，桌面尝试创建探测文件）
+/// 检测路径是否对 Syncthing native 可写（Android 动态检测，桌面/iOS 尝试创建探测文件）
 Future<bool> isSyncPathWritable(String path) async {
   if (path.isEmpty) return false;
   if (Platform.isAndroid) return AndroidStorageService.canWriteToPath(path);
+  // iOS：沙盒外路径即便临时可写，Syncthing 也无法长期使用
+  if (Platform.isIOS && !await isIosAppDocumentsPath(path)) return false;
   try {
     final dir = Directory(path);
     if (!await dir.exists()) {
@@ -97,6 +161,11 @@ Future<bool> isSyncPathWritable(String path) async {
     return false;
   }
 }
+
+/// iOS 同步路径说明（UI 提示）
+const String kIosSyncPathHint =
+    'iOS 仅支持应用「文件」中的本应用目录（我的 iPhone → 数据管理）。'
+    '请勿选择 iCloud 或其他 App 目录。';
 
 /// 路径是否可能需要 All files access 才能写入（用于 UI 提示，非阻断）
 bool isPublicStoragePath(String path) {

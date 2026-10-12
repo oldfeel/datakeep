@@ -453,18 +453,26 @@ class ApiService {
         sync = {'status': 'unknown', 'completion': 0.0};
       }
 
-      if (Platform.isAndroid) {
-        final currentPath = sync['currentPath']?.toString() ?? '';
-        if (currentPath.isNotEmpty) {
-          final writable = await AndroidStorageService.canWriteToPath(currentPath);
-          sync['pathWritable'] = writable;
-          if (!writable) {
-            sync['pathError'] = isPublicStoragePath(currentPath)
-                ? 'Syncthing 无法写入 $currentPath。请授予「所有文件访问」权限，或重新选择同步目录。'
-                : 'Syncthing 无法写入 $currentPath，请重新选择同步目录。';
-            sync['needsPathFix'] = true;
-            if (sync['status'] != 'syncing') sync['status'] = 'error';
-          }
+      final currentPath = sync['currentPath']?.toString() ?? '';
+      if (currentPath.isNotEmpty && Platform.isAndroid) {
+        final writable = await AndroidStorageService.canWriteToPath(currentPath);
+        sync['pathWritable'] = writable;
+        if (!writable) {
+          sync['pathError'] = isPublicStoragePath(currentPath)
+              ? 'Syncthing 无法写入 $currentPath。请授予「所有文件访问」权限，或重新选择同步目录。'
+              : 'Syncthing 无法写入 $currentPath，请重新选择同步目录。';
+          sync['needsPathFix'] = true;
+          if (sync['status'] != 'syncing') sync['status'] = 'error';
+        }
+      } else if (currentPath.isNotEmpty && Platform.isIOS) {
+        final writable = await isSyncPathWritable(currentPath);
+        sync['pathWritable'] = writable;
+        if (!writable) {
+          sync['pathError'] = await isIosAppDocumentsPath(currentPath)
+              ? 'Syncthing 无法写入 $currentPath，请改用应用内默认同步目录。'
+              : 'iOS 仅支持应用「文件」目录（我的 iPhone → 数据管理）。当前路径不可用：$currentPath';
+          sync['needsPathFix'] = true;
+          if (sync['status'] != 'syncing') sync['status'] = 'error';
         }
       }
       return sync;

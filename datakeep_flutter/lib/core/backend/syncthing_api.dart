@@ -891,7 +891,11 @@ class SyncthingApi {
     } else if (globalBytes > 0 && completion < 99.9) {
       uiStatus = 'syncing';
     } else if (globalBytes == 0 && localFiles == 0) {
-      uiStatus = 'waiting';
+      // 新建空目录常见：无待传内容。引擎已 idle 视为已同步；
+      // 仍在 scanning / sync-preparing 等过程中才显示「等待同步」。
+      uiStatus = (state == 'idle' || state == 'clean-waiting')
+          ? 'synced'
+          : 'waiting';
     } else {
       uiStatus = 'synced';
     }
@@ -969,9 +973,11 @@ class SyncthingApi {
       pathError ??= _folderErrorMessage(stateError, folderPath);
     }
 
-    if (watchError.isNotEmpty) {
-      needsPathFix = true;
-      pathError = pathError != null ? '$pathError（$watchError）' : watchError;
+    // watchError  alone 不视为「目录不可写」（iOS 沙盒下 FSWatcher 常误报；引擎侧已默认关闭）
+    if (watchError.isNotEmpty && watchError != 'null') {
+      if (pathMissing || hasStateError) {
+        pathError = pathError != null ? '$pathError（$watchError）' : watchError;
+      }
     }
 
     if (needsPathFix) {

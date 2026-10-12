@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/syncthing/syncthing/lib/build"
@@ -135,6 +136,12 @@ func (c *Client) Start() error {
 			"tcp://0.0.0.0:22000",
 			"dynamic+https://relays.syncthing.net/endpoint",
 		}
+		// 对齐 sushitrain：iOS 忽略权限位、关闭 FSWatcher（沙盒下 watch 常误报）
+		cfg.Defaults.Folder.IgnorePerms = true
+		if build.IsIOS {
+			cfg.Defaults.Folder.FSWatcherEnabled = false
+		}
+
 		// 保留/创建 default 文件夹，路径改到可写的 filesPath（勿再删除）
 		foundDefault := false
 		for i := range cfg.Folders {
@@ -143,6 +150,9 @@ func (c *Client) Start() error {
 			}
 			cfg.Folders[i].Path = defaultPath
 			cfg.Folders[i].IgnorePerms = true
+			if build.IsIOS {
+				cfg.Folders[i].FSWatcherEnabled = false
+			}
 			if cfg.Folders[i].Label == "" {
 				cfg.Folders[i].Label = "Default Folder"
 			}
@@ -166,9 +176,18 @@ func (c *Client) Start() error {
 			f.Label = "Default Folder"
 			f.Path = defaultPath
 			f.IgnorePerms = true
+			if build.IsIOS {
+				f.FSWatcherEnabled = false
+			}
 			f.Devices = []config.FolderDeviceConfiguration{{DeviceID: myID}}
 			cfg.Folders = append(cfg.Folders, f)
 		}
+
+		// iOS：容器绝对路径每次启动可能变化；对齐 sushitrain 把文件夹落到当前 Documents/<id>
+		if build.IsIOS && c.filesPath != "" {
+			c.normalizeIOSFolderPaths(cfg)
+		}
+
 		if c.deviceName != "" {
 			for i := range cfg.Devices {
 				if cfg.Devices[i].DeviceID == myID {
@@ -211,6 +230,75 @@ func (c *Client) Start() error {
 	c.running = true
 	c.lastErr = ""
 	return nil
+}
+
+// normalizeIOSFolderPaths 对齐 sushitrain：
+// iOS 应用容器路径会变，配置里旧的绝对路径会失效；把可管理的文件夹纠正到当前 Documents 下。
+func (c *Client) normalizeIOSFolderPaths(cfg *config.Configuration) {
+	filesRoot, err := filepath.Abs(c.filesPath)
+	if err != nil {
+		filesRoot = filepath.Clean(c.filesPath)
+	}
+	for i := range cfg.Folders {
+		f := &cfg.Folders[i]
+		f.IgnorePerms = true
+		f.FSWatcherEnabled = false
+
+		std := filepath.Join(filesRoot, f.ID)
+		legacy := filepath.Join(filesRoot, "sync", f.ID)
+		cur := strings.TrimSpace(f.Path)
+
+		target := ""
+		switch {
+		case dirExists(cur) && pathUnderRoot(cur, filesRoot):
+			// 已在当前容器 Documents 内且可访问，保持（含旧版 Documents/sync/<id>）
+			target = cur
+		case dirExists(legacy):
+			target = legacy
+		case dirExists(std):
+			target = std
+		default:
+			// 旧绝对路径失效：落到 Documents/<id>（与 sushitrain 一致）
+			_ = os.MkdirAll(std, 0o755)
+			marker := f.MarkerName
+			if marker == "" {
+				marker = ".stfolder"
+			}
+			_ = os.MkdirAll(filepath.Join(std, marker), 0o755)
+			target = std
+		}
+		if target != "" && f.Path != target {
+			fmt.Printf("[syncthing_core] iOS 纠正文件夹路径 %s: %s -> %s\n", f.ID, f.Path, target)
+			f.Path = target
+		}
+	}
+}
+
+func dirExists(p string) bool {
+	if p == "" {
+		return false
+	}
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
+func pathUnderRoot(path, root string) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = filepath.Clean(path)
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		absRoot = filepath.Clean(root)
+	}
+	// 去掉 /private 前缀差异
+	absPath = strings.TrimPrefix(absPath, "/private")
+	absRoot = strings.TrimPrefix(absRoot, "/private")
+	if absPath == absRoot {
+		return true
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // Stop 停止节点。

@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
@@ -12,6 +15,7 @@ import '../../../shared/utils/app_manifest.dart';
 import '../../../shared/utils/file_types.dart';
 import '../../../shared/utils/file_opener.dart';
 import '../../../shared/utils/local_file_path.dart';
+import '../../../shared/utils/sync_folder_paths.dart';
 import '../../../shared/widgets/add_item_dialog.dart';
 import '../../../shared/widgets/file_thumbnail.dart';
 import '../../../shared/widgets/entry_context_menu.dart';
@@ -282,22 +286,100 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     if (_fixingPath) return;
     setState(() => _fixingPath = true);
     try {
-      // 先尝试重新扫描（用户可能刚授予 All files access）
-      var result = await ApiService.fixFolderPath(widget.folderId);
-      await _refreshSync();
-      final writable = _syncInfo?['pathWritable'] == true;
-      if (!writable && mounted) {
-        final picked = await AndroidStorageService.pickSyncFolder();
-        if (picked != null && picked.writable) {
-          result = await ApiService.fixFolderPath(widget.folderId, path: picked.path);
-        } else if (picked != null && !picked.writable) {
-          throw Exception('所选目录仍不可写，请授予「所有文件访问」权限');
+      Map<String, dynamic> result;
+      if (Platform.isIOS) {
+        final path = await _pickIosSyncFolderPath();
+        if (path == null) return; // 用户取消
+        result = await ApiService.fixFolderPath(widget.folderId, path: path);
+      } else if (Platform.isAndroid) {
+        // 先尝试重新扫描（用户可能刚授予 All files access）
+        result = await ApiService.fixFolderPath(widget.folderId);
+        await _refreshSync();
+        final writable = _syncInfo?['pathWritable'] == true;
+        if (!writable && mounted) {
+          final picked = await AndroidStorageService.pickSyncFolder();
+          if (picked != null && picked.writable) {
+            result = await ApiService.fixFolderPath(
+              widget.folderId,
+              path: picked.path,
+            );
+          } else if (picked != null && !picked.writable) {
+            throw Exception('所选目录仍不可写，请授予「所有文件访问」权限');
+          }
         }
+      } else {
+        final initial = await syncFolderPickerInitialDirectory(
+          _folderInfo?.path ?? '',
+        );
+        final picked = await FilePicker.platform.getDirectoryPath(
+          dialogTitle: '选择同步目录',
+          initialDirectory: initial,
+        );
+        if (picked == null || picked.isEmpty) return;
+        result = await ApiService.fixFolderPath(widget.folderId, path: picked);
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(result['message']?.toString() ?? '已更新同步目录'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      await _loadData();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('操作失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _fixingPath = false);
+    }
+  }
+
+  /// iOS：选应用 Documents 内目录；选到沙盒外则回退默认同步路径
+  Future<String?> _pickIosSyncFolderPath() async {
+    final fallback = await defaultSyncFolderPath(widget.folderId);
+    await Directory(fallback).create(recursive: true);
+    final initial = await syncFolderPickerInitialDirectory(
+      _folderInfo?.path ?? fallback,
+    );
+    final picked = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: '选择应用内同步目录',
+      initialDirectory: initial,
+    );
+    // 取消选择：不改路径
+    if (picked == null || picked.isEmpty) return null;
+    final outside = !await isIosAppDocumentsPath(picked);
+    final resolved =
+        await resolveIosWritableSyncPath(picked, widget.folderId);
+    if (outside && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$kIosSyncPathHint\n已改用：$resolved'),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+    if (!await isSyncPathWritable(resolved)) {
+      throw Exception('所选目录不可写，请点「使用默认同步目录」，或选择「我的 iPhone → 数据管理」下的目录');
+    }
+    return resolved;
+  }
+
+  Future<void> _useDefaultSyncPath() async {
+    if (_fixingPath) return;
+    setState(() => _fixingPath = true);
+    try {
+      final path =
+          await resolveIosWritableSyncPath(null, widget.folderId);
+      final result =
+          await ApiService.fixFolderPath(widget.folderId, path: path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result['message']?.toString() ?? '已切换到默认同步目录：$path'),
           backgroundColor: Colors.green,
         ),
       );
@@ -388,24 +470,46 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 
     final actionButtons = <Widget>[];
     if (needsPathFix) {
-      actionButtons.addAll([
-        FilledButton.icon(
-          onPressed: _fixingPath ? null : _requestStorageAccess,
-          icon: const Icon(Icons.security, size: 18),
-          label: const Text('授予存储权限'),
-        ),
-        OutlinedButton.icon(
-          onPressed: _fixingPath ? null : _fixFolderPath,
-          icon: _fixingPath
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.folder_open, size: 18),
-          label: Text(_fixingPath ? '处理中…' : '选择/修复目录'),
-        ),
-      ]);
+      if (Platform.isIOS) {
+        actionButtons.addAll([
+          FilledButton.icon(
+            onPressed: _fixingPath ? null : _useDefaultSyncPath,
+            icon: const Icon(Icons.folder_special_outlined, size: 18),
+            label: const Text('使用默认同步目录'),
+          ),
+          OutlinedButton.icon(
+            onPressed: _fixingPath ? null : _fixFolderPath,
+            icon: _fixingPath
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.folder_open, size: 18),
+            label: Text(_fixingPath ? '处理中…' : '选择应用内目录'),
+          ),
+        ]);
+      } else {
+        actionButtons.addAll([
+          if (Platform.isAndroid)
+            FilledButton.icon(
+              onPressed: _fixingPath ? null : _requestStorageAccess,
+              icon: const Icon(Icons.security, size: 18),
+              label: const Text('授予存储权限'),
+            ),
+          OutlinedButton.icon(
+            onPressed: _fixingPath ? null : _fixFolderPath,
+            icon: _fixingPath
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.folder_open, size: 18),
+            label: Text(_fixingPath ? '处理中…' : '选择/修复目录'),
+          ),
+        ]);
+      }
     } else if (!pathWritable) {
       actionButtons.add(
         Text(

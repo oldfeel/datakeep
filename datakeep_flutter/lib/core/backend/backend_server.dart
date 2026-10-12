@@ -1287,6 +1287,7 @@ class BackendServer {
     }
     folderCfg['paused'] = false;
     folderCfg['ignorePerms'] = true;
+    if (Platform.isIOS) folderCfg['fsWatcherEnabled'] = false;
     final updated = await _api.proxyPut('/rest/config/folders/$encoded', folderCfg);
     if (updated.containsKey('error')) {
       return _json({'code': 1005, 'data': '更新路径失败: ${updated['error']}'}, status: 500);
@@ -2222,6 +2223,7 @@ class BackendServer {
       folderCfg['type'] ??= 'sendreceive';
       folderCfg['paused'] = false;
       folderCfg['ignorePerms'] = true;
+      if (Platform.isIOS) folderCfg['fsWatcherEnabled'] = false;
       folderCfg['devices'] = [
         _folderDeviceEntry(localId),
         _folderDeviceEntry(deviceId),
@@ -2326,9 +2328,14 @@ class BackendServer {
       }
     }
 
+    await Directory(path).create(recursive: true);
+    await _preCreateFolderMarker(path);
+
     final folderData = <String, dynamic>{
       'id': id, 'label': label, 'path': path, 'type': data['type'] ?? 'sendreceive',
       'filesystemType': 'basic', 'rescanIntervalS': 3600, 'ignorePerms': true,
+      // iOS：对齐 sushitrain，关闭 FSWatcher，避免沙盒下误报不可写
+      'fsWatcherEnabled': !Platform.isIOS,
       'autoNormalize': true, 'paused': false,
       'devices': [],
     };

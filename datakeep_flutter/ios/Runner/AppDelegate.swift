@@ -75,7 +75,7 @@ import DataKeepSyncthing
       let home = syncthingHomeURL()
       let config = home.appendingPathComponent("config.xml")
       result([
-        "path": config.path,
+        "path": config.path(percentEncoded: false),
         "deviceName": UIDevice.current.name,
       ])
     case "getDefaultDeviceName":
@@ -87,11 +87,11 @@ import DataKeepSyncthing
         result(FlutterError(code: "BAD_ARGS", message: "缺少 folderId", details: nil))
         return
       }
+      // 与 sushitrain 一致：Documents/<folderId>
       let docs = documentsURL()
-      let syncRoot = docs.appendingPathComponent("sync", isDirectory: true)
-      let folder = syncRoot.appendingPathComponent(folderId, isDirectory: true)
+      let folder = docs.appendingPathComponent(folderId, isDirectory: true)
       try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-      result(folder.path)
+      result(folder.path(percentEncoded: false))
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -104,8 +104,9 @@ import DataKeepSyncthing
     }
 
     status = "starting"
-    let home = syncthingHomeURL().path
-    let files = documentsURL().path
+    // 与 sushitrain 一致：path(percentEncoded: false)，避免路径编码导致 Syncthing 打不开目录
+    let home = syncthingHomeURL().path(percentEncoded: false)
+    let files = documentsURL().path(percentEncoded: false)
     guard let c = client ?? MdstNewClient(home, files) else {
       status = "stopped"
       throw NSError(domain: "DataKeepSyncthing", code: 1, userInfo: [

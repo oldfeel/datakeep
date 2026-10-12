@@ -102,6 +102,12 @@ class _AddItemDialogState extends State<AddItemDialog> {
       final sample = await defaultSyncFolderPath('_');
       _parentCtrl.text = p.dirname(sample);
     }
+    // iOS：预填可写的默认同步路径，避免空路径或误选沙盒外目录
+    if (!_inside && Platform.isIOS && _pathCtrl.text.trim().isEmpty) {
+      final path = await defaultSyncFolderPath('folder');
+      _pathCtrl.text = path;
+      _pathWritable = true;
+    }
     if (mounted) setState(() {});
   }
 
@@ -165,10 +171,33 @@ class _AddItemDialogState extends State<AddItemDialog> {
       final initial = await syncFolderPickerInitialDirectory(
         _pathCtrl.text.isNotEmpty ? _pathCtrl.text : _parentCtrl.text,
       );
-      return await FilePicker.platform.getDirectoryPath(
-        dialogTitle: '选择目录',
+      final picked = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: Platform.isIOS ? '选择应用内同步目录' : '选择目录',
         initialDirectory: initial,
       );
+      if (picked == null || picked.isEmpty) return null;
+
+      if (Platform.isIOS) {
+        final folderId = _idCtrl.text.trim().isNotEmpty
+            ? _idCtrl.text.trim()
+            : p.basename(picked);
+        final outside = !await isIosAppDocumentsPath(picked);
+        final resolved = await resolveIosWritableSyncPath(picked, folderId);
+        if (outside && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$kIosSyncPathHint\n已改用：$resolved'),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 6),
+            ),
+          );
+        }
+        final writable = await isSyncPathWritable(resolved);
+        if (mounted) setState(() => _pathWritable = writable);
+        return resolved;
+      }
+
+      return picked;
     } catch (e) {
       if (!mounted) return null;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -201,28 +230,47 @@ class _AddItemDialogState extends State<AddItemDialog> {
   Future<void> _submitSyncFolder() async {
     final id = _idCtrl.text.trim();
     final name = _nameCtrl.text.trim();
-    final path = _pathCtrl.text.trim();
-    if (id.isEmpty || name.isEmpty || path.isEmpty) {
+    var path = _pathCtrl.text.trim();
+    if (id.isEmpty || name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('请填写完整信息')),
       );
       return;
     }
-    if (Platform.isAndroid) {
+    if (Platform.isIOS) {
+      // 统一到 Documents 规范路径；预填 basename 仍为 folder 时按 ID 纠正
+      final preferIdPath = path.isEmpty || p.basename(path) == 'folder';
+      path = await resolveIosWritableSyncPath(
+        preferIdPath ? null : path,
+        id,
+      );
+      _pathCtrl.text = path;
+    }
+    if (path.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请填写完整信息')),
+      );
+      return;
+    }
+    if (Platform.isAndroid || Platform.isIOS) {
       final writable = _pathWritable ?? await isSyncPathWritable(path);
       if (!writable) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text(
-              '该目录 Syncthing 无法写入。请授予「所有文件访问」，或选择 Android/media 下的目录。',
+            content: Text(
+              Platform.isIOS
+                  ? kIosSyncPathHint
+                  : '该目录 Syncthing 无法写入。请授予「所有文件访问」，或选择 Android/media 下的目录。',
             ),
             backgroundColor: Colors.orange,
             duration: const Duration(seconds: 5),
-            action: SnackBarAction(
-              label: '授权',
-              onPressed: () => AndroidStorageService.requestAllFilesAccess(),
-            ),
+            action: Platform.isAndroid
+                ? SnackBarAction(
+                    label: '授权',
+                    onPressed: () => AndroidStorageService.requestAllFilesAccess(),
+                  )
+                : null,
           ),
         );
         return;
@@ -578,6 +626,15 @@ class _AddItemDialogState extends State<AddItemDialog> {
         const SizedBox(height: 8),
         Text(
           '默认建议选 Android/media 下目录（无需额外权限）。同步到下载、DCIM 等公共目录需授予「所有文件访问」。',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+      ],
+      if (Platform.isIOS) ...[
+        const SizedBox(height: 8),
+        Text(
+          kIosSyncPathHint,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),

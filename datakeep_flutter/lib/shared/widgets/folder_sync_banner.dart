@@ -75,7 +75,11 @@ class FolderSyncBanner extends StatelessWidget {
 
     final detailParts = <String>[];
     if (status == 'waiting') {
-      detailParts.add('正在等待与对端建立连接并获取文件列表…');
+      detailParts.add(
+        localFiles == 0 && globalFiles == 0
+            ? '文件夹为空，正在准备同步索引…'
+            : '正在等待与对端建立连接并获取文件列表…',
+      );
     } else if (stalled) {
       // 新建文件仍可能正常同步；进度虚高通常是过期/重复索引
       if (localFiles > 0) {

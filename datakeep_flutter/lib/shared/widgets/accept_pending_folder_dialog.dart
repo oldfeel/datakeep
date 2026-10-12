@@ -117,12 +117,29 @@ class _AcceptPendingFolderDialogState extends State<_AcceptPendingFolderDialog> 
     try {
       final initial = await syncFolderPickerInitialDirectory(_pathController.text);
       final picked = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: Platform.isIOS ? '选择应用内同步目录' : '选择目录',
         initialDirectory: initial,
       );
-      if (picked != null && picked.isNotEmpty) {
-        _pathController.text = picked;
-        await _checkWrite(picked);
+      if (picked == null || picked.isEmpty) return;
+      if (Platform.isIOS) {
+        final outside = !await isIosAppDocumentsPath(picked);
+        final resolved =
+            await resolveIosWritableSyncPath(picked, widget.folderId);
+        _pathController.text = resolved;
+        if (outside && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$kIosSyncPathHint\n已改用：$resolved'),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 6),
+            ),
+          );
+        }
+        await _checkWrite(resolved);
+        return;
       }
+      _pathController.text = picked;
+      await _checkWrite(picked);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -139,7 +156,14 @@ class _AcceptPendingFolderDialogState extends State<_AcceptPendingFolderDialog> 
       Navigator.of(context).pop(const AcceptPendingFolderResult(accepted: false));
       return;
     }
-    final path = _pathController.text.trim();
+    var path = _pathController.text.trim();
+    if (Platform.isIOS) {
+      path = await resolveIosWritableSyncPath(
+        path.isEmpty ? null : path,
+        widget.folderId,
+      );
+      _pathController.text = path;
+    }
     if (path.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('请选择本机同步目录')),
@@ -154,7 +178,9 @@ class _AcceptPendingFolderDialogState extends State<_AcceptPendingFolderDialog> 
           content: Text(
             Platform.isAndroid
                 ? '该目录 Syncthing 无法写入。请授予「所有文件访问」权限，或选择 Android/media 下的目录。'
-                : '该目录不可写，请重新选择',
+                : Platform.isIOS
+                    ? kIosSyncPathHint
+                    : '该目录不可写，请重新选择',
           ),
           backgroundColor: Colors.orange,
           duration: const Duration(seconds: 5),
@@ -261,7 +287,9 @@ class _AcceptPendingFolderDialogState extends State<_AcceptPendingFolderDialog> 
                     Text(
                       Platform.isAndroid
                           ? '默认使用 Android/media 下目录（无需额外权限）。同步到 DCIM、下载等公共目录需授予「所有文件访问」权限。'
-                          : '文件将同步到此目录，接受前请确认路径正确。',
+                          : Platform.isIOS
+                              ? kIosSyncPathHint
+                              : '文件将同步到此目录，接受前请确认路径正确。',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
