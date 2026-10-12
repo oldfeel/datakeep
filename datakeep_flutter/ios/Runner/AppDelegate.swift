@@ -7,6 +7,8 @@ import DataKeepSyncthing
   private let channelName = "site.datakeep/api"
   private var client: MdstClient?
   private var status: String = "stopped"
+  private var backgroundSync: BackgroundSyncManager?
+  private var methodChannelReady = false
 
   override func application(
     _ application: UIApplication,
@@ -14,7 +16,19 @@ import DataKeepSyncthing
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
 
-    let controller = window?.rootViewController as! FlutterViewController
+    // BGTask 必须在 didFinishLaunching 返回前注册
+    backgroundSync = BackgroundSyncManager(appDelegate: self)
+
+    setupMethodChannelIfNeeded()
+    let launched = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    setupMethodChannelIfNeeded()
+
+    return launched
+  }
+
+  private func setupMethodChannelIfNeeded() {
+    guard !methodChannelReady else { return }
+    guard let controller = window?.rootViewController as? FlutterViewController else { return }
     let channel = FlutterMethodChannel(
       name: channelName,
       binaryMessenger: controller.binaryMessenger
@@ -22,8 +36,23 @@ import DataKeepSyncthing
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call: call, result: result)
     }
+    methodChannelReady = true
+  }
 
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  override func applicationDidEnterBackground(_ application: UIApplication) {
+    backgroundSync?.handleEnterBackground()
+    super.applicationDidEnterBackground(application)
+  }
+
+  override func applicationWillEnterForeground(_ application: UIApplication) {
+    setupMethodChannelIfNeeded()
+    backgroundSync?.handleEnterForeground()
+    super.applicationWillEnterForeground(application)
+  }
+
+  /// 供 BackgroundSyncManager 在后台唤醒时启动引擎（不依赖 Flutter）
+  func ensureEngineRunning() throws {
+    try startEngine()
   }
 
   /// iOS Syncthing 桥：对齐 Android MethodChannel；引擎为 gomobile 进程内节点。
@@ -34,7 +63,10 @@ import DataKeepSyncthing
         guard let self else { return }
         do {
           try self.startEngine()
-          DispatchQueue.main.async { result(true) }
+          DispatchQueue.main.async {
+            self.backgroundSync?.schedule()
+            result(true)
+          }
         } catch {
           DispatchQueue.main.async {
             result(FlutterError(
@@ -92,6 +124,19 @@ import DataKeepSyncthing
       let folder = docs.appendingPathComponent(folderId, isDirectory: true)
       try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
       result(folder.path(percentEncoded: false))
+    case "scheduleBackgroundSync":
+      result(backgroundSync?.schedule() ?? false)
+    case "getBackgroundSyncStatus":
+      result(backgroundSync?.statusMap() ?? [:])
+    case "setBackgroundSyncEnabled":
+      let args = call.arguments as? [String: Any]
+      if let long = args?["longEnabled"] as? Bool {
+        backgroundSync?.longEnabled = long
+      }
+      if let short = args?["shortEnabled"] as? Bool {
+        backgroundSync?.shortEnabled = short
+      }
+      result(backgroundSync?.statusMap() ?? [:])
     default:
       result(FlutterMethodNotImplemented)
     }

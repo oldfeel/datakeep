@@ -97,6 +97,57 @@ class NativeService {
     }
   }
 
+  /// iOS：向系统预约后台同步任务（BGProcessing / AppRefresh）
+  static Future<bool> scheduleBackgroundSync() async {
+    if (!Platform.isIOS) return false;
+    try {
+      final result = await _channel.invokeMethod<bool>('scheduleBackgroundSync');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      debugPrint('预约后台同步失败: ${e.message}');
+      return false;
+    }
+  }
+
+  /// iOS：后台同步开关与上次运行信息
+  static Future<Map<String, dynamic>> getBackgroundSyncStatus() async {
+    if (!Platform.isIOS) return {};
+    try {
+      final result = await _channel.invokeMethod<dynamic>('getBackgroundSyncStatus');
+      if (result is Map) {
+        return Map<String, dynamic>.from(result);
+      }
+      return {};
+    } on PlatformException catch (e) {
+      debugPrint('读取后台同步状态失败: ${e.message}');
+      return {};
+    }
+  }
+
+  /// iOS：设置后台同步开关
+  static Future<Map<String, dynamic>> setBackgroundSyncEnabled({
+    bool? longEnabled,
+    bool? shortEnabled,
+  }) async {
+    if (!Platform.isIOS) return {};
+    try {
+      final result = await _channel.invokeMethod<dynamic>(
+        'setBackgroundSyncEnabled',
+        {
+          if (longEnabled != null) 'longEnabled': longEnabled,
+          if (shortEnabled != null) 'shortEnabled': shortEnabled,
+        },
+      );
+      if (result is Map) {
+        return Map<String, dynamic>.from(result);
+      }
+      return {};
+    } on PlatformException catch (e) {
+      debugPrint('设置后台同步失败: ${e.message}');
+      return {};
+    }
+  }
+
   /// 获取服务状态
   static Future<String> getServiceStatus() async {
     if (_isDesktop) {

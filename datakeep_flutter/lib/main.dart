@@ -15,6 +15,8 @@ import 'core/services/syncthing_lifecycle.dart';
 // ignore: unused_element
 AppLifecycleListener? _desktopLifecycleListener;
 // ignore: unused_element
+AppLifecycleListener? _iosLifecycleListener;
+// ignore: unused_element
 Timer? _parentWatchTimer;
 
 void main() async {
@@ -41,7 +43,23 @@ void main() async {
     _installDesktopShutdownHooks();
   }
 
+  if (!kIsWeb && Platform.isIOS) {
+    _installIosBackgroundSyncHooks();
+  }
+
   runApp(const DataKeepApp());
+}
+
+/// iOS：前后台切换时重新预约 BGTask（原生侧也会 beginBackgroundTask）
+void _installIosBackgroundSyncHooks() {
+  _iosLifecycleListener = AppLifecycleListener(
+    onPause: () {
+      unawaited(NativeService.scheduleBackgroundSync());
+    },
+    onResume: () {
+      unawaited(NativeService.scheduleBackgroundSync());
+    },
+  );
 }
 
 /// 桌面：关闭窗口 / 退出应用 / 终端挂断时停掉 detached 的 Syncthing
@@ -239,6 +257,12 @@ Future<void> _startIosServices() async {
     debugPrint('$st');
   }
   SyncthingLifecycle.instance.markReady();
+  try {
+    final ok = await NativeService.scheduleBackgroundSync();
+    debugPrint('[startup] iOS scheduleBackgroundSync => $ok');
+  } catch (e) {
+    debugPrint('[startup] iOS scheduleBackgroundSync 失败: $e');
+  }
 }
 
 Future<void> _startAndroidServices() async {

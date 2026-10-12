@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/services/native_service.dart';
 import '../constants/app_info.dart';
 import '../utils/open_url_external.dart';
 import 'app_logo.dart';
@@ -113,6 +114,10 @@ Future<void> showDataKeepAboutDialog(BuildContext context) async {
                     height: 1.4,
                   ),
                 ),
+                if (Platform.isIOS) ...[
+                  const SizedBox(height: 12),
+                  const _IosBackgroundSyncSection(),
+                ],
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 8,
@@ -200,6 +205,103 @@ class _AboutRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// iOS 后台同步开关（系统调度，非持续在线）
+class _IosBackgroundSyncSection extends StatefulWidget {
+  const _IosBackgroundSyncSection();
+
+  @override
+  State<_IosBackgroundSyncSection> createState() =>
+      _IosBackgroundSyncSectionState();
+}
+
+class _IosBackgroundSyncSectionState extends State<_IosBackgroundSyncSection> {
+  bool _loading = true;
+  bool _long = true;
+  bool _short = false;
+  String? _lastRun;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final s = await NativeService.getBackgroundSyncStatus();
+    if (!mounted) return;
+    final ms = s['lastRunEpochMs'];
+    String? last;
+    if (ms is int && ms > 0) {
+      last = DateTime.fromMillisecondsSinceEpoch(ms).toLocal().toString();
+    }
+    setState(() {
+      _long = s['longEnabled'] != false;
+      _short = s['shortEnabled'] == true;
+      _lastRun = last;
+      _loading = false;
+    });
+  }
+
+  Future<void> _set({bool? longEnabled, bool? shortEnabled}) async {
+    final s = await NativeService.setBackgroundSyncEnabled(
+      longEnabled: longEnabled,
+      shortEnabled: shortEnabled,
+    );
+    if (!mounted) return;
+    setState(() {
+      _long = s['longEnabled'] != false;
+      _short = s['shortEnabled'] == true;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: LinearProgressIndicator(minHeight: 2),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('后台同步', style: theme.textTheme.titleSmall),
+        Text(
+          '由系统在空闲/充电时唤醒，不能保证持续在线。',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            height: 1.35,
+          ),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('长后台同步'),
+          subtitle: const Text('充电且有网络时（推荐）'),
+          value: _long,
+          onChanged: (v) => _set(longEnabled: v),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('短后台刷新'),
+          subtitle: const Text('更频繁、时长更短'),
+          value: _short,
+          onChanged: (v) => _set(shortEnabled: v),
+        ),
+        if (_lastRun != null)
+          Text(
+            '上次后台运行：$_lastRun',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+      ],
     );
   }
 }
