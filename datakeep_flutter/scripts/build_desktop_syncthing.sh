@@ -18,7 +18,7 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLUTTER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SYNCTHING_DIR="$(cd "$FLUTTER_DIR/.." && pwd)/syncthing"
-VERSION="${SYNCTHING_BUILD_VERSION:-v2.1.3}"
+VERSION="${SYNCTHING_BUILD_VERSION:-v2.1.7-rc.2}"
 
 # Windows 防火�?属性显示名（与 kAppDisplayName 一致）
 WINDOWS_PRODUCT_NAME="${SYNCTHING_WINDOWS_PRODUCT_NAME:-数据管理}"

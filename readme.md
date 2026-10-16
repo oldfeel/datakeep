@@ -39,7 +39,7 @@ datakeep/
 │   ├── lib/core/backend/       # 进程内 Dart 后端（shelf）
 │   ├── syncthing_core/         # 移动端共用 Syncthing 引擎
 │   └── backend/                # 旧 Go 后端（已停维，仅供参考）
-├── syncthing/                  # Syncthing 官方 submodule（v2.1.3；桌面二进制 / gomobile replace）
+├── syncthing/                  # Syncthing fork submodule（oldfeel/syncthing · datakeep/nil-url-guards；桌面 / gomobile）
 ├── scripts/                    # 构建、发版、模拟器等脚本
 ├── docs/                       # 文档（如应用包规范）
 └── examples/                   # 示例应用

@@ -41,7 +41,7 @@ type Client struct {
 // homePath: 配置/证书/数据库目录（Android filesDir；iOS Application Support/syncthing）
 // filesPath: 默认同步数据根（可为 ""）
 func NewClient(homePath, filesPath string) *Client {
-	build.Version = "v2.1.3-datakeep"
+	build.Version = "v2.1.7-rc.2-datakeep"
 	build.User = "datakeep"
 	build.Host = "datakeep-" + runtime.GOOS
 
