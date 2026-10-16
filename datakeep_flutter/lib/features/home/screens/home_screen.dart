@@ -354,32 +354,60 @@ class _HomeScreenState extends State<HomeScreen> {
             : const <Folder>[];
 
         if (folders.isEmpty && !folderProvider.isLoading) {
+          // 对齐 sushitrain「Getting started」：空列表给可操作引导，不暗示引擎异常
           return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.folder_open,
-                  size: 64,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  '暂无文件夹',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Syncthing 启动中或未配置文件夹',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  onPressed: () => folderProvider.fetchDeviceFolders(deviceId),
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('刷新'),
-                ),
-              ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.folder_open,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    selectedIsLocal ? '还没有同步文件夹' : '暂无共享文件夹',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    selectedIsLocal
+                        ? '新建本机文件夹开始同步；或先添加设备，对方共享后会出现接受提示。'
+                        : '该设备尚未与本机共享文件夹。可在对方设备上把文件夹共享给你。',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  if (selectedIsLocal) ...[
+                    FilledButton.icon(
+                      onPressed: () {
+                        AddItemDialog.show(
+                          context,
+                          onDone: () => _loadDeviceFolders(deviceId),
+                        );
+                      },
+                      icon: const Icon(Icons.create_new_folder_outlined),
+                      label: const Text('新建文件夹'),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          DevicesScreen.showAddDeviceDialog(context),
+                      icon: const Icon(Icons.devices),
+                      label: const Text('添加设备'),
+                    ),
+                  ] else
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          folderProvider.fetchDeviceFolders(deviceId),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('刷新'),
+                    ),
+                ],
+              ),
             ),
           );
         }

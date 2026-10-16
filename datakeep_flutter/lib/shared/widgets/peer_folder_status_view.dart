@@ -55,9 +55,10 @@ class PeerFolderStatusView extends StatelessWidget {
             ),
             if (onRetry != null) ...[
               const SizedBox(height: 16),
-              ElevatedButton(
+              OutlinedButton.icon(
                 onPressed: onRetry,
-                child: const Text('刷新'),
+                icon: const Icon(Icons.refresh),
+                label: Text(waiting ? '重新检查连接' : '重试'),
               ),
             ],
           ],

@@ -22,32 +22,33 @@ PeerFolderErrorKind classifyPeerFolderError(Object? error) {
   return PeerFolderErrorKind.other;
 }
 
-String peerFolderPendingPairingTitle() => '配对未完成';
+String peerFolderPendingPairingTitle() => '等待对方添加本机';
 
 String peerFolderPendingPairingMessage() =>
-    '本机已添加该设备，但对方尚未添加本机。请在对方设备上接受配对请求，或通过「添加设备」手动添加本机；双方均添加后，文件夹列表会自动显示。';
+    '本机已添加该设备，但对方尚未添加本机。请在对方设备上接受配对，或手动添加本机设备 ID；双方都添加后即可同步。';
 
 String peerFolderErrorTitle(PeerFolderErrorKind kind) {
   switch (kind) {
     case PeerFolderErrorKind.unpaired:
       return '等待对方同意';
     case PeerFolderErrorKind.offline:
-      return '设备离线';
+      return '未连接';
     case PeerFolderErrorKind.unreachable:
-      return '暂时无法访问';
+      return '未连接';
     case PeerFolderErrorKind.other:
-      return '加载文件夹失败';
+      return '无法显示文件夹';
   }
 }
 
 String peerFolderErrorMessage(PeerFolderErrorKind kind, Object? raw) {
   switch (kind) {
     case PeerFolderErrorKind.unpaired:
-      return '已向对方发出配对请求，请在对方设备上同意后再查看文件夹。同意后将自动刷新。';
+      return '已向对方发出配对请求。请在对方设备上同意后，即可查看与其共享的文件夹。';
     case PeerFolderErrorKind.offline:
-      return '暂时无法连接对方，请确认设备在线且在同一网络，稍后会自动重试。';
+      return '当前未与该设备建立连接。请确认对方已打开应用且网络可达，连接后将显示其共享的文件夹。';
     case PeerFolderErrorKind.unreachable:
-      return '已配对但暂时拉不到对方文件夹（对端服务可能还在启动），请稍候。';
+      // 对齐 sushitrain「Not connected」：已配对但尚未连上，不当成故障
+      return '已添加该设备，但尚未连上。连接建立后即可查看对方共享的文件夹。';
     case PeerFolderErrorKind.other:
       return raw?.toString() ?? '未知错误';
   }

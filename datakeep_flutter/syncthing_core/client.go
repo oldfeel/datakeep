@@ -122,65 +122,19 @@ func (c *Client) Start() error {
 	early.Add(cfgWrapper)
 
 	myID := protocol.NewDeviceID(cert.Certificate[0])
-	defaultPath := filepath.Join(c.filesPath, "default")
-	if c.filesPath == "" {
-		defaultPath = filepath.Join(c.homePath, "Sync", "default")
-	}
-	_ = os.MkdirAll(defaultPath, 0o755)
-	_ = os.MkdirAll(filepath.Join(defaultPath, ".stfolder"), 0o755)
 
-	cfgWrapper.Modify(func(cfg *config.Configuration) {
+	// 对齐官方 / sushitrain：不自动创建 default 文件夹，由用户自行添加
+	waiter, modErr := cfgWrapper.Modify(func(cfg *config.Configuration) {
 		cfg.GUI.RawAddress = "127.0.0.1:8384"
 		cfg.GUI.Enabled = true
 		cfg.Options.RawListenAddresses = []string{
 			"tcp://0.0.0.0:22000",
 			"dynamic+https://relays.syncthing.net/endpoint",
 		}
-		// 对齐 sushitrain：iOS 忽略权限位、关闭 FSWatcher（沙盒下 watch 常误报）
+		// 对齐 sushitrain：忽略权限位；iOS 关闭 FSWatcher（沙盒下 watch 常误报）
 		cfg.Defaults.Folder.IgnorePerms = true
 		if build.IsIOS {
 			cfg.Defaults.Folder.FSWatcherEnabled = false
-		}
-
-		// 保留/创建 default 文件夹，路径改到可写的 filesPath（勿再删除）
-		foundDefault := false
-		for i := range cfg.Folders {
-			if cfg.Folders[i].ID != "default" {
-				continue
-			}
-			cfg.Folders[i].Path = defaultPath
-			cfg.Folders[i].IgnorePerms = true
-			if build.IsIOS {
-				cfg.Folders[i].FSWatcherEnabled = false
-			}
-			if cfg.Folders[i].Label == "" {
-				cfg.Folders[i].Label = "Default Folder"
-			}
-			hasLocal := false
-			for _, d := range cfg.Folders[i].Devices {
-				if d.DeviceID == myID {
-					hasLocal = true
-					break
-				}
-			}
-			if !hasLocal {
-				cfg.Folders[i].Devices = append(cfg.Folders[i].Devices, config.FolderDeviceConfiguration{
-					DeviceID: myID,
-				})
-			}
-			foundDefault = true
-		}
-		if !foundDefault && len(cfg.Folders) == 0 {
-			f := cfg.Defaults.Folder
-			f.ID = "default"
-			f.Label = "Default Folder"
-			f.Path = defaultPath
-			f.IgnorePerms = true
-			if build.IsIOS {
-				f.FSWatcherEnabled = false
-			}
-			f.Devices = []config.FolderDeviceConfiguration{{DeviceID: myID}}
-			cfg.Folders = append(cfg.Folders, f)
 		}
 
 		// iOS：容器绝对路径每次启动可能变化；对齐 sushitrain 把文件夹落到当前 Documents/<id>
@@ -196,6 +150,14 @@ func (c *Client) Start() error {
 			}
 		}
 	})
+	if modErr != nil {
+		cancel()
+		c.lastErr = modErr.Error()
+		return fmt.Errorf("配置修改: %w", modErr)
+	}
+	if waiter != nil {
+		waiter.Wait()
+	}
 
 	if err := syncthing.TryMigrateDatabase(ctx, 0); err != nil {
 		cancel()

@@ -707,13 +707,11 @@ class SyncthingApi {
     return {'ok': 'rebuilt folder index', 'folderId': resolvedId};
   }
 
-  /// Android：确保有 Default Folder、ignorePerms=true 并触发扫描。
-  /// （gomobile 曾误删 default；已清空配置的旧安装靠此补回）
+  /// 移动端：已有文件夹设 ignorePerms=true 并触发扫描。
+  /// 不自动创建 default（对齐官方 Syncthing v2 / sushitrain，由用户自行添加）。
   Future<void> ensureAndroidFoldersReady() async {
     if (!Platform.isAndroid && !Platform.isIOS) return;
     if (!await isRunning()) return;
-
-    await ensureDefaultFolderIfEmpty();
 
     final folders = getFoldersFromConfig();
     for (final f in folders) {
@@ -730,50 +728,6 @@ class SyncthingApi {
       }
       await triggerFolderScan(id);
     }
-  }
-
-  /// 本机没有任何同步文件夹时，创建 default（路径用平台默认同步目录）。
-  Future<void> ensureDefaultFolderIfEmpty() async {
-    if (!await isRunning()) return;
-    final existing = getFoldersFromConfig();
-    if (existing.isNotEmpty) return;
-
-    final localId = await getLocalDeviceId();
-    if (localId == null || localId.isEmpty) return;
-
-    final path = await defaultSyncFolderPath('default');
-    try {
-      await Directory(path).create(recursive: true);
-      await Directory('$path${Platform.pathSeparator}.stfolder').create(recursive: true);
-    } catch (e) {
-      debugPrint('[folder] 创建 default 目录失败: $e');
-    }
-
-    final defaults = await proxyGet('/rest/config/defaults/folder', silent: true);
-    final folderCfg = Map<String, dynamic>.from(
-      defaults.containsKey('data') && defaults['data'] is Map
-          ? defaults['data'] as Map
-          : (defaults.containsKey('error') ? <String, dynamic>{} : defaults),
-    );
-    folderCfg['id'] = 'default';
-    folderCfg['label'] = 'Default Folder';
-    folderCfg['path'] = path;
-    folderCfg['type'] ??= 'sendreceive';
-    folderCfg['paused'] = false;
-    folderCfg['ignorePerms'] = true;
-    folderCfg['devices'] = [
-      {
-        'deviceID': formatDeviceId(localId),
-        'introducedBy': '',
-      },
-    ];
-    final created = await proxyPost('/rest/config/folders', folderCfg);
-    if (created.containsKey('error')) {
-      debugPrint('[folder] 创建 Default Folder 失败: ${created['error']}');
-      return;
-    }
-    debugPrint('[folder] 已创建 Default Folder path=$path');
-    await triggerFolderScan('default');
   }
 
   int? _prevInBytesTotal;
