@@ -61,7 +61,7 @@ git remote set-url --add --push origin git@gitee.com:yuncommunity/datakeep.git
 | `datakeep_flutter/backend/` | Go 后端旧版（已停维，参考用） |
 | `docs/app-package-spec.md` | 应用包规范（开放协议） |
 | `examples/hello-app/` | 示例应用 |
-| `syncthing/` | Syncthing 引擎 **git submodule**（fork [oldfeel/syncthing](https://github.com/oldfeel/syncthing) 的 `main`，跟踪上游约 **v2.1.7-rc.2**；`datakeep/nil-url-guards` 为可选 nil URL 防护分支；供 `syncthing_core` replace） |
+| `syncthing/` | Syncthing 引擎 **git submodule**（fork [oldfeel/syncthing](https://github.com/oldfeel/syncthing) 分支 `datakeep/nil-url-guards`，跟踪上游约 **v2.1.7-rc.2** + DataKeep nil URL 防护；供 `syncthing_core` replace） |
 | `scripts/start_avd.sh` | Android 模拟器启动脚本 |
 
 应用市场 **服务端 / 管理后台** 在私有仓库 [oldfeel/datakeep-market](https://github.com/oldfeel/datakeep-market)（`market_server`、`market_admin`）。本仓 Flutter 仅保留可配置 API 基址的市场客户端。
