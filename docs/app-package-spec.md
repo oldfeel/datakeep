@@ -59,9 +59,11 @@ zip 解压后根目录（或唯一顶层目录）须包含：
 | GET | `/__datakeep/data/<相对路径>` | 读文件；若路径为目录则返回 `{"files":["相对 data/ 的路径",...]}` |
 | PUT | `/__datakeep/data/<相对路径>` | 写入（自动创建目录）；禁止 `..` |
 | DELETE | `/__datakeep/data/<相对路径>` | 删除文件 |
-| GET | `/__datakeep/revision` | `{"dataRev":ms,"appRev":ms}`：`data/` 与其余应用文件的最大修改时间，用于自动刷新 |
+| GET | `/__datakeep/revision` | `{"dataRev":ms,"appRev":n}`：`dataRev` 为 `data/` 最大 mtime；`appRev` 为应用包文件**内容指纹** |
 
-打开应用时客户端会轮询 revision：`appRev` 变化则重载 WebView；`dataRev` 变化则向页面派发 `datakeep:data-changed`（示例应用会据此重新读库）。
+打开应用时客户端与示例应用都会轮询 revision：`appRev` 变化则整页重载；`dataRev` 变化则派发 `datakeep:data-changed`（示例会据此重读数据，不整页刷新）。
+
+`appRev` 对包内 html/js/css/json/图片等做内容哈希，**不计** `data/`、`.stignore`、`.stfolder`、Syncthing 临时/冲突文件、`node_modules/`、`src/` 等。因此仅 mtime 被同步引擎改写、内容未变时不会误重载。监视在首屏加载完成后再启动。
 
 ## 运行环境
 

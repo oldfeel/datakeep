@@ -5,8 +5,18 @@ import '../../features/apps/screens/app_runner_page.dart';
 import '../../shared/utils/app_dir.dart';
 import '../../shared/utils/app_manifest.dart';
 
+/// 防止连点双开多个 AppRunner（争用稳定端口 / 旧服务尚未关闭）。
+DateTime? _lastOpenFolderAppAt;
+
 Future<bool?> openFolderApp(BuildContext context, Folder folder) async {
   if (!folder.isApp) return null;
+  final now = DateTime.now();
+  final last = _lastOpenFolderAppAt;
+  if (last != null && now.difference(last) < const Duration(milliseconds: 800)) {
+    return null;
+  }
+  _lastOpenFolderAppAt = now;
+
   if (!folder.isLocal) {
     openPeerApp(
       context,

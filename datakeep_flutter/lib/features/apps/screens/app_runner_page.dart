@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -33,7 +34,8 @@ import '../../folders/screens/video_preview_screen.dart';
 /// 在本地 HTTP 服务上打开应用目录（入口默认 index.html）
 ///
 /// `/__datakeep/data/<rel>`：GET/PUT/DELETE；目录 GET 返回文件列表。
-/// `/__datakeep/revision`：`{dataRev,appRev}`（目录内文件最大 mtime，毫秒），供自动刷新。
+/// `/__datakeep/revision`：`{dataRev,appRev}`；dataRev 为 data/ 最大 mtime，
+/// appRev 为应用包文件内容指纹（不受 Syncthing 摸盘改 mtime 影响）。
 /// 启动时按 app.json 的 `syncIgnore` 合并写入 `.stignore`。
 ///
 /// Debug（[kDebugMode]）下若仓库 `examples/*/app.json` 存在同 id，静态代码从该源码目录
@@ -102,6 +104,14 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
   int? _lastDataRev;
   DateTime? _localDataWriteAt;
   bool _reloadingApp = false;
+  /// 本地服务/WebView 就绪时刻；此前数秒内不因 appRev 自动整页刷新
+  DateTime? _webOpenedAt;
+  /// 忽略 WebView 资源错误直到该时刻（重载取消、连点竞态）
+  DateTime? _ignoreWebErrorsUntil;
+  int _webErrorAutoRetry = 0;
+  /// 主文档尚未 onPageFinished：盖一层加载指示，避免白屏干等
+  bool _webPageLoading = false;
+  bool _revisionWatchStarted = false;
   AppManifest? _manifest;
 
   /// 安装目录（data/、syncIgnore、删除）
@@ -585,6 +595,9 @@ window.__DATAKEEP_READONLY=true;
     final url = 'http://127.0.0.1:${_server!.port}/$entryRel';
     _entryRel = entryRel;
 
+    // 快速连点时旧页 dispose 可能尚未释放端口/连接；先探测入口再开 WebView
+    await _waitLocalEntryReady(url);
+
     if (_preferCef) {
       final ok = await _startCefWebView(url);
       if (!ok) {
@@ -602,6 +615,24 @@ window.__DATAKEEP_READONLY=true;
     } else {
       setState(() => _url = url);
       await _openBrowser(url);
+    }
+  }
+
+  /// 确认本地 shelf 已能返回入口，避免 WebView 抢跑出现「页面加载失败」。
+  Future<void> _waitLocalEntryReady(String url) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
+    try {
+      for (var i = 0; i < 15; i++) {
+        try {
+          final req = await client.getUrl(Uri.parse(url));
+          final res = await req.close().timeout(const Duration(seconds: 1));
+          await res.drain<void>();
+          if (res.statusCode >= 200 && res.statusCode < 500) return;
+        } catch (_) {}
+        await Future<void>.delayed(Duration(milliseconds: 40 + i * 20));
+      }
+    } finally {
+      client.close(force: true);
     }
   }
 
@@ -658,28 +689,15 @@ window.__DATAKEEP_READONLY=true;
     );
   }
 
-  /// dataRev = 安装目录 data/ 最大 mtime；appRev = 代码根非 data/ 最大 mtime。
+  /// dataRev = 安装目录 data/ 最大 mtime；
+  /// appRev = 应用包文件 **内容** 指纹（sha1→int）。Syncthing 只改 mtime 时不变，
+  /// 避免宿主与应用内 `location.reload()` 双端误重载。
   Future<Map<String, int>> _computeRevision({
     required String codeRoot,
     required String installPath,
   }) async {
+    final appRev = await _computeAppContentRev(codeRoot);
     var dataRev = 0;
-    var appRev = 0;
-
-    final codeDataRoot = p.normalize(p.join(codeRoot, 'data'));
-    final codeDir = Directory(codeRoot);
-    if (await codeDir.exists()) {
-      await for (final entity
-          in codeDir.list(recursive: true, followLinks: false)) {
-        if (entity is! File) continue;
-        try {
-          final m = (await entity.stat()).modified.millisecondsSinceEpoch;
-          final inData = p.isWithin(codeDataRoot, entity.path) ||
-              p.equals(codeDataRoot, entity.path);
-          if (!inData && m > appRev) appRev = m;
-        } catch (_) {}
-      }
-    }
 
     final dataRoot = p.normalize(p.join(installPath, 'data'));
     final dataDir = Directory(dataRoot);
@@ -696,6 +714,98 @@ window.__DATAKEEP_READONLY=true;
       }
     }
     return {'dataRev': dataRev, 'appRev': appRev};
+  }
+
+  Future<int> _computeAppContentRev(String codeRoot) async {
+    final codeDataRoot = p.normalize(p.join(codeRoot, 'data'));
+    final codeDir = Directory(codeRoot);
+    if (!await codeDir.exists()) return 0;
+
+    final paths = <String>[];
+    await for (final entity
+        in codeDir.list(recursive: true, followLinks: false)) {
+      if (entity is! File) continue;
+      final inData = p.isWithin(codeDataRoot, entity.path) ||
+          p.equals(codeDataRoot, entity.path);
+      if (inData) continue;
+      if (_ignorePathForAppRev(codeRoot, entity.path)) continue;
+      if (!_isAppPackageAsset(entity.path)) continue;
+      paths.add(entity.path);
+    }
+    paths.sort();
+
+    final builder = BytesBuilder(copy: false);
+    for (final path in paths) {
+      final rel =
+          p.normalize(p.relative(path, from: codeRoot)).replaceAll('\\', '/');
+      builder.add(utf8.encode(rel));
+      builder.addByte(0);
+      try {
+        builder.add(await File(path).readAsBytes());
+      } catch (_) {}
+      builder.addByte(0);
+    }
+    final digest = sha1.convert(builder.takeBytes());
+    // JSON 安全的正 int（63-bit）
+    var n = 0;
+    for (var i = 0; i < 8 && i < digest.bytes.length; i++) {
+      n = (n << 8) | digest.bytes[i];
+    }
+    return n & 0x7fffffffffffffff;
+  }
+
+  /// 仅指纹应用包资产；忽略运行时/同步副作用与开发依赖树。
+  bool _ignorePathForAppRev(String codeRoot, String filePath) {
+    final rel = p
+        .normalize(p.relative(filePath, from: codeRoot))
+        .replaceAll('\\', '/');
+    final name = p.basename(rel);
+    if (name == '.stignore' || name == '.stfolder') return true;
+    if (rel.startsWith('.stfolder/') || rel.contains('/.stfolder/')) {
+      return true;
+    }
+    if (name.startsWith('.syncthing.') || name.contains('.sync-conflict-')) {
+      return true;
+    }
+    if (name == '.DS_Store' || name == 'Thumbs.db') return true;
+    if (rel == 'node_modules' ||
+        rel.startsWith('node_modules/') ||
+        rel.contains('/node_modules/')) {
+      return true;
+    }
+    if (rel == '.git' || rel.startsWith('.git/') || rel.contains('/.git/')) {
+      return true;
+    }
+    // Vite 源码树：安装包/www 才是运行入口，避免 src 与构建产物双计抖动
+    if (rel == 'src' || rel.startsWith('src/')) return true;
+    if (rel == 'public' || rel.startsWith('public/')) return true;
+    return false;
+  }
+
+  bool _isAppPackageAsset(String filePath) {
+    final ext = p.extension(filePath).toLowerCase();
+    const ok = {
+      '.html',
+      '.htm',
+      '.js',
+      '.mjs',
+      '.cjs',
+      '.css',
+      '.wasm',
+      '.json',
+      '.svg',
+      '.png',
+      '.jpg',
+      '.jpeg',
+      '.webp',
+      '.gif',
+      '.ico',
+      '.woff',
+      '.woff2',
+      '.ttf',
+      '.map',
+    };
+    return ok.contains(ext);
   }
 
   /// `.staging/`、任意 `covers/` 下的临时截帧不参与同步刷新判定
@@ -872,6 +982,9 @@ window.__DATAKEEP_READONLY=true;
     final entry = _entryRel;
     if (entry == null || _server == null || !_useWebView) return;
     _reloadingApp = true;
+    _ignoreWebErrorsUntil =
+        DateTime.now().add(const Duration(milliseconds: 1500));
+    if (mounted) setState(() => _webPageLoading = true);
     try {
       final url =
           'http://127.0.0.1:${_server!.port}/$entry?_r=${DateTime.now().millisecondsSinceEpoch}';
@@ -884,9 +997,63 @@ window.__DATAKEEP_READONLY=true;
       debugPrint('[AppRunner] 应用文件已更新，重新加载 WebView');
     } catch (e) {
       debugPrint('[AppRunner] 重载失败: $e');
+      if (mounted) setState(() => _webPageLoading = false);
     } finally {
       _reloadingApp = false;
     }
+  }
+
+  bool _shouldIgnoreWebResourceError(wf.WebResourceError err) {
+    if (_reloadingApp) return true;
+    final until = _ignoreWebErrorsUntil;
+    if (until != null && DateTime.now().isBefore(until)) return true;
+    // iOS NSURLErrorCancelled=-999；Android ERROR_FAILED_* 取消加载也常带 cancelled
+    if (err.errorCode == -999) return true;
+    final desc = err.description.toLowerCase();
+    if (desc.contains('cancel') || desc.contains('interrupted')) return true;
+    if (err.errorType == wf.WebResourceErrorType.webViewInvalidated) {
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> _handleMainFrameWebError(
+    wf.WebResourceError err,
+    String url,
+  ) async {
+    if (!mounted) return;
+    if (_shouldIgnoreWebResourceError(err)) {
+      debugPrint(
+        '[AppRunner] 忽略 WebView 错误(${err.errorCode}): ${err.description}',
+      );
+      return;
+    }
+    // 瞬时失败：保持加载指示并再拉一次，避免白屏或误报全页错误
+    if (_webErrorAutoRetry < 2 && _wfController != null) {
+      _webErrorAutoRetry++;
+      _ignoreWebErrorsUntil =
+          DateTime.now().add(const Duration(milliseconds: 800));
+      if (mounted) setState(() => _webPageLoading = true);
+      debugPrint(
+        '[AppRunner] 主文档加载失败，自动重试 $_webErrorAutoRetry/2 '
+        '(${err.errorCode}) ${err.description}',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted || _wfController == null) return;
+      try {
+        await _wfController!.loadRequest(Uri.parse(url));
+      } catch (e) {
+        debugPrint('[AppRunner] 自动重试失败: $e');
+        if (mounted) setState(() => _webPageLoading = false);
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _webPageLoading = false;
+      _webError =
+          '页面加载失败（${err.errorCode}）：${err.description}\n$url';
+    });
   }
 
   Future<void> _notifyDataChanged(int dataRev) async {
@@ -1022,6 +1189,9 @@ window.__DATAKEEP_READONLY=true;
         return;
       }
       if (appRev != _lastAppRev) {
+        debugPrint(
+          '[AppRunner] appRev 内容指纹变化: $_lastAppRev → $appRev，重载 WebView',
+        );
         _lastAppRev = appRev;
         _lastDataRev = dataRev;
         if (_useWebView) {
@@ -1044,13 +1214,33 @@ window.__DATAKEEP_READONLY=true;
     }
   }
 
-  void _startRevisionWatch() {
+  /// 首屏加载完成后再监视：避免打开过程中写 .stignore / 扫盘与 WebView 抢跑。
+  void _ensureRevisionWatchAfterFirstPaint() {
+    if (_isPeer || _revisionWatchStarted) return;
+    _revisionWatchStarted = true;
+    unawaited(_startRevisionWatch());
+  }
+
+  Future<void> _startRevisionWatch() async {
     _revTimer?.cancel();
+    // 再次采样基线（排除规则已生效），避免把打开瞬间的副作用当成「应用更新」
+    if (_codeRoot.isNotEmpty && _installPath.isNotEmpty) {
+      try {
+        final rev = await _computeRevision(
+          codeRoot: _codeRoot,
+          installPath: _installPath,
+        );
+        _lastAppRev = rev['appRev'];
+        _lastDataRev = rev['dataRev'];
+      } catch (e) {
+        debugPrint('[AppRunner] revision 基线失败: $e');
+      }
+    }
+    if (!mounted) return;
     _revTimer = Timer.periodic(
       const Duration(seconds: 2),
       (_) => unawaited(_checkRevision()),
     );
-    unawaited(_checkRevision());
   }
 
   Future<void> _start() async {
@@ -1109,27 +1299,48 @@ window.__DATAKEEP_READONLY=true;
         entryRel,
         installPath,
       );
-      _startRevisionWatch();
+      // revision 监视改在首屏 onPageFinished 后启动（见 _ensureRevisionWatchAfterFirstPaint）
+      if (!_preferPlatformWebView && !_preferCef) {
+        _ensureRevisionWatchAfterFirstPaint();
+      }
     } catch (e) {
       setState(() => _error = e.toString());
     }
   }
 
   Future<void> _startPlatformWebView(String url) async {
+    _webOpenedAt = DateTime.now();
+    _webErrorAutoRetry = 0;
+    _ignoreWebErrorsUntil =
+        DateTime.now().add(const Duration(milliseconds: 800));
     final c = wf.WebViewController()
       ..setJavaScriptMode(wf.JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         wf.NavigationDelegate(
+          onPageStarted: (_) {
+            if (!mounted) return;
+            setState(() => _webPageLoading = true);
+          },
           onWebResourceError: (err) {
             if (!mounted) return;
-            setState(() {
-              _webError =
-                  '页面加载失败（${err.errorCode}）：${err.description}\n$url';
-            });
+            // 图标/JS chunk 等子资源失败不盖全页；仅主文档失败才提示
+            if (err.isForMainFrame == false) {
+              debugPrint(
+                '[AppRunner] 子资源加载失败(${err.errorCode}): '
+                '${err.description} ${err.url ?? ''}',
+              );
+              return;
+            }
+            unawaited(_handleMainFrameWebError(err, _url ?? url));
           },
           onPageFinished: (_) {
             if (!mounted) return;
-            if (_webError != null) setState(() => _webError = null);
+            _webErrorAutoRetry = 0;
+            setState(() {
+              _webPageLoading = false;
+              _webError = null;
+            });
+            _ensureRevisionWatchAfterFirstPaint();
           },
         ),
       )
@@ -1140,12 +1351,14 @@ window.__DATAKEEP_READONLY=true;
       _useWebView = true;
       _useCef = false;
       _webError = null;
+      _webPageLoading = true;
     });
   }
 
   /// 内嵌 CEF（Chromium Texture）。失败返回 false，由调用方展示地址（不自动外开浏览器）。
   Future<bool> _startCefWebView(String url) async {
     if (!await _ensureCefManager()) return false;
+    _webOpenedAt = DateTime.now();
     try {
       final c = cef.WebviewManager().createWebView(
         loading: const Center(child: CircularProgressIndicator()),
@@ -1154,6 +1367,8 @@ window.__DATAKEEP_READONLY=true;
         onLoadEnd: (_, __) {
           if (!mounted) return;
           if (_webError != null) setState(() => _webError = null);
+          if (_webPageLoading) setState(() => _webPageLoading = false);
+          _ensureRevisionWatchAfterFirstPaint();
           unawaited(_ensureCefHostBridge(c));
         },
       ));
@@ -1899,6 +2114,62 @@ window.__datakeepProbeDuration=function(rel){
     };
   }
 
+  bool get _hasAppBarMenu =>
+      (!_isPeer && widget.appPath.isNotEmpty) || _url != null;
+
+  List<PopupMenuEntry<_AppBarAction>> _buildAppBarMenuItems(
+    BuildContext context,
+  ) {
+    final errColor = Theme.of(context).colorScheme.error;
+    return [
+      if (!_isPeer && widget.appPath.isNotEmpty)
+        const PopupMenuItem(
+          value: _AppBarAction.about,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.info_outline),
+            title: Text('关于'),
+          ),
+        ),
+      if (_url != null && !_isPeer)
+        PopupMenuItem(
+          value: _AppBarAction.refreshPeers,
+          enabled: !_pulling,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.sync),
+            title: Text(_pulling ? '正在对比其他设备…' : '刷新数据'),
+          ),
+        ),
+      if (_url != null)
+        const PopupMenuItem(
+          value: _AppBarAction.openBrowser,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.open_in_browser),
+            title: Text('浏览器打开'),
+          ),
+        ),
+      if (!_isPeer && widget.appPath.isNotEmpty)
+        PopupMenuItem(
+          value: _AppBarAction.delete,
+          enabled: !_deleting,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.delete_outline, color: errColor),
+            title: Text(
+              _deleting ? '正在删除…' : '删除应用',
+              style: TextStyle(color: errColor),
+            ),
+          ),
+        ),
+    ];
+  }
+
   Future<void> _deleteApp() async {
     if (_isPeer || widget.appPath.isEmpty || _deleting) return;
     final ok = await confirmDeleteApp(context, widget.title);
@@ -1965,44 +2236,34 @@ window.__datakeepProbeDuration=function(rel){
           ],
         ),
         actions: [
-          if (!_isPeer && widget.appPath.isNotEmpty)
-            IconButton(
-              tooltip: '关于',
-              onPressed: _showAbout,
-              icon: const Icon(Icons.info_outline),
+          if (_pulling || _deleting)
+            const Padding(
+              padding: EdgeInsets.only(right: 8),
+              child: Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
             ),
-          if (!_isPeer && widget.appPath.isNotEmpty)
-            IconButton(
-              tooltip: '删除应用',
-              onPressed: _deleting ? null : () => unawaited(_deleteApp()),
-              icon: _deleting
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      Icons.delete_outline,
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-            ),
-          if (_url != null && !_isPeer)
-            IconButton(
-              tooltip: _pulling ? '正在对比其他设备…' : '刷新：对比其他设备数据',
-              onPressed: _pulling ? null : () => unawaited(_refreshFromPeers()),
-              icon: _pulling
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.sync),
-            ),
-          if (_url != null)
-            IconButton(
-              tooltip: '浏览器打开',
-              icon: const Icon(Icons.open_in_browser),
-              onPressed: () => _openBrowser(_url!),
+          if (_hasAppBarMenu)
+            PopupMenuButton<_AppBarAction>(
+              tooltip: '更多',
+              icon: const Icon(Icons.more_vert),
+              onSelected: (action) {
+                switch (action) {
+                  case _AppBarAction.about:
+                    unawaited(_showAbout());
+                  case _AppBarAction.refreshPeers:
+                    unawaited(_refreshFromPeers());
+                  case _AppBarAction.openBrowser:
+                    if (_url != null) unawaited(_openBrowser(_url!));
+                  case _AppBarAction.delete:
+                    unawaited(_deleteApp());
+                }
+              },
+              itemBuilder: (context) => _buildAppBarMenuItems(context),
             ),
         ],
       ),
@@ -2019,8 +2280,21 @@ window.__datakeepProbeDuration=function(rel){
                         const SizedBox(height: 16),
                         FilledButton(
                           onPressed: () {
+                            final entry = _entryRel;
+                            final port = _server?.port;
                             setState(() => _webError = null);
-                            unawaited(_reloadWebViewForAppUpdate());
+                            _webErrorAutoRetry = 0;
+                            if (entry == null || port == null || _wfController == null) {
+                              unawaited(_reloadWebViewForAppUpdate());
+                              return;
+                            }
+                            final retryUrl =
+                                'http://127.0.0.1:$port/$entry?_r=${DateTime.now().millisecondsSinceEpoch}';
+                            _url = retryUrl;
+                            _webPageLoading = true;
+                            _ignoreWebErrorsUntil = DateTime.now()
+                                .add(const Duration(milliseconds: 1500));
+                            unawaited(_wfController!.loadRequest(Uri.parse(retryUrl)));
                           },
                           child: const Text('重试'),
                         ),
@@ -2038,7 +2312,26 @@ window.__datakeepProbeDuration=function(rel){
                   },
                 )
               : _useWebView && _wfController != null
-                  ? wf.WebViewWidget(controller: _wfController!)
+                  ? Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        wf.WebViewWidget(controller: _wfController!),
+                        if (_webPageLoading)
+                          const ColoredBox(
+                            color: Color(0xFFF5F5F5),
+                            child: Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  CircularProgressIndicator(),
+                                  SizedBox(height: 16),
+                                  Text('正在加载应用…'),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    )
                   : Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -2074,4 +2367,6 @@ window.__datakeepProbeDuration=function(rel){
     );
   }
 }
+
+enum _AppBarAction { about, refreshPeers, openBrowser, delete }
 

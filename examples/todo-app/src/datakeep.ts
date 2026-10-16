@@ -200,6 +200,7 @@ export function watchData(onDataChange: () => void): () => void {
   let lastDataRev: number | null = null;
   let lastAppRev: number | null = null;
   let busy = false;
+  const appReloadAfter = Date.now() + 4000;
 
   const onRev = (j: Revision | null) => {
     if (!j) return;
@@ -211,6 +212,7 @@ export function watchData(onDataChange: () => void): () => void {
     if (lastAppRev == null) lastAppRev = j.appRev;
     else if (j.appRev !== lastAppRev) {
       lastAppRev = j.appRev;
+      if (Date.now() < appReloadAfter) return;
       location.reload();
       return;
     }

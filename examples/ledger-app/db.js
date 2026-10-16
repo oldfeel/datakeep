@@ -120,12 +120,14 @@
   }
 
   function watchData(onChange, intervalMs) {
+    var appReloadAfter = Date.now() + 4000;
     function handleRev(j) {
       if (!j) return;
       if (_watchLastAppRev == null) {
         _watchLastAppRev = j.appRev;
       } else if (j.appRev !== _watchLastAppRev) {
         _watchLastAppRev = j.appRev;
+        if (Date.now() < appReloadAfter) return;
         location.reload();
         return;
       }

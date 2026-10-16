@@ -38,6 +38,8 @@ target 'Runner' do
   use_frameworks!
 
   pod 'DataKeepSyncthing', :path => '../syncthing_core'
+  # video_thumbnail 依赖 libwebp；CDN HTTP/2 常拉失败，固定本机缓存可用的 1.5.0
+  pod 'libwebp', '1.5.0'
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths

@@ -138,11 +138,13 @@ export async function fetchRevision(): Promise<Revision> {
   return res.json() as Promise<Revision>;
 }
 
-/** 轮询 revision + 监听 datakeep:data-changed；appRev 变则整页 reload */
+/** 轮询 revision + 监听 datakeep:data-changed；appRev（内容指纹）变则整页 reload */
 export function watchData(onDataChange: () => void): () => void {
   let lastDataRev: number | null = null;
   let lastAppRev: number | null = null;
   let busy = false;
+  // 首屏稳定前不因 appRev 抖动整页刷新（宿主侧已改为内容指纹，此处再挡一轮）
+  const appReloadAfter = Date.now() + 4000;
 
   const onRev = (j: Revision | null) => {
     if (!j) return;
@@ -155,6 +157,7 @@ export function watchData(onDataChange: () => void): () => void {
     if (lastAppRev == null) lastAppRev = j.appRev;
     else if (j.appRev !== lastAppRev) {
       lastAppRev = j.appRev;
+      if (Date.now() < appReloadAfter) return;
       location.reload();
       return;
     }
