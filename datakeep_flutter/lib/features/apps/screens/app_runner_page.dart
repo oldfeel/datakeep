@@ -22,7 +22,10 @@ import '../../../core/services/api_service.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../delete_app.dart';
 import '../app_about.dart';
+import '../app_ai_panel.dart';
+import '../ai_settings_dialog.dart';
 import '../../../core/services/thumbnail_service.dart';
+import '../../../shared/utils/app_ai_gate.dart';
 import '../../../shared/utils/app_dir.dart';
 import '../../../shared/utils/app_manifest.dart';
 import '../../../shared/utils/dev_app_source.dart';
@@ -119,6 +122,14 @@ class _AppRunnerPageState extends State<AppRunnerPage> {
 
   /// 静态代码根（Debug 直连 examples 时与安装目录不同）
   String _codeRoot = '';
+
+  /// true：全屏 AI 对话；false：应用 WebView
+  bool _showAi = false;
+  bool _aiWrote = false;
+  /// AI 界面打开期间检测到的 appRev 变化，返回应用后再重载（避免 CEF 卡死）
+  bool _pendingAppReload = false;
+  /// 非空表示本次 AI 编辑由我们暂停了该文件夹同步，退出时需恢复
+  String? _aiPausedFolderId;
 
   static bool _cefManagerReady = false;
 
@@ -779,6 +790,10 @@ window.__DATAKEEP_READONLY=true;
     // Vite 源码树：安装包/www 才是运行入口，避免 src 与构建产物双计抖动
     if (rel == 'src' || rel.startsWith('src/')) return true;
     if (rel == 'public' || rel.startsWith('public/')) return true;
+    // 大体积只读依赖 / 样本库 / 构建脚本：不参与热更新指纹
+    if (rel == 'vendor' || rel.startsWith('vendor/')) return true;
+    if (rel == 'seed' || rel.startsWith('seed/')) return true;
+    if (rel == 'scripts' || rel.startsWith('scripts/')) return true;
     return false;
   }
 
@@ -1175,6 +1190,8 @@ window.__DATAKEEP_READONLY=true;
   Future<void> _checkRevision() async {
     if (_isPeer) return;
     if (!mounted || _reloadingApp) return;
+    // AI 全屏编辑时跳过整包内容指纹（含 wasm 等大文件），避免主线程周期性卡死
+    if (_showAi) return;
     if (_codeRoot.isEmpty || _installPath.isEmpty) return;
     try {
       final rev = await _computeRevision(
@@ -1190,10 +1207,15 @@ window.__DATAKEEP_READONLY=true;
       }
       if (appRev != _lastAppRev) {
         debugPrint(
-          '[AppRunner] appRev 内容指纹变化: $_lastAppRev → $appRev，重载 WebView',
+          '[AppRunner] appRev 内容指纹变化: $_lastAppRev → $appRev'
+          '${_showAi ? '（AI 界面，延后重载）' : '，重载 WebView'}',
         );
         _lastAppRev = appRev;
         _lastDataRev = dataRev;
+        if (_showAi) {
+          _pendingAppReload = true;
+          return;
+        }
         if (_useWebView) {
           await _reloadWebViewForAppUpdate();
         }
@@ -2117,6 +2139,78 @@ window.__datakeepProbeDuration=function(rel){
   bool get _hasAppBarMenu =>
       (!_isPeer && widget.appPath.isNotEmpty) || _url != null;
 
+  bool get _aiWritable => AppAiGate.isAiWritable(
+        manifest: _manifest,
+        codeRoot: _codeRoot,
+      );
+
+  bool get _showAiToggle =>
+      !_isPeer && _url != null && _aiWritable && _codeRoot.isNotEmpty;
+
+  Future<void> _pauseSyncForAi() async {
+    final id = widget.folderId?.trim();
+    if (id == null || id.isEmpty || _isPeer) return;
+    if (_aiPausedFolderId != null) return;
+    try {
+      final settings = await ApiService.getFolderSettings(id);
+      if (settings['paused'] == true) {
+        // 用户原本已暂停，退出 AI 时不要擅自恢复
+        debugPrint('[AppRunner] AI 编辑：文件夹本已暂停，跳过 $id');
+        return;
+      }
+      await ApiService.updateFolderSettings(id, paused: true);
+      _aiPausedFolderId = id;
+      debugPrint('[AppRunner] AI 编辑：已暂停同步 $id');
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('[AppRunner] AI 暂停同步失败: $e');
+    }
+  }
+
+  Future<void> _resumeSyncAfterAi() async {
+    final id = _aiPausedFolderId;
+    if (id == null) return;
+    _aiPausedFolderId = null;
+    try {
+      await ApiService.updateFolderSettings(id, paused: false);
+      debugPrint('[AppRunner] AI 编辑：已恢复同步 $id');
+    } catch (e) {
+      debugPrint('[AppRunner] AI 恢复同步失败: $e');
+      // 恢复失败时仍清空标记，避免反复误操作；下次再进 AI 会重新判断
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleAiView() async {
+    if (!_showAiToggle) return;
+    if (_showAi) {
+      final needReload = _aiWrote || _pendingAppReload;
+      setState(() => _showAi = false);
+      await _resumeSyncAfterAi();
+      // 重新采 revision 基线，避免返回后立刻误重载或漏重载
+      if (_codeRoot.isNotEmpty && _installPath.isNotEmpty) {
+        try {
+          final rev = await _computeRevision(
+            codeRoot: _codeRoot,
+            installPath: _installPath,
+          );
+          _lastAppRev = rev['appRev'];
+          _lastDataRev = rev['dataRev'];
+        } catch (e) {
+          debugPrint('[AppRunner] 退出 AI 后 revision 基线失败: $e');
+        }
+      }
+      if (needReload && mounted && _useWebView) {
+        _aiWrote = false;
+        _pendingAppReload = false;
+        await _reloadWebViewForAppUpdate();
+      }
+      return;
+    }
+    setState(() => _showAi = true);
+    unawaited(_pauseSyncForAi());
+  }
+
   List<PopupMenuEntry<_AppBarAction>> _buildAppBarMenuItems(
     BuildContext context,
   ) {
@@ -2130,6 +2224,16 @@ window.__datakeepProbeDuration=function(rel){
             contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.info_outline),
             title: Text('关于'),
+          ),
+        ),
+      if (!_isPeer && _url != null)
+        const PopupMenuItem(
+          value: _AppBarAction.aiSettings,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.key_outlined),
+            title: Text('AI 设置'),
           ),
         ),
       if (_url != null && !_isPeer)
@@ -2205,6 +2309,19 @@ window.__datakeepProbeDuration=function(rel){
   @override
   void dispose() {
     _revTimer?.cancel();
+    // 离开页面时若仍因 AI 暂停着同步，尽量恢复（勿 setState）
+    final pausedId = _aiPausedFolderId;
+    _aiPausedFolderId = null;
+    if (pausedId != null) {
+      unawaited(
+        ApiService.updateFolderSettings(pausedId, paused: false).then(
+          (_) {},
+          onError: (Object e, StackTrace _) {
+            debugPrint('[AppRunner] 退出时恢复同步失败: $e');
+          },
+        ),
+      );
+    }
     unawaited(_server?.close(force: true) ?? Future.value());
     final cefCtrl = _cefController;
     _cefController = null;
@@ -2232,6 +2349,16 @@ window.__datakeepProbeDuration=function(rel){
                           .onSurface
                           .withValues(alpha: 0.7),
                     ),
+              )
+            else if (_showAi && _aiPausedFolderId != null)
+              Text(
+                '同步已暂停（AI 编辑中）',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.7),
+                    ),
               ),
           ],
         ),
@@ -2247,6 +2374,16 @@ window.__datakeepProbeDuration=function(rel){
                 ),
               ),
             ),
+          if (_showAiToggle)
+            IconButton(
+              tooltip: _showAi ? '返回应用' : 'AI 编辑',
+              isSelected: _showAi,
+              icon: Icon(
+                _showAi ? Icons.web_asset : Icons.auto_awesome_outlined,
+              ),
+              selectedIcon: const Icon(Icons.web_asset),
+              onPressed: () => unawaited(_toggleAiView()),
+            ),
           if (_hasAppBarMenu)
             PopupMenuButton<_AppBarAction>(
               tooltip: '更多',
@@ -2255,6 +2392,8 @@ window.__datakeepProbeDuration=function(rel){
                 switch (action) {
                   case _AppBarAction.about:
                     unawaited(_showAbout());
+                  case _AppBarAction.aiSettings:
+                    unawaited(showAiSettingsDialog(context));
                   case _AppBarAction.refreshPeers:
                     unawaited(_refreshFromPeers());
                   case _AppBarAction.openBrowser:
@@ -2267,106 +2406,154 @@ window.__datakeepProbeDuration=function(rel){
             ),
         ],
       ),
-      body: _error != null
-          ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!)))
-          : _webError != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(_webError!, textAlign: TextAlign.center),
-                        const SizedBox(height: 16),
-                        FilledButton(
-                          onPressed: () {
-                            final entry = _entryRel;
-                            final port = _server?.port;
-                            setState(() => _webError = null);
-                            _webErrorAutoRetry = 0;
-                            if (entry == null || port == null || _wfController == null) {
-                              unawaited(_reloadWebViewForAppUpdate());
-                              return;
-                            }
-                            final retryUrl =
-                                'http://127.0.0.1:$port/$entry?_r=${DateTime.now().millisecondsSinceEpoch}';
-                            _url = retryUrl;
-                            _webPageLoading = true;
-                            _ignoreWebErrorsUntil = DateTime.now()
-                                .add(const Duration(milliseconds: 1500));
-                            unawaited(_wfController!.loadRequest(Uri.parse(retryUrl)));
-                          },
-                          child: const Text('重试'),
-                        ),
-                      ],
-                    ),
+      // WebView 在底层；AI 用不透明面板盖住（立即可交互，历史后台加载）
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          IgnorePointer(
+            ignoring: _showAi,
+            child: _buildRunnerBody(context),
+          ),
+          if (_showAi)
+            Positioned.fill(
+              child: Material(
+                color: Theme.of(context).colorScheme.surface,
+                child: AppAiPanel(
+                  key: ValueKey(
+                    'ai-panel-${_manifest?.id ?? widget.folderId ?? widget.title}',
                   ),
-                )
-          : _useWebView && _useCef && _cefController != null
-              ? ValueListenableBuilder<bool>(
-                  valueListenable: _cefController!,
-                  builder: (context, ready, _) {
-                    return ready
-                        ? _cefController!.webviewWidget
-                        : _cefController!.loadingWidget;
+                  codeRoot: _codeRoot,
+                  appId: _manifest?.id ?? widget.folderId ?? widget.title,
+                  appName: _manifest?.displayName(fallback: widget.title) ??
+                      widget.title,
+                  onWroteChanged: (v) {
+                    if (v) _aiWrote = true;
                   },
-                )
-              : _useWebView && _wfController != null
-                  ? Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        wf.WebViewWidget(controller: _wfController!),
-                        if (_webPageLoading)
-                          const ColoredBox(
-                            color: Color(0xFFF5F5F5),
-                            child: Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  CircularProgressIndicator(),
-                                  SizedBox(height: 16),
-                                  Text('正在加载应用…'),
-                                ],
-                              ),
-                            ),
-                          ),
-                      ],
-                    )
-                  : Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_url == null) const CircularProgressIndicator(),
-                      if (_url == null) const SizedBox(height: 16),
-                      Text(
-                        _url == null
-                            ? '正在启动…'
-                            : '${_openHint ?? '应用已就绪'}\n$_url',
-                        textAlign: TextAlign.center,
-                      ),
-                      if (_url != null) ...[
-                        const SizedBox(height: 12),
-                        FilledButton(
-                          onPressed: () => _openBrowser(_url!),
-                          child: const Text('再次打开'),
-                        ),
-                        TextButton(
-                          onPressed: () async {
-                            await Clipboard.setData(ClipboardData(text: _url!));
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('已复制地址')),
-                            );
-                          },
-                          child: const Text('复制地址'),
-                        ),
-                      ],
-                    ],
-                  ),
                 ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRunnerBody(BuildContext context) {
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(_error!),
+        ),
+      );
+    }
+    if (_webError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_webError!, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () {
+                  final entry = _entryRel;
+                  final port = _server?.port;
+                  setState(() => _webError = null);
+                  _webErrorAutoRetry = 0;
+                  if (entry == null ||
+                      port == null ||
+                      _wfController == null) {
+                    unawaited(_reloadWebViewForAppUpdate());
+                    return;
+                  }
+                  final retryUrl =
+                      'http://127.0.0.1:$port/$entry?_r=${DateTime.now().millisecondsSinceEpoch}';
+                  _url = retryUrl;
+                  _webPageLoading = true;
+                  _ignoreWebErrorsUntil =
+                      DateTime.now().add(const Duration(milliseconds: 1500));
+                  unawaited(_wfController!.loadRequest(Uri.parse(retryUrl)));
+                },
+                child: const Text('重试'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_useWebView && _useCef && _cefController != null) {
+      return ValueListenableBuilder<bool>(
+        valueListenable: _cefController!,
+        builder: (context, ready, _) {
+          return ready
+              ? _cefController!.webviewWidget
+              : _cefController!.loadingWidget;
+        },
+      );
+    }
+    if (_useWebView && _wfController != null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          wf.WebViewWidget(controller: _wfController!),
+          if (_webPageLoading)
+            const ColoredBox(
+              color: Color(0xFFF5F5F5),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('正在加载应用…'),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_url == null) const CircularProgressIndicator(),
+          if (_url == null) const SizedBox(height: 16),
+          Text(
+            _url == null
+                ? '正在启动…'
+                : '${_openHint ?? '应用已就绪'}\n$_url',
+            textAlign: TextAlign.center,
+          ),
+          if (_url != null) ...[
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: () => _openBrowser(_url!),
+              child: const Text('再次打开'),
+            ),
+            TextButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: _url!));
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('已复制地址')),
+                );
+              },
+              child: const Text('复制地址'),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
 
-enum _AppBarAction { about, refreshPeers, openBrowser, delete }
+enum _AppBarAction {
+  about,
+  aiSettings,
+  refreshPeers,
+  openBrowser,
+  delete,
+}
 

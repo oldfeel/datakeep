@@ -1,0 +1,10 @@
+{
+  "id": "site.datakeep.bio",
+  "name": "生物",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "description": "分类名录浏览：虚拟列表 + 搜索上下文；本地 SQLite（样本或全库下载）",
+  "icon": "icon.svg",
+  "aiEditable": true,
+  "syncIgnore": ["*.db", "*.sqlite", "*.sqlite-journal", "*.sqlite-wal", "*.sqlite-shm"]
+}

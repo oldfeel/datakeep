@@ -54,6 +54,12 @@ echo -e "${GREEN}✅ 使用平台: $PLATFORM${NC}"
 # Ubuntu/GNOME：安装用户级 .desktop，任务栏才能按 site.datakeep 显示图标
 if [[ "$PLATFORM" == "linux" ]]; then
   bash "$SCRIPT_DIR/scripts/install_linux_dev_desktop.sh" || true
+  # pubspec hooks name_linux 指向版本化 so；缺库时提前提示
+  _multiarch="$(cc -print-multiarch 2>/dev/null || dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || true)"
+  _sqlite="${_multiarch:+/usr/lib/${_multiarch}/libsqlite3.so.0}"
+  if [[ -n "${_sqlite:-}" && ! -e "$_sqlite" ]]; then
+    echo -e "${YELLOW}⚠️  未找到 $_sqlite（AI 聊天/通知 SQLite 需要 libsqlite3-0）${NC}"
+  fi
 fi
 
 echo -e "\n${BLUE}🚀 flutter run -d $PLATFORM${NC}"

@@ -12,6 +12,10 @@ class AppManifest {
   final String entry;
   final String? icon;
 
+  /// 是否允许应用内 AI 改包内文本文件。缺省 false（安全默认）。
+  /// 仅对无构建源码包有意义；已构建 / Vite 产物应设为 false 或不写。
+  final bool aiEditable;
+
   const AppManifest({
     required this.id,
     required this.name,
@@ -19,6 +23,7 @@ class AppManifest {
     this.description = '',
     this.entry = 'index.html',
     this.icon,
+    this.aiEditable = false,
   });
 
   factory AppManifest.fromJson(Map<String, dynamic> json) {
@@ -29,6 +34,7 @@ class AppManifest {
       description: json['description']?.toString().trim() ?? '',
       entry: json['entry']?.toString().trim() ?? 'index.html',
       icon: json['icon']?.toString().trim(),
+      aiEditable: json['aiEditable'] == true,
     );
   }
 
@@ -39,6 +45,7 @@ class AppManifest {
         'description': description,
         'entry': entry,
         if (icon != null && icon!.isNotEmpty) 'icon': icon,
+        if (aiEditable) 'aiEditable': true,
       };
 
   /// 从应用目录读取 app.json；失败返回 null。

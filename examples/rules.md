@@ -33,13 +33,21 @@ cd examples
   "version": "2.0.0",
   "entry": "index.html",
   "description": "…",
-  "syncIgnore": []
+  "syncIgnore": [],
+  "aiEditable": false
 }
 ```
 
 - `id`：稳定包名（至少两段，如 `site.datakeep.todo`）；文件夹 id 为 `app-<id>`。
-- Vite 应用（如 `todo-app` / `video-app`）：源码在 `src/`，`npm run build` 产出 `www/`，由 `pack.sh` 打包。
+- Vite 应用（如 `todo-app` / `video-app`）：源码在 `src/`，`npm run build` 产出 `www/`，由 `pack.sh` 打包；**`aiEditable` 必须为 `false`（或不写）**；vite 插件须把 `app.json` 拷进 `www/`。
+- 无构建应用（如 `hello-app` / `ledger-app` / `bio-app`）：Vue/原生 HTML 全局脚本即可运行；设 `"aiEditable": true`，且**不要**把 `package.json` 打进安装包。
 - `syncIgnore`：可选。**仅**对本机缓存、且**不是**跨设备同步源的文件使用（见下节）。
+
+### Vue 无构建约定
+
+- 使用 `vendor/vue.global.prod.js`（或同等 CDN 拷贝），入口 `index.html` 直接引用，无 npm build。
+- UI / 注释用中文；大数据用 SQLite（sql.js）按需查询，勿把百万行 JSON 塞进 Vue 响应式数组。
+- AI 只改壳（html/js/css）；名录等大数据走 `seed/` → 首次写入 `data/` 或外部下载。
 
 ## 运行环境
 
@@ -115,7 +123,8 @@ Syncthing 同步的是**文件**，不懂表行。应用必须自己处理「行
 
 | 目录 | 说明 |
 |------|------|
-| `hello-app` | 入门示例：最小包结构 |
-| `todo-app` | 待办清单：SQLite + 冲突合并 + 自动刷新（范本） |
-| `ledger-app` | 简单记账：SQLite 记账 + 自动刷新 |
-| `video-app` | 视频库：左栏合集 + 右栏网格 + HTML5 播放（音频/图片后续独立应用） |
+| `hello-app` | 入门示例：最小包结构；`aiEditable: true` |
+| `todo-app` | 待办清单：Vite + SQLite 冲突合并（范本）；`aiEditable: false` |
+| `ledger-app` | 简单记账：SQLite + 自动刷新；`aiEditable: true` |
+| `video-app` | 视频库：Vite；`aiEditable: false` |
+| `bio-app` | 生物名录：Vue 无构建 + SQLite 虚拟列表/搜索；`aiEditable: true` |

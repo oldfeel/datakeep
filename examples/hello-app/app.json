@@ -3,5 +3,6 @@
   "name": "入门示例",
   "version": "1.0.1",
   "entry": "index.html",
-  "description": "DataKeep 应用市场示例"
+  "description": "DataKeep 应用市场示例",
+  "aiEditable": true
 }

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/services/app_notification_store.dart';
 import '../../core/services/native_service.dart';
+import '../../features/apps/ai_settings_dialog.dart';
 import '../../features/apps/screens/market_screen.dart';
 import '../../features/feedback/screens/feedback_screen.dart';
 import '../../features/notifications/screens/notifications_page.dart';
@@ -55,6 +56,7 @@ abstract final class AppMenuActions {
   static const market = 'market';
   static const syncthing = 'syncthing';
   static const feedback = 'feedback';
+  static const aiSettings = 'aiSettings';
   static const refresh = 'refresh';
   static const about = 'about';
   static const exit = 'exit';
@@ -125,6 +127,10 @@ Future<void> handleSharedAppMenuAction(
         MaterialPageRoute(builder: (_) => const FeedbackScreen()),
       );
       break;
+    case AppMenuActions.aiSettings:
+      if (!context.mounted) return;
+      await showAiSettingsDialog(context);
+      break;
     case AppMenuActions.refresh:
       onRefresh?.call();
       break;
@@ -175,6 +181,15 @@ List<PopupMenuEntry<String>> buildSharedSettingsMenuItems() {
         contentPadding: EdgeInsets.zero,
         leading: Icon(Icons.feedback_outlined),
         title: Text('意见反馈'),
+      ),
+    ),
+    const PopupMenuItem(
+      value: AppMenuActions.aiSettings,
+      child: ListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.auto_awesome_outlined),
+        title: Text('AI 设置'),
       ),
     ),
     const PopupMenuItem(
@@ -259,6 +274,12 @@ List<Widget> buildSharedMobileMenuTiles(
       title: '意见反馈',
       subtitle: '提交问题或建议',
       action: AppMenuActions.feedback,
+    ),
+    tile(
+      icon: Icons.auto_awesome_outlined,
+      title: 'AI 设置',
+      subtitle: 'DeepSeek / 豆包 API Key',
+      action: AppMenuActions.aiSettings,
     ),
     tile(
       icon: Icons.refresh,

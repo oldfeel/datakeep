@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>生物</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <div class="brand">
+        <button type="button" class="ghost tree-toggle" @click="treeOpen = !treeOpen" aria-label="分类树">☰</button>
+        <h1>{{ title }}</h1>
+        <p class="meta" v-if="dbMeta">
+          {{ dbMeta.species_count }} 种 · v{{ dbMeta.version }}
+          <span v-if="loadingDb" class="hint">加载中…</span>
+        </p>
+      </div>
+      <p class="meta err" v-if="error">{{ error }}</p>
+    </header>
+
+    <div class="search-bar">
+      <input
+        v-model="query"
+        type="search"
+        placeholder="搜索学名或中文名…"
+        @input="onSearchInput"
+        @keydown.enter.prevent="runSearch"
+      />
+      <button type="button" @click="runSearch" :disabled="!query.trim()">搜</button>
+      <button type="button" class="ghost" v-if="candidates.length > 1" @click="nextCandidate">
+        {{ candidateIndex + 1 }}/{{ candidates.length }} 下一条
+      </button>
+      <button type="button" class="ghost" v-if="query" @click="clearSearch">清除</button>
+    </div>
+
+    <div class="workspace">
+      <div class="backdrop" v-if="treeOpen" @click="treeOpen = false"></div>
+
+      <aside class="tree-panel" :class="{ open: treeOpen }">
+        <div class="panel-head">
+          <span>分类树</span>
+          <button type="button" class="ghost tiny" @click="collapseAll">全部收起</button>
+        </div>
+        <div class="tree" ref="treeEl" @scroll.passive="onTreeScroll">
+          <!-- 窗口化渲染：只渲染视口内的行，行数再多 DOM 也恒定 -->
+          <div
+            class="tree-window"
+            :style="{ paddingTop: treeWindow.top + 'px', paddingBottom: treeWindow.bottom + 'px' }"
+          >
+            <div
+              v-for="row in treeWindow.rows"
+              :key="row.id"
+              class="tnode"
+              :class="{ sel: selected && selected.id === row.id, species: row.rank === 'species' }"
+              :style="{ paddingLeft: (6 + row.depth * 13) + 'px' }"
+              :data-id="row.id"
+            >
+              <button
+                type="button"
+                class="caret"
+                :class="{ open: row.expanded }"
+                v-if="row.hasKids"
+                @click.stop="toggleTree(row)"
+              >›</button>
+              <span class="caret space" v-else></span>
+              <span class="tname" :title="row.sci" @click="pickTree(row)">{{ row.name }}</span>
+              <span class="trank">{{ rankLabel(row.rank) }}</span>
+            </div>
+          </div>
+          <p class="empty small" v-if="!treeRows.length">暂无数据</p>
+        </div>
+      </aside>
+
+      <section class="main-panel">
+        <div class="main-bar">
+          <div class="crumbs" v-if="pathNodes.length">
+            <template v-for="(n, i) in pathNodes" :key="n.id">
+              <span v-if="i" class="sep">›</span>
+              <button
+                type="button"
+                class="crumb"
+                :class="{ current: i === pathNodes.length - 1 }"
+                @click="selectTaxon(n)"
+              >{{ n.common_name || n.scientific_name }}</button>
+            </template>
+          </div>
+
+          <div class="view-switch">
+            <button
+              type="button"
+              class="seg"
+              :class="{ on: viewMode === 'list' }"
+              @click="setView('list')"
+            >列表</button>
+            <button
+              type="button"
+              class="seg"
+              :class="{ on: viewMode === 'mind' }"
+              @click="setView('mind')"
+            >导图</button>
+          </div>
+
+          <div class="zoom-ctrl" v-if="viewMode === 'mind'">
+            <button type="button" class="ghost tiny" @click="zoomOut">−</button>
+            <span class="zoom-val">{{ zoomPct }}</span>
+            <button type="button" class="ghost tiny" @click="zoomIn">+</button>
+            <button type="button" class="ghost tiny" @click="centerOnSelected">居中</button>
+            <button type="button" class="ghost tiny" @click="zoomFit">适配</button>
+          </div>
+        </div>
+
+        <!-- ================= 列表视图（默认） ================= -->
+        <div class="list-view" ref="listEl" v-if="viewMode === 'list'">
+          <div class="node-head" v-if="selected">
+            <div class="nh-main">
+              <span class="chip">{{ rankLabel(selected.rank) }}</span>
+              <h2>{{ selected.common_name || selected.scientific_name }}</h2>
+              <p class="sci" v-if="selected.common_name">{{ selected.scientific_name }}</p>
+            </div>
+            <div class="nh-side">
+              <span class="stat"><b>{{ listTotal }}</b> 个下级</span>
+              <button type="button" class="ghost tiny" v-if="pathNodes.length > 1" @click="goUp">↑ 上一级</button>
+            </div>
+          </div>
+
+          <div class="cards" v-if="listRows.length">
+            <button
+              type="button"
+              class="card"
+              v-for="r in listRows"
+              :key="r.id"
+              @click="pickRow(r)"
+            >
+              <span class="c-top">
+                <span class="c-rank">{{ rankLabel(r.rank) }}</span>
+                <span class="c-kids" v-if="childCounts[r.id]">{{ childCounts[r.id] }} 下级 ›</span>
+                <span class="c-kids leaf" v-else>›</span>
+              </span>
+              <span class="c-name">{{ r.common_name || r.scientific_name }}</span>
+              <span class="c-sci" v-if="r.common_name">{{ r.scientific_name }}</span>
+            </button>
+          </div>
+
+          <div class="list-foot" v-if="listRows.length < listTotal">
+            <button type="button" class="ghost" @click="loadMoreList">
+              显示更多（还有 {{ listTotal - listRows.length }}）
+            </button>
+          </div>
+
+          <p class="empty" v-if="!listRows.length">
+            {{ selected && selected.rank === 'species' ? '该种没有下级分类' : '该节点没有下级' }}
+          </p>
+
+          <div class="sib-block" v-if="siblingRows.length">
+            <h3>同属其它种 <span class="hint">{{ siblingRows.length }} / {{ siblingTotal }}</span></h3>
+            <div class="sib-chips">
+              <button
+                type="button"
+                class="sib"
+                v-for="s in siblingRows"
+                :key="s.id"
+                :title="s.scientific_name"
+                @click="pickRow(s)"
+              >{{ s.common_name || s.scientific_name }}</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ================= 导图视图 ================= -->
+        <div
+          class="mind-viewport"
+          v-else
+          ref="mindEl"
+          @mousedown="startPan"
+          @wheel.ctrl.prevent="onWheelZoom"
+        >
+          <div
+            class="mind-stage"
+            :style="{ width: (mindW * zoom) + 'px', height: (mindH * zoom) + 'px' }"
+          >
+            <div
+              class="mind-inner"
+              :style="{ width: mindW + 'px', height: mindH + 'px', transform: 'scale(' + zoom + ')' }"
+            >
+              <svg class="mind-links" :width="mindW" :height="mindH">
+                <path
+                  v-for="l in mindLinks"
+                  :key="l.id"
+                  :d="l.d"
+                  :stroke="l.color"
+                  fill="none"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <div
+                v-for="n in mindNodes"
+                :key="n.id"
+                class="mnode"
+                :class="['k-' + n.kind, { on: selected && selected.id === n.id }]"
+                :style="{ left: n.x + 'px', top: (n.y - nodeH / 2) + 'px', width: n.w + 'px' }"
+                :title="n.kind === 'more' ? n.name : (n.sci ? n.sci + ' · ' + rankLabel(n.rank) : n.name)"
+                @click="pickMind(n)"
+              >
+                <span class="dot" :style="{ background: n.color || 'var(--accent)' }"></span>
+                <span class="mrank">{{ rankLabel(n.rank) }}</span>
+                <span class="mname">{{ n.name }}</span>
+                <button
+                  v-if="n.hasKids && n.kind !== 'center'"
+                  type="button"
+                  class="expander"
+                  @click.stop="toggleMindExpand(n)"
+                >{{ n.expanded ? '−' : '+' }}</button>
+              </div>
+            </div>
+          </div>
+          <p class="empty" v-if="!mindNodes.length">选择左侧分类开始浏览</p>
+        </div>
+      </section>
+    </div>
+
+    <footer class="foot">
+      <button type="button" class="ghost" @click="ensureDb" :disabled="loadingDb">
+        {{ hasDataDb ? '重新加载 data/ 库' : '安装示例到 data/' }}
+      </button>
+      <button
+        type="button"
+        class="ghost"
+        :class="{ danger: resetArmed }"
+        @click="resetSampleDb"
+        :disabled="loadingDb"
+        title="删除 data/taxa.sqlite 并从示例名录整库重写（去重）"
+      >{{ resetArmed ? '再点一次确认清空' : '清空并重写示例库' }}</button>
+      <span class="hint">{{ statusText }}</span>
+    </footer>
+  </div>
+
+  <script src="vendor/sql-wasm.js"></script>
+  <script src="vendor/vue.global.prod.js"></script>
+  <script src="sample-taxa.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

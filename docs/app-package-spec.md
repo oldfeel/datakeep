@@ -22,7 +22,8 @@ zip 解压后根目录（或唯一顶层目录）须包含：
   "version": "1.0.0",
   "entry": "index.html",
   "description": "示例应用",
-  "icon": "icon.png"
+  "icon": "icon.png",
+  "aiEditable": true
 }
 ```
 
@@ -35,6 +36,18 @@ zip 解压后根目录（或唯一顶层目录）须包含：
 | `description` | 否 | 简介 |
 | `icon` | 否 | 包内相对路径图标 |
 | `syncIgnore` | 否 | 字符串数组，安装/打开时合并进应用目录 `.stignore`（及独立同步文件夹的忽略规则）。常用：`["*.db"]` 忽略本机 SQLite 缓存 |
+| `aiEditable` | 否 | `true` 时允许客户端应用内 AI 改包内文本源码；**缺省 / `false` 禁止**（安全默认） |
+
+### 应用内 AI 编辑（两类应用）
+
+| 类型 | 约定 | AI 改代码 |
+|------|------|-----------|
+| 无构建（源码即运行时） | `"aiEditable": true`，且安装目录无 `package.json` | 支持：改文件 → `appRev` 重载 |
+| 需编译 / 已构建包（如 Vite） | `"aiEditable": false` 或不写；构建须把 `app.json` 拷进产物根 | **不支持** |
+
+- **不要**仅凭「有无 `package.json`」判断：Vite 打包通常只打 `www/`，安装后往往没有 `package.json`，会被误判成可 AI。
+- 客户端额外防御：即使误标 `aiEditable: true`，若代码根仍存在 `package.json`，仍拒绝写文件。
+- Key（DeepSeek / 豆包）保存在 Flutter SharedPreferences；写盘由宿主完成，不进 WebView。
 
 ## 校验
 

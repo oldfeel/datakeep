@@ -106,12 +106,15 @@ dependencies:
   webview_cef: ^0.6.1
 
 # 桌面 sqflite_common_ffi → sqlite3：默认从 GitHub 拉预编译库，国内易超时。
-# 改用系统 libsqlite3（Linux 需 libsqlite3-0；Windows 用 winsqlite3）。
+# 改用系统库。Linux 发行版通常只有 libsqlite3.so.0（.so 软链在 libsqlite3-dev）；
+# name_linux 用绝对路径绕过 hook 把 name 拼成 lib*.so 的逻辑。
+# aarch64 请改为 /usr/lib/aarch64-linux-gnu/libsqlite3.so.0
 hooks:
   user_defines:
     sqlite3:
       source: system
       name_windows: winsqlite3
+      name_linux: /usr/lib/x86_64-linux-gnu/libsqlite3.so.0
       name: sqlite3
 
 dev_dependencies:
